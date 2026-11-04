@@ -1,0 +1,17 @@
+error[E0277]: the trait bound `MissingBlend: BlendEffect` is not satisfied
+ --> tests/ui/post_process_effect_missing_blend.rs:3:10
+  |
+3 | #[derive(calyx_engine_derive::PostProcessEffect)]
+  |          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ unsatisfied trait bound
+  |
+help: the trait `BlendEffect` is not implemented for `MissingBlend`
+ --> tests/ui/post_process_effect_missing_blend.rs:4:1
+  |
+4 | struct MissingBlend;
+  | ^^^^^^^^^^^^^^^^^^^
+help: the trait `BlendEffect` is implemented for `Settings<T, N>`
+ --> tests/ui/post_process_effect_valid.rs
+  |
+  | impl<T: Copy + 'static, const N: usize> calyx_engine::render::postprocess::BlendEffect for Settings<T, N> {
+  | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  = note: this error originates in the derive macro `calyx_engine_derive::PostProcessEffect` (in Nightly builds, run with -Z macro-backtrace for more info)

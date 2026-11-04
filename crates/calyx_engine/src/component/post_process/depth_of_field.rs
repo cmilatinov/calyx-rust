@@ -8,7 +8,18 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 /// Depth of field: the scene blurs with distance from a focus plane.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    TypeUuid,
+    Component,
+    Reflect,
+    PostProcessEffect,
+)]
 #[uuid = "ac9e495b-1859-42d8-b1c5-0d35f113c089"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Depth Of Field", category = "Post Processing")]
@@ -44,8 +55,6 @@ impl ComponentDepthOfField {
         (self.blur_radius() / 16.0).max(0.5)
     }
 }
-
-impl_post_process_effect!(ComponentDepthOfField);
 
 impl Component for ComponentDepthOfField {
     /// A disabled effect component switches its pass off.

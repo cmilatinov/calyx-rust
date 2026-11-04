@@ -18,7 +18,9 @@ use serde::{Deserialize, Serialize};
 /// background, a large jump in distance, or a change of style) draw at the
 /// style's `width` in full ink; inner lines (a crease, or a small step in
 /// distance) draw at its `inner_width`, at `inner_opacity`.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect, PostProcessEffect,
+)]
 #[uuid = "bac082cd-d184-4584-8b58-b1a652577c79"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Outline", category = "Post Processing")]
@@ -49,8 +51,6 @@ pub struct ComponentOutline {
 
 /// The most outline styles the pass draws; entries past it are ignored.
 pub const MAX_OUTLINE_STYLES: usize = 8;
-
-impl_post_process_effect!(ComponentOutline);
 
 impl Component for ComponentOutline {
     /// A disabled effect component switches its pass off.

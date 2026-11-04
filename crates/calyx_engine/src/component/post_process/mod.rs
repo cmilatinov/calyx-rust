@@ -9,38 +9,7 @@
 use crate as calyx_engine;
 use crate::component::Component;
 use calyx_engine_derive::reflect_trait;
-
-// Keep type-erased dispatch beside each component's registration. The typed
-// BlendEffect operations also serve the existing renderer during its migration.
-macro_rules! impl_post_process_effect {
-    ($effect:ty) => {
-        impl PostProcessEffect for $effect {
-            fn copy_from(&mut self, source: &dyn PostProcessEffect) {
-                let source = source
-                    .as_any()
-                    .downcast_ref::<Self>()
-                    .expect("post-process effects must have the same concrete type");
-                crate::render::postprocess::BlendEffect::copy_in_place(self, source);
-            }
-
-            fn blend_into(&mut self, target: &dyn PostProcessEffect, factor: f32) {
-                let target = target
-                    .as_any()
-                    .downcast_ref::<Self>()
-                    .expect("post-process effects must have the same concrete type");
-                crate::render::postprocess::BlendEffect::blend_in_place(
-                    self,
-                    target,
-                    factor.clamp(0.0, 1.0),
-                );
-            }
-
-            fn reset_neutral(&mut self) -> bool {
-                crate::render::postprocess::BlendEffect::reset_neutral_in_place(self)
-            }
-        }
-    };
-}
+pub use calyx_engine_derive::PostProcessEffect;
 
 pub use ambient_occlusion::*;
 pub use anti_aliasing::*;
@@ -69,6 +38,9 @@ mod vignette;
 /// attribute, so the type registry knows the effect types
 /// ([`PostProcessProfile::effect_types`](crate::assets::post_process_profile::PostProcessProfile::effect_types))
 /// and a profile can turn a reflected value back into an effect.
+/// Derive it with `#[derive(PostProcessEffect)]` on a component that implements
+/// [`BlendEffect`](crate::render::postprocess::BlendEffect); the derive dispatches
+/// to that implementation's in-place operations.
 #[reflect_trait]
 pub trait PostProcessEffect: Component {
     /// Copies `source` into existing storage, reusing owned buffers where possible.

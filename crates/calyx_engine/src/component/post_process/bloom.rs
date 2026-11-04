@@ -8,7 +8,18 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 /// Bloom: light above a threshold is blurred and added back onto the scene.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    TypeUuid,
+    Component,
+    Reflect,
+    PostProcessEffect,
+)]
 #[uuid = "7e09858d-fd71-4729-bb90-8ed76c0bda9a"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Bloom", category = "Post Processing")]
@@ -30,8 +41,6 @@ pub struct ComponentBloom {
     /// how far the glow spreads. Clamped to `1..=8`.
     pub radius: u32,
 }
-
-impl_post_process_effect!(ComponentBloom);
 
 impl Component for ComponentBloom {
     /// A disabled effect component switches its pass off.

@@ -1,6 +1,7 @@
 mod component;
 mod deserialize_context;
 mod fq;
+mod post_process_effect;
 mod reflect_impl;
 mod reflect_trait;
 mod reflect_type;
@@ -11,6 +12,12 @@ mod type_uuid;
 extern crate proc_macro;
 
 use proc_macro::TokenStream;
+
+/// Derives type-erased in-place operations from the component's `BlendEffect` implementation.
+#[proc_macro_derive(PostProcessEffect)]
+pub fn derive_post_process_effect(input: TokenStream) -> TokenStream {
+    post_process_effect::derive_post_process_effect(input)
+}
 
 #[proc_macro_derive(Component)]
 pub fn derive_component(input: TokenStream) -> TokenStream {

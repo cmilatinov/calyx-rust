@@ -11,7 +11,18 @@ use serde::{Deserialize, Serialize};
 /// Distance fog: every surface fades towards the fog colour with its
 /// distance from the camera, after lighting. The background, at the far
 /// plane, takes the fog of that distance.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    TypeUuid,
+    Component,
+    Reflect,
+    PostProcessEffect,
+)]
 #[uuid = "659a0e8b-963d-439b-9a73-dc8bb2c6ead1"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Fog", category = "Post Processing")]
@@ -41,8 +52,6 @@ pub struct ComponentFog {
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
     pub opacity: f32,
 }
-
-impl_post_process_effect!(ComponentFog);
 
 impl Component for ComponentFog {
     /// A disabled effect component switches its pass off.

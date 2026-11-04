@@ -9,7 +9,18 @@ use serde::{Deserialize, Serialize};
 
 /// Tone-mapping curve and exposure, as an effect component on a
 /// post-process volume's game object.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    TypeUuid,
+    Component,
+    Reflect,
+    PostProcessEffect,
+)]
 #[uuid = "68ac12ac-fc9a-489e-b305-363eaf593966"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Tone Mapping", category = "Post Processing")]
@@ -31,8 +42,6 @@ impl Default for ComponentTonemap {
         }
     }
 }
-
-impl_post_process_effect!(ComponentTonemap);
 
 impl Component for ComponentTonemap {
     /// A disabled tone-mapping component leaves the defaults in effect.

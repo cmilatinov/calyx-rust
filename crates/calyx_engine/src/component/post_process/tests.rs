@@ -6,6 +6,18 @@ use crate::render::postprocess::BlendEffect;
 use egui::Color32;
 use std::fmt::Debug;
 
+#[test]
+#[should_panic(expected = "post-process effects must have the same concrete type")]
+fn derived_copy_rejects_a_different_effect_type() {
+    ComponentBloom::default().copy_from(&ComponentFog::default());
+}
+
+#[test]
+#[should_panic(expected = "post-process effects must have the same concrete type")]
+fn derived_blend_rejects_a_different_effect_type() {
+    ComponentBloom::default().blend_into(&ComponentFog::default(), 0.5);
+}
+
 fn check_effect<T: PostProcessEffect + BlendEffect + PartialEq + Debug>(from: T, to: T) {
     let mut value = from.clone();
     let erased: &mut dyn PostProcessEffect = &mut value;
