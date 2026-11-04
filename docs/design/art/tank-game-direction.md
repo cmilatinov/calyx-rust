@@ -43,6 +43,10 @@ The gameplay camera is the **Far** framing:
 A tank (2.3 m wide at the game's 0.45 scale) is about 100 px wide in a
 2062 px wide view. Judge every visual change at this framing first.
 
+The tank's `Camera` object carries it as a Tank Camera component
+(`sandbox/src/tank_camera.rs`), which also leads the view towards the aim
+point and zooms in with the scroll wheel to 0.6 of the Far framing.
+
 ## Colour convention
 
 - A material's solid `Color` is read as **linear**. Store each palette hex
