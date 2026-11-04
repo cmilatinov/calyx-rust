@@ -8,7 +8,18 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 /// Screen-space ambient occlusion.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    TypeUuid,
+    Component,
+    Reflect,
+    PostProcessEffect,
+)]
 #[uuid = "01a950bc-d431-4495-8b86-7d51c5f2b4b0"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Ambient Occlusion", category = "Post Processing")]
@@ -28,8 +39,6 @@ pub struct ComponentAmbientOcclusion {
     /// Samples tested per pixel. Clamped to `1..=64`.
     pub sample_count: u32,
 }
-
-impl PostProcessEffect for ComponentAmbientOcclusion {}
 
 impl Component for ComponentAmbientOcclusion {
     /// A disabled effect component switches its pass off.

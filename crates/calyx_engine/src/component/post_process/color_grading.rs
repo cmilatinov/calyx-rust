@@ -8,7 +8,18 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 /// White balance, contrast and saturation, after tone mapping.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    TypeUuid,
+    Component,
+    Reflect,
+    PostProcessEffect,
+)]
 #[uuid = "d2694fb5-4815-471e-9537-4ab502c580f0"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Colour Grading", category = "Post Processing")]
@@ -28,8 +39,6 @@ pub struct ComponentColorGrading {
     #[reflect_attr(min = -1.0, max = 1.0, speed = 0.01)]
     pub tint: f32,
 }
-
-impl PostProcessEffect for ComponentColorGrading {}
 
 impl Component for ComponentColorGrading {
     /// A disabled effect component switches its pass off.

@@ -8,7 +8,18 @@ use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use serde::{Deserialize, Serialize};
 
 /// Screen-space anti-aliasing.
-#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize, TypeUuid, Component, Reflect)]
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    TypeUuid,
+    Component,
+    Reflect,
+    PostProcessEffect,
+)]
 #[uuid = "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82"]
 #[reflect(Default, TypeUuidDynamic, Component, PostProcessEffect)]
 #[reflect_attr(name = "Anti-Aliasing (FXAA)", category = "Post Processing")]
@@ -23,8 +34,6 @@ pub struct ComponentAntiAliasing {
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
     pub subpixel: f32,
 }
-
-impl PostProcessEffect for ComponentAntiAliasing {}
 
 impl Component for ComponentAntiAliasing {
     /// A disabled effect component switches its pass off.
