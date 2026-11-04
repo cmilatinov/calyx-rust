@@ -152,7 +152,9 @@ Adding a player colour, or changing one:
   trail, and lamps strength 4 in a deeper sodium orange. Their point lights
   drop too: shell 0.3 within 2 m, muzzle flash 1.0 within 2.5 m, impact 2.0
   within 4 m, against 1.5 within 3 m, 3.0 within 4 m and 3.0 within 5 m by
-  day.
+  day. The shells still bloom: Moonlit's bloom (see Lighting) gives them a
+  soft warm halo about a tank's width across, without raising their
+  strength.
 - SSAO is part of the clay look: intensity 2.2, radius 0.9, bias 0.025,
   16 samples, giving the soft dark contact shadow under every tank and prop.
 
@@ -197,7 +199,7 @@ Adding a player colour, or changing one:
 | Haze | none | linear, `#E9D2A8`, intensity 1.6, 30–90 m, opacity 0.45 | none |
 | Tone mapping | ACES, 0 EV | ACES, 0 EV | ACES, 0 EV |
 | Grading | contrast 1.05, saturation 1.2, temperature +0.06 | contrast 1.08, saturation 1.15, temperature +0.08 | contrast 1.08, saturation 1.0, temperature −0.02 |
-| Bloom | intensity 0.15, threshold 1.2 | intensity 0.2, threshold 1.2 | intensity 0.12, threshold 1.5, radius 4 (6 on the day maps) |
+| Bloom | intensity 0.15, threshold 1.2 | intensity 0.2, threshold 1.2 | intensity 4.5, threshold 2.5, knee 0.1, radius 6 (day maps: knee 0.5) |
 | Vignette | 0.12, black | 0.12, warm brown `#28180A` | 0.2, night blue `#060A14` |
 | Anti-aliasing | FXAA | FXAA | FXAA |
 
@@ -207,8 +209,13 @@ as by day. Below about 6 the soot tank merged with its outline and the ground
 went navy. The sky keeps the sunset HDRI at full intensity because it is the
 fill light in the shadows; at 0.25–0.4 the shadowed sides went black. The
 cool moon and the slightly cool grade keep its warmth out of the picture.
-Moonlit's bloom is weaker, starts later and spreads less, so only the
-signals' cores bloom, and only a little.
+Moonlit's bloom keeps the shells' halo at strength 2. The threshold
+compares a pixel's brightest channel, and under the strong moon the lit
+ice-blue tank comes close to a strength-2 shell: thresholds from 0.6 to 2.0
+put a blue glow around that tank. A threshold of 2.5 with a hard knee (0.1)
+passes only the signals, so tanks, barriers and swatches never bloom, and
+the high intensity (4.5) turns the little light above it into a visible
+halo.
 
 Shadow distance 70 m covers the Far framing. Keep vignette at or below 0.2:
 the game view is very wide and the vignette is round.

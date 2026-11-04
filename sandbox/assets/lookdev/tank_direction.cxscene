@@ -14441,10 +14441,10 @@
         "sample_count": 16
       },
       "7e09858d-fd71-4729-bb90-8ed76c0bda9a": {
-        "intensity": 0.12,
-        "knee": 0.5,
-        "radius": 4,
-        "threshold": 1.5
+        "intensity": 4.5,
+        "knee": 0.1,
+        "radius": 6,
+        "threshold": 2.5
       },
       "d2694fb5-4815-471e-9537-4ab502c580f0": {
         "contrast": 1.08,
