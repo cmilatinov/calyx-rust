@@ -1,0 +1,127 @@
+# Concrete barrier with two-sided diagonal hazard stripes.
+
+[[parts]]
+name = "body"
+kind = "box"
+role = "barriers"
+size = [2.4, 0.9, 0.85]
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+bevel = 0.18
+
+[[parts]]
+name = "foot"
+kind = "box"
+role = "barriers"
+size = [2.55, 0.16, 1.0]
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+bevel = 0.05
+
+[[parts]]
+name = "front_yellow"
+kind = "box"
+role = "hazard_yellow"
+size = [2.06, 0.32, 0.025]
+offset = [0, 0.1, -0.436]
+rotation = [0, 0, 0]
+bevel = 0.008
+
+[[parts]]
+name = "front_stripe_0"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [-0.8, 0.1, -0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "front_stripe_1"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [-0.4, 0.1, -0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "front_stripe_2"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [0, 0.1, -0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "front_stripe_3"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [0.4, 0.1, -0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "front_stripe_4"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [0.8, 0.1, -0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "back_yellow"
+kind = "box"
+role = "hazard_yellow"
+size = [2.06, 0.32, 0.025]
+offset = [0, 0.1, 0.436]
+rotation = [0, 0, 0]
+bevel = 0.008
+
+[[parts]]
+name = "back_stripe_0"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [-0.8, 0.1, 0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "back_stripe_1"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [-0.4, 0.1, 0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "back_stripe_2"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [0, 0.1, 0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "back_stripe_3"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [0.4, 0.1, 0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005
+
+[[parts]]
+name = "back_stripe_4"
+kind = "box"
+role = "hazard_black"
+size = [0.15, 0.26, 0.028]
+offset = [0.8, 0.1, 0.45344]
+rotation = [0, 0, -28]
+bevel = 0.005

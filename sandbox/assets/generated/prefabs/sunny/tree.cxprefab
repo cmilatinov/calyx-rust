@@ -1,0 +1,105 @@
+{
+  "data": {
+    "components": {
+      "393f5c1f-92a5-5fd7-8882-ac42ddf46c65": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "393f5c1f-92a5-5fd7-8882-ac42ddf46c65",
+          "name": "trunk",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "a943a40c-4194-50dd-afcb-bda516776436",
+          "mesh": "fa30177d-ab9a-567c-abe3-2de40ef73f08"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "9898b2d0-e7f4-544e-8dd4-ed3133e6ce71": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "9898b2d0-e7f4-544e-8dd4-ed3133e6ce71",
+          "name": "canopy",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "f738a829-72c5-5e1e-b511-1dfceaeae201",
+          "mesh": "5b167521-74d4-5f97-a75a-e939f890947e"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.13052619222005157,
+              0.0,
+              0.9914448613738104
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "c71fb68c-67c4-5f20-9dca-b4ddc686f5bc": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "c71fb68c-67c4-5f20-9dca-b4ddc686f5bc",
+          "name": "tree",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "c71fb68c-67c4-5f20-9dca-b4ddc686f5bc": [
+        "393f5c1f-92a5-5fd7-8882-ac42ddf46c65",
+        "9898b2d0-e7f4-544e-8dd4-ed3133e6ce71"
+      ]
+    },
+    "roots": [
+      "c71fb68c-67c4-5f20-9dca-b4ddc686f5bc"
+    ]
+  },
+  "root": "c71fb68c-67c4-5f20-9dca-b4ddc686f5bc"
+}

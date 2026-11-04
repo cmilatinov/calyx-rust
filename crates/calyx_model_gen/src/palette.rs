@@ -62,6 +62,11 @@ pub const ROLES: &[Role] = &[
     role("walls", "#C9AA7A", "#B18665", 0.95),
     role("barriers", "#BFB9AE", "#C0BCB6", 0.95),
     role("crates", "#A2855E", "#66635F", 0.95),
+    role("crate_frame", "#6C513B", "#464747", 0.95),
+    role("crate_panel", "#BD9769", "#969187", 0.95),
+    role("hazard_yellow", "#F3C84B", "#E6B84C", 0.95),
+    role("hazard_black", "#303038", "#303030", 0.95),
+    role("grass", "#87BC6C", "#92A374", 0.95),
     role("rocks", "#BFB9AE", "#A9957A", 0.95),
     role("tree_trunks", "#A2855E", "#8F7960", 0.95),
     role("tree_canopies", "#62B07D", "#92A374", 0.95),
@@ -124,6 +129,7 @@ impl Role {
                 uniform("emission_strength", 12, 4, json!({"Float": strength})),
                 uniform("emission_color", 16, 16, json!({"Color": emission_color})),
                 uniform("base_color_factor", 32, 16, json!({"Color": color})),
+                uniform("outline_style", 60, 4, json!({"Uint": if matches!(self.name, "ground" | "road" | "signals" | "ink") { 0 } else { 1 }})),
             ]
         })
     }

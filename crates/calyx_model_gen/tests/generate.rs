@@ -251,3 +251,66 @@ fn a_hull_that_is_not_inverted_is_refused() {
     .unwrap_err();
     assert!(err.contains("not inverted"), "{err}");
 }
+
+#[test]
+fn assemblies_write_stable_prefabs_and_remove_stale_parts_on_regeneration() {
+    let text = r#"
+[[parts]]
+name = "body"
+kind = "box"
+role = "crate_panel"
+size = [1, 1, 1]
+
+[[parts]]
+name = "frame"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 1.2, 0.2]
+offset = [0.4, 0, 0.4]
+rotation = [0, 45, 0]
+"#;
+    let out = out_dir("assembly");
+    let layout = Layout::new(&out).unwrap();
+    let model = params::Model::parse("framed", text, Path::new("")).unwrap();
+    let report = generate(&layout, std::slice::from_ref(&model), fake_blender).unwrap();
+    assert_eq!((report.models, report.materials), (1, 4));
+    let prefab = out.join("prefabs/sunny/framed.cxprefab");
+    let first = std::fs::read_to_string(&prefab).unwrap();
+    assert_eq!(
+        meta(&prefab.with_extension("meta"))["main"]["type_uuid"],
+        calyx_model_gen::layout::TYPE_PREFAB
+    );
+    generate(&layout, &[model], fake_blender).unwrap();
+    assert_eq!(std::fs::read_to_string(&prefab).unwrap(), first);
+    let single = params::Model::parse(
+        "framed",
+        "kind = \"box\"\nrole = \"crates\"\nsize = [1, 1, 1]",
+        Path::new(""),
+    )
+    .unwrap();
+    generate(&layout, &[single], fake_blender).unwrap();
+    assert!(!prefab.exists());
+    assert!(!out.join("models/framed__frame.obj").exists());
+    assert!(out.join("models/framed.obj").exists());
+}
+
+#[test]
+fn a_part_name_collision_is_refused_before_blender() {
+    let models = [
+        params::Model::parse(
+            "a",
+            "[[parts]]\nname = \"b\"\nkind = \"box\"\nrole = \"crates\"\nsize = [1,1,1]",
+            Path::new(""),
+        )
+        .unwrap(),
+        params::Model::parse(
+            "a__b",
+            "kind = \"box\"\nrole = \"crates\"\nsize = [1,1,1]",
+            Path::new(""),
+        )
+        .unwrap(),
+    ];
+    let layout = Layout::new(&out_dir("collision")).unwrap();
+    let error = generate(&layout, &models, |_| panic!("must fail before building")).unwrap_err();
+    assert!(error.contains("same mesh name"), "{error}");
+}

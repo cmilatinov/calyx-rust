@@ -1,0 +1,118 @@
+# Inset clay panels inside a dark wooden frame.
+
+[[parts]]
+name = "panels"
+kind = "box"
+role = "crate_panel"
+size = [1.02, 1.02, 1.02]
+offset = [0, 0.04, 0]
+rotation = [0, 0, 0]
+bevel = 0.04
+
+[[parts]]
+name = "post_0_0"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 1.1, 0.14]
+offset = [-0.48, 0, -0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "post_0_1"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 1.1, 0.14]
+offset = [-0.48, 0, 0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "post_1_0"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 1.1, 0.14]
+offset = [0.48, 0, -0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "post_1_1"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 1.1, 0.14]
+offset = [0.48, 0, 0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "low_front"
+kind = "box"
+role = "crate_frame"
+size = [1.1, 0.14, 0.14]
+offset = [0, 0, -0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "low_back"
+kind = "box"
+role = "crate_frame"
+size = [1.1, 0.14, 0.14]
+offset = [0, 0, 0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "low_left"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 0.14, 0.82]
+offset = [-0.48, 0, 0]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "low_right"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 0.14, 0.82]
+offset = [0.48, 0, 0]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "high_front"
+kind = "box"
+role = "crate_frame"
+size = [1.1, 0.14, 0.14]
+offset = [0, 0.96, -0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "high_back"
+kind = "box"
+role = "crate_frame"
+size = [1.1, 0.14, 0.14]
+offset = [0, 0.96, 0.48]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "high_left"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 0.14, 0.82]
+offset = [-0.48, 0.96, 0]
+rotation = [0, 0, 0]
+bevel = 0.035
+
+[[parts]]
+name = "high_right"
+kind = "box"
+role = "crate_frame"
+size = [0.14, 0.14, 0.82]
+offset = [0.48, 0.96, 0]
+rotation = [0, 0, 0]
+bevel = 0.035

@@ -7,6 +7,10 @@ palette, each with its rig (sun, sky, post-process volume), a Far camera, a
 showcase corner (palette swatches, sample materials, the four player tanks)
 and a match scenario.
 
+The [concept sheet](concept-sheet.png) defines the modular props, trees and cover.
+Palette A Green maps to Sunny Battlefield; Palette B Sand maps to Sunbaked.
+Its tank drawings are references only: the existing Tank_002 model stays.
+
 ## The style
 
 **Clay materials with ink outlines, solid team colours, read from a high
@@ -70,6 +74,11 @@ convention.
 | Perimeter walls | cliff `#C9AA7A` | terracotta `#B18665` |
 | Barriers | stone `#BFB9AE` | bone concrete `#C0BCB6` |
 | Crates | bark `#A2855E` | gunmetal `#66635F` |
+| Crate frame | dark bark `#6C513B` | dark gunmetal `#464747` |
+| Crate inset panel | light bark `#BD9769` | light stone `#969187` |
+| Hazard yellow | yellow `#F3C84B` | ochre yellow `#E6B84C` |
+| Hazard black | charcoal `#303038` | graphite `#303030` |
+| Grass tufts | grass `#87BC6C` | scrub green `#92A374` |
 | Rocks | stone `#BFB9AE` | dune shadow `#A9957A` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` |
 | Tree canopies | leaf `#62B07D` | scrub green `#92A374` |
@@ -207,6 +216,21 @@ the game view is very wide and the vignette is round.
 - Outline hulls are generated with `outline = <thickness>`. Once the
   screen-space outline pass replaces the hulls, drop `outline` from the
   parameter files and regenerate: the hulls and the ink material go.
+- Multi-part models use named `[[parts]]` tables in the parameter file. Each
+  part has its own `kind`, shape keys, `role`, optional `shading`, `offset`
+  (XYZ metres) and `rotation` (XYZ Euler degrees). Omitted transforms are zero.
+  Model-level `shading`, `smooth_angle` and optional `outline` apply to all
+  parts; a part may override shading. The four generated shapes are supported;
+  sourced models remain in the single-shape format.
+- Each part becomes `generated/models/<model>__<part>.obj`. The generator
+  assembles them under one root in `generated/prefabs/<map>/<model>.cxprefab`,
+  with the map's material per part. Mesh, object and prefab ids derive from
+  names, so reordering the parts keeps the ids. Instantiate the prefab to
+  place the complete model. Existing single-shape files and ids stay the same.
+- Generated opaque prop materials set `outline_style = 1`; ground, road,
+  signals and legacy hull ink use 0. New parts need no inverted hull.
+- `tree.toml`, `barrier_hazard.toml` and `crate_framed.toml` are the first
+  assembled examples, shown on both maps in the look-dev scene.
 - No textures are needed for the style itself.
 
 ## Evidence
@@ -215,5 +239,9 @@ Final look-dev captures (Far and the match scenario at Far):
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-492/final>, with
 inverted-hull outlines; the outline pass against them (`v2_*` for the
 styled pass): <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-509>.
+Multi-part generator proof models (tree, striped barrier and framed crate), at
+the Far framing on both maps: <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517>.
+Compare their shapes and material breaks with the [concept sheet](concept-sheet.png).
+
 Earlier rounds, including the dropped candidates and pattern experiments,
 are beside them under `et-492/`.

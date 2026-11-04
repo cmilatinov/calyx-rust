@@ -14,6 +14,7 @@ pub mod layout;
 pub mod obj;
 pub mod palette;
 pub mod params;
+pub mod prefab;
 
 use std::collections::BTreeSet;
 use std::fmt;
@@ -178,6 +179,15 @@ pub fn generate(
     build: impl FnOnce(&[MeshJob]) -> Result<(), String>,
 ) -> Result<Report, String> {
     let plan = layout.plan(models);
+    let mut mesh_names = BTreeSet::new();
+    for mesh in &plan.meshes {
+        if !mesh_names.insert(&mesh.mesh.name) {
+            return Err(format!(
+                "models produce the same mesh name: {}",
+                mesh.mesh.name
+            ));
+        }
+    }
     let before = files_in(&layout.owned_dirs());
     for dir in layout.owned_dirs() {
         std::fs::create_dir_all(&dir)
@@ -201,11 +211,15 @@ pub fn generate(
             &pretty(&material.role.material(material.map)),
         )?;
     }
+    for prefab in &plan.prefabs {
+        write(&prefab.asset.path, &pretty(&prefab.data(layout)))?;
+    }
     let assets = plan
         .meshes
         .iter()
         .flat_map(|m| std::iter::once(&m.mesh).chain(m.outline.as_ref()))
-        .chain(plan.materials.iter().map(|m| &m.asset));
+        .chain(plan.materials.iter().map(|m| &m.asset))
+        .chain(plan.prefabs.iter().map(|p| &p.asset));
     for asset in assets {
         write(&asset.meta_path(), &asset.meta())?;
     }
@@ -221,7 +235,7 @@ pub fn generate(
             .map_err(|err| format!("cannot remove {}: {err}", path.display()))?;
     }
     Ok(Report {
-        models: plan.meshes.len(),
+        models: models.len(),
         outlines: plan.meshes.iter().filter(|m| m.outline.is_some()).count(),
         materials: plan.materials.len(),
         removed,
