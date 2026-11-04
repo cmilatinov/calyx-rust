@@ -78,7 +78,7 @@ pub trait OverlayPass {
 
 So the tone-map pass outputs the curve's result unchanged. The old `pbr.wgsl` raised its Reinhard output to `1 / 1.4` before egui encoded it again, which is why the old look was lifted and washed out. The headless test `tonemap_output_is_display_linear` pins this: a known HDR value goes through the tone-map pass, the raw `Rgba16Float` texel must equal the curve's linear output, and the readback byte must equal its sRGB encoding.
 
-Textures are still uploaded as `Rgba8Unorm`, so albedo maps are sampled without sRGB decoding. That is a separate color-space issue, outside this design.
+An 8-bit colour texture gets an sRGB view beside its `Rgba8Unorm` data, and a material samples its color slots (base color, albedo, diffuse, emissive) through it, so albedo maps decode from sRGB; data slots such as normals and metallic-roughness sample the linear view. A material's solid `Color` value is a 1x1 texture with no sRGB view, so it is read as linear.
 
 ## Pass Interface
 

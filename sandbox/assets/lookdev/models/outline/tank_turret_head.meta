@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "5241ade1-7ebe-5b42-b05b-13e1ef5a34ae",
+    "name": "lookdev/models/outline/tank_turret_head",
+    "display_name": "tank_turret_head",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}
