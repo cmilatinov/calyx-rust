@@ -530,3 +530,290 @@ fn sandbox_action_map_binds_every_action_and_axis_the_game_reads() {
         assert!(map.axis(&name, &input).is_some(), "unbound axis {name}");
     }
 }
+
+/// A sandbox mesh's vertex positions and triangles (faces fanned), read from its OBJ.
+fn obj_mesh(name: &str) -> (Vec<Vec3>, Vec<[usize; 3]>) {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("assets/game/meshes")
+        .join(format!("{name}.obj"));
+    let source = std::fs::read_to_string(&path)
+        .unwrap_or_else(|e| panic!("{} does not read: {e}", path.display()));
+    let mut positions = Vec::new();
+    let mut triangles = Vec::new();
+    for line in source.lines() {
+        if let Some(position) = line.strip_prefix("v ") {
+            let mut coordinates = position
+                .split_whitespace()
+                .map(|value| value.parse::<f32>().unwrap());
+            positions.push(vec3(
+                coordinates.next().unwrap(),
+                coordinates.next().unwrap(),
+                coordinates.next().unwrap(),
+            ));
+        } else if let Some(face) = line.strip_prefix("f ") {
+            let corners: Vec<usize> = face
+                .split_whitespace()
+                .map(|corner| corner.split('/').next().unwrap().parse::<usize>().unwrap() - 1)
+                .collect();
+            for i in 1..corners.len() - 1 {
+                triangles.push([corners[0], corners[i], corners[i + 1]]);
+            }
+        }
+    }
+    (positions, triangles)
+}
+
+fn bounds(points: impl IntoIterator<Item = Vec3>) -> (Vec3, Vec3) {
+    points.into_iter().fold(
+        (Vec3::repeat(f32::INFINITY), Vec3::repeat(f32::NEG_INFINITY)),
+        |(min, max), point| (min.inf(&point), max.sup(&point)),
+    )
+}
+
+/// Whether segment `p`..`q` passes through the interior of triangle `t`. A
+/// segment that only touches the triangle's plane or edge, within a small
+/// tolerance, does not count, so faces that merely meet are not intersections.
+fn segment_pierces_triangle(p: Vec3, q: Vec3, t: [Vec3; 3]) -> bool {
+    let (e1, e2) = (t[1] - t[0], t[2] - t[0]);
+    let normal = e1.cross(&e2);
+    if normal.norm() < 1e-12 {
+        return false;
+    }
+    let normal = normal.normalize();
+    let (dp, dq) = ((p - t[0]).dot(&normal), (q - t[0]).dot(&normal));
+    if !((dp > 1e-5 && dq < -1e-5) || (dp < -1e-5 && dq > 1e-5)) {
+        return false;
+    }
+    let x = p + (q - p) * (dp / (dp - dq)) - t[0];
+    let (d00, d01, d11) = (e1.dot(&e1), e1.dot(&e2), e2.dot(&e2));
+    let (d20, d21) = (x.dot(&e1), x.dot(&e2));
+    let denominator = d00 * d11 - d01 * d01;
+    let v = (d11 * d20 - d01 * d21) / denominator;
+    let w = (d00 * d21 - d01 * d20) / denominator;
+    (1.0 - v - w).min(v).min(w) > 1e-4
+}
+
+/// Whether two triangles interpenetrate: an edge of one passes through the other.
+fn triangles_intersect(a: [Vec3; 3], b: [Vec3; 3]) -> bool {
+    (0..3).any(|i| segment_pierces_triangle(a[i], a[(i + 1) % 3], b))
+        || (0..3).any(|i| segment_pierces_triangle(b[i], b[(i + 1) % 3], a))
+}
+
+/// How many triangle pairs of two sandbox meshes interpenetrate.
+fn intersecting_triangle_pairs(a: &str, b: &str) -> usize {
+    let (positions_a, triangles_a) = obj_mesh(a);
+    let (positions_b, triangles_b) = obj_mesh(b);
+    let corners = |positions: &[Vec3], t: &[usize; 3]| t.map(|i| positions[i]);
+    let (min_b, max_b) = bounds(positions_b.iter().copied());
+    let boxed_b: Vec<_> = triangles_b
+        .iter()
+        .map(|t| {
+            let c = corners(&positions_b, t);
+            (c, bounds(c))
+        })
+        .collect();
+    let mut count = 0;
+    for t in &triangles_a {
+        let c = corners(&positions_a, t);
+        let (min, max) = bounds(c);
+        if (max.inf(&max_b) - min.sup(&min_b)).min() < 0.0 {
+            continue;
+        }
+        for (other, (other_min, other_max)) in &boxed_b {
+            let overlap = max.inf(other_max) - min.sup(other_min);
+            if overlap.min() >= 0.0 && triangles_intersect(c, *other) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+#[test]
+fn tank_right_side_meshes_mirror_the_left_ones_across_the_centre_plane() {
+    // The tank prefab places every part with an identity transform, so each
+    // right-side mesh must be its left twin reflected across x = 0.
+    for part in ["wheels", "tracks"] {
+        let (left_min, left_max) = bounds(obj_mesh(&format!("{part}_left")).0);
+        let (right_min, right_max) = bounds(obj_mesh(&format!("{part}_right")).0);
+        let mirrored_min = vec3(-left_max.x, left_min.y, left_min.z);
+        let mirrored_max = vec3(-left_min.x, left_max.y, left_max.z);
+        assert!(
+            (right_min - mirrored_min).abs().max() < 1e-3
+                && (right_max - mirrored_max).abs().max() < 1e-3,
+            "{part}_right bounds {right_min:?}..{right_max:?} should mirror \
+             {part}_left's: {mirrored_min:?}..{mirrored_max:?}"
+        );
+    }
+}
+
+#[test]
+fn tank_hull_clears_the_wheels_and_tracks() {
+    // As in the authored Tank_002.fbx, the hull sits above the running gear:
+    // no hull triangle cuts into a wheel or a track.
+    for part in ["wheels_left", "wheels_right", "tracks_left", "tracks_right"] {
+        assert_eq!(
+            intersecting_triangle_pairs("body", part),
+            0,
+            "the hull intersects {part}"
+        );
+    }
+}
+
+fn descendant_named(
+    scene: &Scene,
+    root: calyx_engine::scene::GameObject,
+    name: &str,
+) -> calyx_engine::scene::GameObject {
+    scene
+        .descendants(root)
+        .find(|game_object| scene.name(*game_object) == name)
+        .unwrap_or_else(|| panic!("{} should contain {name}", scene.name(root)))
+}
+
+/// The bounds of a tank part's mesh in the tank's own space, where the
+/// source model's layout is measured.
+fn tank_space_bounds(
+    scene: &Scene,
+    tank: calyx_engine::scene::GameObject,
+    part: &str,
+    mesh: &str,
+) -> (Vec3, Vec3) {
+    let part = descendant_named(scene, tank, part);
+    let to_tank =
+        scene.world_transform(tank).inverse_matrix() * scene.world_transform(part).matrix();
+    bounds(
+        obj_mesh(mesh)
+            .0
+            .into_iter()
+            .map(|p| (to_tank * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz()),
+    )
+}
+
+/// Asserts a tank's parts sit where Tank_002.fbx puts them: its bounds, read
+/// in Blender and moved into the game's Y-up tank space (with the export's
+/// 0.289567 lift that the tracks and wheels carry).
+fn assert_tank_matches_the_source_layout(scene: &Scene, tank: calyx_engine::scene::GameObject) {
+    let near = |actual: f32, expected: f32, what: &str| {
+        assert!(
+            (actual - expected).abs() < 0.01,
+            "{what} is {actual}, the source model has {expected}"
+        );
+    };
+    let full = [
+        (
+            "Body",
+            "body",
+            [-2.5639, 0.4759, -3.4473],
+            [2.5639, 2.6559, 2.5436],
+        ),
+        (
+            "Turret Pivot",
+            "turret_pivot",
+            [-0.8379, 2.4479, -0.5675],
+            [0.8666, 3.0172, 1.1374],
+        ),
+        (
+            "Gun",
+            "gun",
+            [-0.3991, 3.2214, 1.2124],
+            [0.3738, 3.9846, 4.5622],
+        ),
+    ];
+    for (part, mesh, min, max) in full {
+        let (actual_min, actual_max) = tank_space_bounds(scene, tank, part, mesh);
+        for axis in 0..3 {
+            near(actual_min[axis], min[axis], &format!("{part} min[{axis}]"));
+            near(actual_max[axis], max[axis], &format!("{part} max[{axis}]"));
+        }
+    }
+    // The exported head lacks some low rear geometry of the source head, so
+    // only the corners that geometry does not reach are compared.
+    let (min, max) = tank_space_bounds(scene, tank, "Turret Head", "turret_head");
+    near(min.x, -1.437, "Turret Head min x");
+    near(max.x, 1.437, "Turret Head max x");
+    near(max.y, 6.2127, "Turret Head top");
+    near(max.z, 1.9523, "Turret Head front");
+}
+
+#[test]
+fn tank_turret_and_gun_sit_where_the_source_model_puts_them() {
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let arena_tank = object_named(&scene, "Tank");
+    assert_tank_matches_the_source_layout(&scene, arena_tank);
+
+    let prefab = assets
+        .registries
+        .assets
+        .read()
+        .reload_by_path::<Prefab>(&copy.sandbox_root().join("game/prefabs/tank.cxprefab"))
+        .expect("tank prefab should load");
+    let (root, _) = scene
+        .instantiate_prefab_reporting(&prefab.read(), None)
+        .expect("tank prefab should instantiate");
+    let prefab_tank = descendant_named(&scene, root, "Tank");
+    assert_tank_matches_the_source_layout(&scene, prefab_tank);
+}
+
+#[test]
+fn tank_rounds_leave_from_the_barrel_tip() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let tank = object_named(&scene, "Tank");
+    let barrel = scene
+        .read_component::<ComponentTankController, _, _>(tank, |controller| {
+            controller.barrel.game_object(&scene)
+        })
+        .flatten()
+        .expect("sandbox tank should reference its barrel");
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+    runner.press_key(egui::Key::Space);
+    let mut steps = 0;
+    let (round, projectile) = loop {
+        runner.step();
+        let scene = runner.scene();
+        if let Some(round) = find_named(scene, "Projectile") {
+            let projectile = scene
+                .read_component::<sandbox::tank::ComponentProjectile, _, _>(round, |p| *p)
+                .unwrap();
+            break (round, projectile);
+        }
+        steps += 1;
+        assert!(steps < 60, "the tank should fire a round");
+    };
+    let scene = runner.scene();
+    let controller = scene
+        .read_component::<ComponentTankController, _, _>(tank, |controller| controller.clone())
+        .unwrap();
+    // Where the round started, before it flew for the time it has used.
+    let flown = controller.projectile_lifetime - projectile.lifetime_remaining;
+    let start =
+        scene.world_transform(round).position - projectile.direction * projectile.speed * flown;
+
+    let barrel_transform = scene.world_transform(barrel);
+    let to_world = barrel_transform.matrix();
+    let gun: Vec<Vec3> = obj_mesh("gun")
+        .0
+        .into_iter()
+        .map(|p| (to_world * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz())
+        .collect();
+    let forward = projectile.direction;
+    let along = |p: &Vec3| (p - barrel_transform.position).dot(&forward);
+    let tip = gun.iter().map(along).fold(f32::NEG_INFINITY, f32::max);
+    let muzzle: Vec<&Vec3> = gun.iter().filter(|p| along(p) > tip - 0.01).collect();
+    let muzzle_centre = muzzle.iter().copied().sum::<Vec3>() / muzzle.len() as f32;
+
+    let past_tip = along(&start) - tip;
+    assert!(
+        (0.0..=projectile.radius).contains(&past_tip),
+        "a round should start at the barrel tip, not {past_tip} m past it"
+    );
+    let off_bore = (start - muzzle_centre) - forward * (start - muzzle_centre).dot(&forward);
+    assert!(
+        off_bore.norm() < 0.05,
+        "a round should start on the barrel's bore, not {} m off it",
+        off_bore.norm()
+    );
+}
