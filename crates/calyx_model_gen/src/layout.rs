@@ -122,13 +122,18 @@ impl Layout {
     /// The layout of `root`, which must lie inside a project's `assets`
     /// folder so the editor loads what it writes.
     pub fn new(root: &Path) -> Result<Layout, String> {
-        let parts: Vec<String> = root
-            .components()
-            .filter_map(|c| match c {
-                Component::Normal(part) => Some(part.to_string_lossy().into_owned()),
-                _ => None,
-            })
-            .collect();
+        // Resolve `..` lexically, so every spelling of a folder gives the
+        // same prefix and so the same ids.
+        let mut parts: Vec<String> = Vec::new();
+        for component in root.components() {
+            match component {
+                Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+                Component::ParentDir => {
+                    parts.pop();
+                }
+                _ => {}
+            }
+        }
         let after_assets = parts
             .iter()
             .rposition(|part| part == "assets")
@@ -231,6 +236,20 @@ mod tests {
         assert_eq!(nested.prefix, "props/clay");
         assert!(Layout::new(Path::new("sandbox/generated")).is_err());
         assert!(Layout::new(Path::new("sandbox/assets")).is_err());
+    }
+
+    #[test]
+    fn parent_components_resolve_before_the_prefix_is_taken() {
+        for spelling in [
+            "sandbox/assets/generated/../generated",
+            "sandbox/assets/./generated",
+            "sandbox/assets/x/../generated/",
+        ] {
+            let layout = Layout::new(Path::new(spelling)).unwrap();
+            assert_eq!(layout.prefix, "generated", "{spelling}");
+        }
+        assert!(Layout::new(Path::new("sandbox/assets/generated/..")).is_err());
+        assert!(Layout::new(Path::new("sandbox/assets/../generated")).is_err());
     }
 
     #[test]
