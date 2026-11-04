@@ -104,6 +104,7 @@ fn only_types_whose_systems_honor_the_state_opt_in() {
         ComponentVignette::type_uuid(),
         ComponentAntiAliasing::type_uuid(),
         ComponentFog::type_uuid(),
+        crate::component::ComponentOutline::type_uuid(),
         ComponentMesh::type_uuid(),
         ComponentSkinnedMesh::type_uuid(),
         ComponentPointLight::type_uuid(),

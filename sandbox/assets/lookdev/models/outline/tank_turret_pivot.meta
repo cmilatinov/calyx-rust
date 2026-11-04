@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "b4610617-c6ff-50ac-ad36-5742a87c40a9",
-    "name": "lookdev/models/outline/tank_turret_pivot",
-    "display_name": "tank_turret_pivot",
-    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
-  },
-  "inner": []
-}

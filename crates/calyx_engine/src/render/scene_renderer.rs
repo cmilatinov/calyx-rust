@@ -13,7 +13,8 @@ use crate::render::asset_render_state::AssetRenderState;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass, DepthOfFieldPass, FogPass,
-    FxaaPass, PostProcessChain, PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
+    FxaaPass, OutlinePass, PostProcessChain, PostProcessSettings, SceneInput, SsaoInputs, SsaoPass,
+    TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -253,6 +254,12 @@ pub struct SceneRenderer {
     light_manager: LightManager,
     shadow_renderer: ShadowRenderer,
     gbuffer_renderer: GBufferRenderer,
+    /// At one sample, a copy of the scene depth taken right after the
+    /// geometry pass, the G-buffer's depth before any forward draw, skybox or
+    /// particle writes it. Kept only while the chain reads
+    /// [`SceneInput::GBufferDepth`]; above one sample the G-buffer has a
+    /// depth of its own.
+    gbuffer_depth_copy: Option<Texture>,
     /// Ambient occlusion from the G-buffer, read by the lighting pass.
     ssao: SsaoPass,
     deferred_lighting: DeferredLightingRenderer,
@@ -365,6 +372,9 @@ impl SceneRenderer {
         post_process.push(Box::new(TonemapPass::new(context)?));
         post_process.push(Box::new(BloomPass::new(context)?));
         post_process.push(Box::new(ColorGradingPass::new(context)?));
+        // Ink outlines draw on the graded image, so the ink shows as its
+        // colour, and before FXAA, which smooths their stair steps.
+        post_process.push(Box::new(OutlinePass::new(context)?));
         post_process.push(Box::new(FxaaPass::new(context)?));
         let overlay = OverlayCompositor::new(context)?;
 
@@ -405,6 +415,7 @@ impl SceneRenderer {
             light_manager: Default::default(),
             shadow_renderer,
             gbuffer_renderer,
+            gbuffer_depth_copy: None,
             ssao,
             deferred_lighting,
             gizmo_renderer,
@@ -608,6 +619,27 @@ impl SceneRenderer {
             .targets()
             .expect("the geometry pass just drew the G-buffer");
         let gbuffer_depth = gbuffer.own_depth().unwrap_or(&self.scene_depth_texture);
+        // At one sample the forward draws, the skybox and the particles write
+        // into the G-buffer's depth next, so a chain pass that reads it gets
+        // a copy taken now.
+        let keep_gbuffer_depth = gbuffer.own_depth().is_none()
+            && self
+                .post_process
+                .reads(&self.post_process_settings, SceneInput::GBufferDepth);
+        if keep_gbuffer_depth {
+            let copy = Self::gbuffer_depth_copy(
+                &mut self.gbuffer_depth_copy,
+                &render_context,
+                &self.scene_depth_texture,
+            );
+            encoder.copy_texture_to_texture(
+                self.scene_depth_texture.texture.as_image_copy(),
+                copy.texture.as_image_copy(),
+                self.scene_depth_texture.descriptor.size,
+            );
+        } else {
+            self.gbuffer_depth_copy = None;
+        }
         // SSAO reads the G-buffer before anything else draws into its depth,
         // so the depth, normals and occlusion all describe the PBR surfaces.
         let occlusion = self.ssao.render(
@@ -737,6 +769,9 @@ impl SceneRenderer {
                 particle_depth: self.particle_renderer.particle_depth(),
                 normals: gbuffer.map(|gbuffer| &gbuffer.normals),
                 albedo: gbuffer.map(|gbuffer| &gbuffer.albedo),
+                gbuffer_depth: gbuffer
+                    .and_then(GBufferTargets::own_depth)
+                    .or(self.gbuffer_depth_copy.as_ref()),
             },
         );
         self.render_overlays(&render_context, &mut encoder);
@@ -1569,6 +1604,38 @@ impl SceneRenderer {
         })
     }
 
+    /// `copy`, recreated when it is missing or no longer matches `depth`'s
+    /// size: the single-sample texture the G-buffer's depth is copied into.
+    fn gbuffer_depth_copy<'a>(
+        copy: &'a mut Option<Texture>,
+        render_context: &Arc<RenderContext>,
+        depth: &Texture,
+    ) -> &'a Texture {
+        let size = depth.descriptor.size;
+        if copy
+            .as_ref()
+            .is_none_or(|texture| texture.descriptor.size != size)
+        {
+            *copy = Some(Texture::new(
+                render_context.clone(),
+                &wgpu::TextureDescriptor {
+                    label: Some("gbuffer_depth_copy"),
+                    size,
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format: wgpu::TextureFormat::Depth32Float,
+                    usage: wgpu::TextureUsages::TEXTURE_BINDING | wgpu::TextureUsages::COPY_DST,
+                    view_formats: &[],
+                },
+                None,
+                None,
+                false,
+            ));
+        }
+        copy.as_ref().expect("the copy was just created")
+    }
+
     /// Resizes the internal scene color and depth textures.
     pub fn resize_textures(&mut self, width: u32, height: u32) {
         if self.scene_texture.descriptor.size.width == width
@@ -1605,6 +1672,7 @@ impl SceneRenderer {
         self.gbuffer_renderer
             .resize(&self.asset_context.render_context, (width, height));
         self.ssao.release_targets();
+        self.gbuffer_depth_copy = None;
         self.post_process.clear_targets();
         self.overlay.clear_targets();
     }
@@ -1732,9 +1800,10 @@ mod tests {
     use crate::assets::AssetRef;
     use crate::component::{
         ComponentAmbientOcclusion, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
-        ComponentID, ComponentMesh, ComponentParticleSystem, ComponentTonemap, ParticleBlendMode,
-        ParticleColorOverLifetime, ParticleEmission, ParticleForces, ParticleScalarRange,
-        ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity, TonemappingPreset,
+        ComponentID, ComponentMesh, ComponentOutline, ComponentParticleSystem, ComponentTonemap,
+        ParticleBlendMode, ParticleColorOverLifetime, ParticleEmission, ParticleForces,
+        ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
+        TonemappingPreset,
     };
     use crate::math::Transform;
     use crate::render::postprocess::{
@@ -5290,6 +5359,147 @@ fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
         registry
             .create_or_update(name.into(), material)
             .expect("material should be created")
+    }
+
+    #[test]
+    fn forward_draws_and_particles_draw_no_ink_outlines() {
+        const SIZE: (u32, u32) = (96, 96);
+        const INK: [u8; 4] = [0, 255, 0, 255];
+        let assets = TestAssets::engine();
+        write_unlit_shader(&assets);
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let unlit = unlit_material(
+            &read_only_context,
+            "test/outline_unlit",
+            [1.0, 0.0, 1.0, 1.0],
+        );
+        let red = pbr_material_with(
+            &read_only_context,
+            "test/outline_red",
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.0, 0.0, 0.0, 1.0]),
+                ),
+                (
+                    "emission_color",
+                    ShaderVariableValue::Color([1.0, 0.0, 0.0, 1.0]),
+                ),
+                ("emission_strength", ShaderVariableValue::Float(1.0)),
+            ],
+        );
+        // A PBR ground that fills the view, a PBR box on it on the left, an
+        // unlit box on it on the right and an alpha-blended particle above
+        // the middle, which writes the scene depth.
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_box(
+            &mut builder,
+            "ground",
+            &cube,
+            &red,
+            vec3(0.0, -0.5, 0.0),
+            vec3(400.0, 1.0, 400.0),
+        );
+        let pbr_box = vec3(-1.2, 0.4, 0.0);
+        spawn_box(&mut builder, "pbr", &cube, &red, pbr_box, Vec3::repeat(0.8));
+        let unlit_box = vec3(1.2, 0.4, 0.0);
+        spawn_box(
+            &mut builder,
+            "unlit",
+            &cube,
+            &unlit,
+            unlit_box,
+            Vec3::repeat(0.8),
+        );
+        let particle = vec3(0.0, 1.2, -0.5);
+        let system = spawn_particle(&mut builder, "smoke", particle, Color32::WHITE, 0.8);
+        builder
+            .scene_mut()
+            .write_component(system, |system: &mut ComponentParticleSystem| {
+                system.rendering.blend_mode = ParticleBlendMode::Alpha;
+            })
+            .expect("the particle has a system");
+        let volume = builder.spawn("volume");
+        builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+        builder.add_component(
+            volume,
+            ComponentOutline {
+                color: Color32::from_rgb(INK[0], INK[1], INK[2]),
+                width: 2.0,
+                ..Default::default()
+            },
+        );
+        let scene = builder.finish();
+        let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+        let position = vec3(0.0, 3.0, -4.0);
+        let transform = Transform::from_components(
+            position,
+            UnitQuaternion::face_towards(&(vec3(0.0, 0.5, 0.0) - position), &Vec3::y()),
+            vec3(1.0, 1.0, 1.0),
+        );
+        let mut particles = ParticleSimulation::new();
+        particles.simulate(&scene, &render_context, 0.0);
+
+        for samples in [1, 4] {
+            if !renders_at(&render_context, samples) {
+                continue;
+            }
+            let mut renderer = SceneRenderer::new(
+                &read_only_context,
+                SceneRendererOptions {
+                    samples,
+                    clear_color: Color32::BLACK,
+                    ..Default::default()
+                },
+                SIZE,
+            )
+            .expect("scene renderer should load its assets");
+            renderer.render_scene_base(&camera, &transform, &scene, Some(&particles), None);
+            renderer.finalize_scene();
+            let image = read_scene_texture(&renderer, &render_context);
+            let ink_within = |center: Vec3, half: f32| {
+                let (x0, y0) = project(&camera, &transform, center - vec3(half, -half, 0.0), SIZE);
+                let (x1, y1) = project(&camera, &transform, center + vec3(half, -half, 0.0), SIZE);
+                (y0.min(y1)..=y0.max(y1))
+                    .flat_map(|y| (x0.min(x1)..=x0.max(x1)).map(move |x| (x, y)))
+                    .filter(|&(x, y)| image.get_pixel(x, y).0 == INK)
+                    .count()
+            };
+
+            assert!(
+                ink_within(pbr_box, 0.7) > 20,
+                "{samples} samples: the PBR box is outlined"
+            );
+            assert_eq!(
+                ink_within(unlit_box, 0.7),
+                0,
+                "{samples} samples: the unlit box draws no line"
+            );
+            assert_eq!(
+                ink_within(particle, 0.35),
+                0,
+                "{samples} samples: the particle draws no line"
+            );
+            let [r, g, b, _] = image
+                .get_pixel(
+                    project(&camera, &transform, particle, SIZE).0,
+                    project(&camera, &transform, particle, SIZE).1,
+                )
+                .0;
+            assert!(
+                r > 200 && g > 150 && b > 150,
+                "{samples} samples: the particle is drawn: {:?}",
+                [r, g, b]
+            );
+        }
     }
 
     #[test]

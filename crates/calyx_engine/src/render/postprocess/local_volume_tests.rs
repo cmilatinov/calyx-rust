@@ -5,8 +5,8 @@ use super::*;
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
     ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, FogMode,
-    LocalVolumeShape, TonemappingPreset,
+    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
+    FogMode, LocalVolumeShape, TonemappingPreset,
 };
 use crate::math::{compose_transform, Transform};
 use crate::scene::{GameObject, Scene};
@@ -594,4 +594,76 @@ fn fog_off_below_fades_in_from_no_opacity() {
     assert_close(fog.end, 50.0, "keeps the volume's end");
     assert_eq!(fog.color, Color32::WHITE, "keeps the volume's colour");
     assert_eq!(below.blend(&effects, 0.0).fog.map(|f| f.opacity), Some(0.0));
+}
+
+#[test]
+fn outlines_blend_between_a_global_and_a_local_volume_and_fade_in_from_no_opacity() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let global = spawn_global(&mut scene, 0.0, None);
+    let thin = ComponentOutline {
+        color: Color32::BLACK,
+        width: 1.0,
+        depth_threshold: 0.02,
+        normal_threshold: 60.0,
+        opacity: 1.0,
+    };
+    scene.add_component(global, thin);
+    let local = spawn_local(&mut scene, Vec3::zeros(), 1.0, 0);
+    scene.add_component(
+        local,
+        ComponentOutline {
+            color: Color32::WHITE,
+            width: 3.0,
+            depth_threshold: 0.04,
+            normal_threshold: 20.0,
+            opacity: 0.5,
+        },
+    );
+
+    let resolve = |x: f32| PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0)).outline;
+    assert_eq!(resolve(0.0).map(|o| o.width), Some(3.0), "inside");
+    // Halfway through the blend distance.
+    let halfway = resolve(2.0).expect("outlines halfway out");
+    assert_close(halfway.width, 2.0, "width interpolates");
+    assert_close(
+        halfway.depth_threshold,
+        0.03,
+        "depth threshold interpolates",
+    );
+    assert_close(
+        halfway.normal_threshold,
+        40.0,
+        "normal threshold interpolates",
+    );
+    assert_close(halfway.opacity, 0.75, "opacity interpolates");
+    // Linear 0.5 encodes to sRGB 188; a gamma-space blend would give 128.
+    assert!(
+        (187..=189).contains(&halfway.color.r()),
+        "the ink blends in linear space: {:?}",
+        halfway.color
+    );
+    assert_eq!(
+        resolve(3.0),
+        Some(thin),
+        "outside, the global outlines apply"
+    );
+
+    // Off below, a volume's outlines fade in from no ink.
+    let effects = PostProcessEffects {
+        outline: Some(thin),
+        ..Default::default()
+    };
+    let below = PostProcessSettings::default();
+    let faded = below
+        .blend(&effects, 0.25)
+        .outline
+        .expect("outlines fade in");
+    assert_close(faded.opacity, 0.25, "opacity from 0");
+    assert_close(faded.width, 1.0, "keeps the volume's width");
+    assert_eq!(faded.color, Color32::BLACK, "keeps the volume's ink");
+    assert_eq!(
+        below.blend(&effects, 0.0).outline.map(|o| o.opacity),
+        Some(0.0)
+    );
 }

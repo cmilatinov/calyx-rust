@@ -114,7 +114,10 @@ multisampled G-buffer multiplies its memory by the sample count.
   view shows the PBR surface behind them.
 - **Post-processing** reads the `normals` and `albedo` targets as they are, as
   `SceneInput::Normals` and `SceneInput::Albedo`, at every sample count: there
-  is no resolve to do. See
+  is no resolve to do. A pass that needs the depth of these surfaces alone
+  reads `SceneInput::GBufferDepth`: above one sample the geometry pass's own
+  depth, at one sample a copy of the scene depth taken right after the
+  geometry pass, made only on frames whose chain reads it. See
   [Shared Inputs](../post-processing/architecture.md#shared-inputs).
 
 ## Debug view

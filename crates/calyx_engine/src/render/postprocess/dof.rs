@@ -587,6 +587,7 @@ mod tests {
                 particle_depth: None,
                 normals: None,
                 albedo: None,
+                gbuffer_depth: None,
             },
         );
         render_context.queue().submit(Some(encoder.finish()));
@@ -825,6 +826,7 @@ mod tests {
                     particle_depth: None,
                     normals: None,
                     albedo: None,
+                    gbuffer_depth: None,
                 },
             );
             render_context.queue().submit(Some(encoder.finish()));

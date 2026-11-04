@@ -939,6 +939,7 @@ mod tests {
                     particle_depth: false,
                     normals: false,
                     albedo: false,
+                    gbuffer_depth: false,
                 },
                 "with or without SSAO the chain tone maps alone and builds no depth"
             );

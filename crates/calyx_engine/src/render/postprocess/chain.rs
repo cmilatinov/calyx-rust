@@ -50,6 +50,8 @@ pub struct ChainPlan {
     pub normals: bool,
     /// Whether a planned pass reads the G-buffer albedo.
     pub albedo: bool,
+    /// Whether a planned pass reads the G-buffer depth.
+    pub gbuffer_depth: bool,
 }
 
 impl ChainPlan {
@@ -71,6 +73,7 @@ impl ChainPlan {
                     plan.particle_depth |= inputs.contains(SceneInput::ParticleDepth);
                     plan.normals |= inputs.contains(SceneInput::Normals);
                     plan.albedo |= inputs.contains(SceneInput::Albedo);
+                    plan.gbuffer_depth |= inputs.contains(SceneInput::GBufferDepth);
                     running.push(index);
                 }
                 Err(error) => plan.skipped.push(error),
@@ -118,6 +121,10 @@ pub struct ChainTargets<'a> {
     /// The G-buffer's albedo target, single-sample at any sample count, or
     /// `None` before the renderer has drawn one.
     pub albedo: Option<&'a Texture>,
+    /// The G-buffer's depth, single-sample at any sample count, or `None`
+    /// when the renderer kept none: it keeps it only for a frame whose
+    /// chain reads [`SceneInput::GBufferDepth`].
+    pub gbuffer_depth: Option<&'a Texture>,
 }
 
 /// Post-processing passes in stage order, then insertion order, with the
@@ -178,6 +185,7 @@ impl PostProcessChain {
             SceneInput::ParticleDepth => plan.particle_depth,
             SceneInput::Normals => plan.normals,
             SceneInput::Albedo => plan.albedo,
+            SceneInput::GBufferDepth => plan.gbuffer_depth,
             SceneInput::Velocity => false,
         }
     }
@@ -286,6 +294,10 @@ impl PostProcessChain {
                 albedo: inputs
                     .contains(SceneInput::Albedo)
                     .then_some(targets.albedo)
+                    .flatten(),
+                gbuffer_depth: inputs
+                    .contains(SceneInput::GBufferDepth)
+                    .then_some(targets.gbuffer_depth)
                     .flatten(),
             };
             let (input, output) = (io.input, io.output);

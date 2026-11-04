@@ -44,6 +44,11 @@ pub enum SceneInput {
     /// `Rgba8UnormSrgb` holding the linear base color in RGB, and in A 1
     /// where an opaque PBR surface was drawn, 0 elsewhere.
     Albedo = 0b10000,
+    /// The G-buffer's depth, single-sample at every sample count: only the
+    /// opaque PBR surfaces the normals and albedo describe, before any
+    /// forward draw, skybox or particle writes the scene depth. Cleared to 1
+    /// where no surface was drawn.
+    GBufferDepth = 0b100000,
 }
 
 impl fmt::Display for SceneInput {
@@ -54,6 +59,7 @@ impl fmt::Display for SceneInput {
             Self::Velocity => "velocity",
             Self::ParticleDepth => "particle depth",
             Self::Albedo => "albedo",
+            Self::GBufferDepth => "G-buffer depth",
         })
     }
 }
@@ -64,7 +70,7 @@ pub type PassInputs = BitFlags<SceneInput>;
 
 /// The scene inputs the renderer produces.
 pub const PRODUCED_INPUTS: PassInputs =
-    make_bitflags!(SceneInput::{Depth | ParticleDepth | Normals | Albedo});
+    make_bitflags!(SceneInput::{Depth | ParticleDepth | Normals | Albedo | GBufferDepth});
 
 /// Checks the inputs `pass` reads against what the renderer produces, and
 /// reports the first one it does not.
@@ -189,6 +195,9 @@ pub struct PassIo<'a> {
     /// The G-buffer's albedo target, when the pass asked for
     /// [`SceneInput::Albedo`].
     pub albedo: Option<&'a Texture>,
+    /// The G-buffer's single-sample depth, when the pass asked for
+    /// [`SceneInput::GBufferDepth`].
+    pub gbuffer_depth: Option<&'a Texture>,
 }
 
 /// One full-screen pass of the post-processing chain.

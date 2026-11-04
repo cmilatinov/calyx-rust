@@ -7,7 +7,7 @@ use crate::assets::post_process_profile::PostProcessProfile;
 use crate::component::{
     Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
     ComponentColorGrading, ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette,
+    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
 };
 use crate::scene::{GameObject, Scene};
 use legion::storage::ComponentTypeId;
@@ -37,6 +37,8 @@ pub struct PostProcessSettings {
     pub color_grading: Option<ComponentColorGrading>,
     /// Darkened screen edges, after tone mapping.
     pub vignette: Option<ComponentVignette>,
+    /// Ink outlines, after colour grading and before FXAA.
+    pub outline: Option<ComponentOutline>,
     /// Screen-space anti-aliasing (FXAA), after tone mapping.
     pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
@@ -62,6 +64,8 @@ pub struct PostProcessEffects {
     pub color_grading: Option<ComponentColorGrading>,
     /// Vignette.
     pub vignette: Option<ComponentVignette>,
+    /// Ink outlines.
+    pub outline: Option<ComponentOutline>,
     /// Anti-aliasing (FXAA).
     pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
@@ -90,6 +94,7 @@ impl PostProcessEffects {
             bloom: over.bloom.or(self.bloom),
             color_grading: over.color_grading.or(self.color_grading),
             vignette: over.vignette.or(self.vignette),
+            outline: over.outline.or(self.outline),
             anti_aliasing: over.anti_aliasing.or(self.anti_aliasing),
         }
     }
@@ -105,6 +110,7 @@ impl PostProcessEffects {
             bloom: effect(scene, game_object),
             color_grading: effect(scene, game_object),
             vignette: effect(scene, game_object),
+            outline: effect(scene, game_object),
             anti_aliasing: effect(scene, game_object),
         }
     }
@@ -122,6 +128,7 @@ impl From<PostProcessEffects> for PostProcessSettings {
             bloom: effects.bloom,
             color_grading: effects.color_grading,
             vignette: effects.vignette,
+            outline: effects.outline,
             anti_aliasing: effects.anti_aliasing,
         }
     }
@@ -272,6 +279,7 @@ impl PostProcessSettings {
             bloom: blend_effect(self.bloom, effects.bloom, factor),
             color_grading: blend_effect(self.color_grading, effects.color_grading, factor),
             vignette: blend_effect(self.vignette, effects.vignette, factor),
+            outline: blend_effect(self.outline, effects.outline, factor),
             anti_aliasing: blend_effect(self.anti_aliasing, effects.anti_aliasing, factor),
         }
     }

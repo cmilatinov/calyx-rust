@@ -206,6 +206,42 @@ fn a_fog_entry_round_trips_and_switches_fog_on() {
 }
 
 #[test]
+fn an_outline_entry_round_trips_and_switches_outlines_on() {
+    let root = TempRoot::new();
+    let path = root.path("outline.cxpostfx");
+    let outline = crate::component::ComponentOutline {
+        color: egui::Color32::from_rgb(0x12, 0x12, 0x12),
+        width: 3.0,
+        depth_threshold: 0.02,
+        normal_threshold: 35.0,
+        opacity: 0.9,
+    };
+    let profile = PostProcessProfile::from_entries([ProfileEntry::new(outline)]);
+    save(&profile, &path);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(
+        saved["entries"][0]["type"],
+        serde_json::json!(crate::component::ComponentOutline::type_uuid()),
+        "the entry is keyed by the outline component's type"
+    );
+    assert_eq!(saved["entries"][0]["settings"]["width"], 3.0);
+
+    let (registries, id) = registries_with_profile(&root, &path);
+    let loaded = load(&registries, id);
+
+    assert_eq!(*loaded.read(), profile);
+    assert_eq!(loaded.read().effects().outline, Some(outline));
+    let mut scene = registries.scene();
+    spawn_global(&mut scene, id);
+    assert_eq!(
+        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros()).outline,
+        Some(outline),
+        "a volume using the profile renders with its outlines"
+    );
+}
+
+#[test]
 fn a_neutral_tone_mapping_entry_round_trips_and_selects_the_curve() {
     let root = TempRoot::new();
     let path = root.path("neutral.cxpostfx");
@@ -311,6 +347,7 @@ fn the_effect_types_are_the_registered_effect_components() {
         ComponentVignette::type_uuid(),
         crate::component::ComponentAntiAliasing::type_uuid(),
         ComponentFog::type_uuid(),
+        crate::component::ComponentOutline::type_uuid(),
     ];
     expected.sort();
 

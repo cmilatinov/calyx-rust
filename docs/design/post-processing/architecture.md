@@ -89,7 +89,7 @@ pub enum PostProcessStage { Hdr, Tonemap, Ldr }
 
 #[bitflags]
 #[repr(u8)]
-pub enum SceneInput { Depth, Normals, Velocity, ParticleDepth, Albedo }  // one bit each
+pub enum SceneInput { Depth, Normals, Velocity, ParticleDepth, Albedo, GBufferDepth }  // one bit each
 pub type PassInputs = BitFlags<SceneInput>;                  // enumflags2
 
 pub trait PostProcessPass {
@@ -110,6 +110,7 @@ pub struct PassIo<'a> {
     pub particle_depth: Option<&'a Texture>,
     pub normals: Option<&'a Texture>,
     pub albedo: Option<&'a Texture>,
+    pub gbuffer_depth: Option<&'a Texture>,
 }
 ```
 
@@ -139,7 +140,8 @@ A pass declares the scene inputs it reads in `inputs()`. The chain builds each o
 - **Albedo**: the G-buffer's `albedo` target itself, `Rgba8UnormSrgb`, so a pass that samples or loads it gets linear base color. Its alpha is the G-buffer's coverage: 1 where an opaque PBR surface was drawn, 0 elsewhere (sky, particles, meshes drawn with another shader). The normals target holds zeros where alpha is 0, so a pass that reads normals and needs to know where they hold a surface asks for albedo as well.
 - **Normals and albedo under MSAA**: the G-buffer is single-sample at every sample count and is never resolved (see [G-Buffer](../rendering/gbuffer.md#msaa)), so the chain hands passes the same single-sample targets at one and four samples, and builds nothing for them. Above one sample the chain's depth is sample 0 of the scene depth, which for a PBR pixel is the G-buffer depth the lighting pass wrote into every sample, so depth, normals and albedo describe the same surface there.
 - **Normals and albedo are lazy for free**: every frame draws the G-buffer for the deferred lighting pass, so a pass reading them adds no pass and no target, and a frame without such a pass does no extra work either. A G-buffer view replaces the chain, so it never reads them.
-- **What they do not see**: the G-buffer holds only opaque PBR surfaces. Where a mesh drawn with another shader, or an alpha-blended particle written into the scene depth, covers a PBR surface, the depth holds the nearer draw while normals and albedo still hold the surface behind it. A pass that must agree with the depth there compares the depth with the particle depth, or treats such pixels as it treats sky.
+- **What they do not see**: the G-buffer holds only opaque PBR surfaces. Where a mesh drawn with another shader, or an alpha-blended particle written into the scene depth, covers a PBR surface, the depth holds the nearer draw while normals and albedo still hold the surface behind it. A pass that must agree with the depth there compares the depth with the particle depth, treats such pixels as it treats sky, or reads the G-buffer depth.
+- **G-buffer depth**: the depth of the opaque PBR surfaces alone, the one the normals and albedo describe, before any forward draw, the skybox or a particle writes the scene depth; cleared to 1 where no surface was drawn. Above one sample it is the G-buffer's own single-sample depth, which exists anyway. At one sample the geometry pass draws the scene depth itself, so the renderer copies it into a texture it keeps (`gbuffer_depth_copy`) right after the geometry pass, only on frames whose chain reads it (`PostProcessChain::reads`), and frees the copy on the other frames and on resize. The ink outlines read it (see Outlines).
 - **Velocity**: not produced yet. A pass that asks for it is skipped with a `PostProcessError::InputUnavailable` warning naming the pass and input.
 
 Tone mapping asks for nothing.
@@ -176,6 +178,20 @@ Particles draw in the scene pass, after the meshes and the skybox, sorted back t
 - **Order**: first in the `Hdr` stage. SSAO is applied inside the lighting pass, before the chain (see Ambient Occlusion), so occlusion darkens only the surfaces' ambient light and never the fog in front of them, as the fog's in-scattered light is not occluded by the geometry. Before depth of field, so a fogged distant surface blurs to its fogged colour, as a lens sees it. Before bloom, so bloom spreads the light that reaches the camera through the fog: a bright light far in the fog is dimmed before it blooms.
 - **What it fogs**: everything in the scene depth by its own distance: the opaque PBR surfaces, meshes drawn with another shader in the forward pass, and alpha-blended particles past half coverage (see Particles And Depth). Additive particles and the faint fringe of alpha-blended ones are not in the scene depth, so their light is mixed towards the fog by the distance of the surface behind them: a glow in front of distant fog fades with that fog. The pass reads the scene depth rather than the particle depth because the particle depth would fog the background behind a particle's soft edge by the particle's nearer distance, leaving an unfogged halo around every particle in front of fog.
 - **MSAA**: depth reaches the pass single-sample at every sample count, sample 0 of the scene depth above one sample (see Shared Inputs), so a multisampled forward edge takes the fog of one of its samples.
+
+## Outlines
+
+`OutlinePass` (`postprocess/outline.rs`) is an `Ldr` pass that draws ink lines of a constant width in pixels around the opaque PBR surfaces and along their creases, the screen-space replacement for inverted-hull outline meshes (#509). It runs while the settings hold an `outline`, from an enabled Outline component on the volume, so a frame without it keeps the tone-map-only plan. It reads `SceneInput::GBufferDepth` and `SceneInput::Normals` to find edges and `SceneInput::Depth` to hide lines behind other draws, records one full-screen pass (`shaders/postprocess/outline.wgsl`) and owns no texture.
+
+- **Edges**: an edge lies between two neighbouring pixels of the G-buffer when one holds a surface and the other none (a silhouette against the sky or the clear colour), when the distance jumps by more than the surfaces on either side predict (a silhouette against a farther surface), or when the geometric normals turn by more than `normal_threshold` degrees (a crease: turret against hull, track against hull, a box on the ground).
+- **Distance jump**: each side extrapolates its own surface one pixel across the edge, linearly in inverse view depth, which is linear in screen space across a plane, and the smaller of the two errors, relative to the nearer surface's inverse depth, is compared with `depth_threshold`. A plane at any angle, the ground at a grazing angle included, predicts its next pixel exactly and draws no line; a crease bends the extrapolation only by its change of slope, which the normal test covers. Where both surfaces turn edge-on to the pixel's ray, as a rounded shape does towards its silhouette, the distance bends faster than either side predicts, so the threshold is divided by the larger `|n . ray|` of the two, at least 0.2: up to five times higher on an edge-on curve, and unchanged where either side faces the camera, as the ground behind a silhouette does.
+- **Gentle curves**: the normal test reads the geometric normal (BA), the interpolated vertex normal, so normal maps draw no lines, and a smooth-shaded clay shape, whose normals turn a few degrees from pixel to pixel, draws none across its curve; flat-shaded hard edges, whose normals jump, do.
+- **Width**: `width` pixels, rounded to a whole number from 1 to 8 (`outline_pixel_width`). Each pixel looks along its row, its column and both diagonals for an edge within reach: the line straddles the edge, `ceil(width / 2)` pixels on the nearer surface and `floor(width / 2)` on the farther one, so a one-pixel line lies on the object, not on the background. A diagonal step counts as `sqrt(2)` pixels, so a slanted edge gets about the width a straight one does. The line is the same number of pixels at every distance, unlike a hull, which thins with distance.
+- **Colour**: the ink is an sRGB `Color32` converted to linear and drawn on display-linear colour, so it shows as its hex (`#121212` by default, the tank game's ink) whatever the exposure, the curve or the grading. `opacity` mixes it in, and alpha rises by the same amount, so a line over a transparent background still shows.
+- **Order**: after tone mapping, so the ink never goes through the curve: in the `Hdr` stage an ink of `#121212` would reach the screen darker under ACES, and bloom would treat it as light. After colour grading, so the grade does not lift or tint the ink, and before FXAA, whose edge detection then smooths the lines' stair steps like any other edge. It follows that fog does not fade distant lines; the Sunbaked haze fogs surfaces by at most about 15% at the Far framing, and full-strength lines read better there.
+- **What draws lines**: only opaque PBR surfaces. Edges come from the G-buffer's own depth and normals (see Shared Inputs), so meshes drawn with another shader, the skybox and particles, alpha-blended ones that write the scene depth included, draw none. Where one of them lies more than 1% nearer than the G-buffer surface in the scene depth, it hides the line there, as it hides the surface. An additive particle stays out of the scene depth, so a line behind it is drawn over its glow.
+- **MSAA**: the G-buffer, its depth and its normals are single-sample at every sample count, and the PBR surfaces shade at one sample (see Deferred Shading), so the edges are the same at one and four samples. Above one sample the scene depth that hides lines is sample 0, so a multisampled forward edge hides the line by its first sample.
+- **Cost**: each pixel checks four directions; at width 2 that is two edges per direction, each up to four G-buffer pixels (depth and normals), in one full-screen pass. The frame time at the Far framing is in #509's pull request.
 
 ## Depth Of Field
 
@@ -261,7 +277,7 @@ It runs on display-linear color, in this order:
 - The graded color is clamped to `[0, 1]`.
 - **Vignette**: with `d = |uv - 0.5| * intensity * 3` and `d.x` scaled by the aspect ratio so the shape is round, the factor is `(1 - d.d)^(smoothness * 5)`, clamped. The color is multiplied by `mix(color, 1, factor)`: unchanged at the centre, fading to `color` (black by default) towards the edges. `color` is an sRGB `Color32` converted to linear on the CPU.
 
-Grading runs before FXAA (#400), as is usual: FXAA's edge detection then sees the final image, and grading does not change the contrast FXAA already smoothed. Both are `Ldr` passes, so the order is their registration order in `SceneRenderer::new`: tone mapping, colour grading, then FXAA.
+Grading runs before FXAA (#400), as is usual: FXAA's edge detection then sees the final image, and grading does not change the contrast FXAA already smoothed. Both are `Ldr` passes, so the order is their registration order in `SceneRenderer::new`: tone mapping, colour grading, the ink outlines (see Outlines), then FXAA.
 
 Alpha is read with the pixel and passes through, so transparent views such as thumbnails stay transparent.
 
@@ -327,6 +343,10 @@ pub struct ComponentBloom { pub threshold: f32, pub knee: f32, pub intensity: f3
 pub struct ComponentColorGrading { pub contrast: f32, pub saturation: f32, pub temperature: f32, pub tint: f32 }  // 1, 1, 0, 0
 pub struct ComponentVignette { pub intensity: f32, pub smoothness: f32, pub color: Color32 }  // 0.4, 0.2, black
 pub struct ComponentAntiAliasing { pub edge_threshold: f32, pub subpixel: f32 }  // 0.166, 0.75
+pub struct ComponentOutline {
+    pub color: Color32, pub width: f32,  // #121212, 2.0 pixels
+    pub depth_threshold: f32, pub normal_threshold: f32, pub opacity: f32,  // 0.01, 40.0 degrees, 1.0
+}
 pub struct ComponentFog {
     pub mode: FogMode, pub color: Color32, pub intensity: f32,  // Linear, (180, 196, 212), 1.0
     pub start: f32, pub end: f32, pub density: f32, pub opacity: f32,  // 0.0, 300.0, 0.01, 1.0
@@ -342,6 +362,7 @@ pub struct PostProcessSettings {
     pub bloom: Option<ComponentBloom>,
     pub color_grading: Option<ComponentColorGrading>,
     pub vignette: Option<ComponentVignette>,
+    pub outline: Option<ComponentOutline>,
     pub anti_aliasing: Option<ComponentAntiAliasing>,
 }
 ```
@@ -378,7 +399,7 @@ A local volume changes part of the look in a region and fades it in and out as t
 - **Order**: blending starts from the global volume's resolved settings, the defaults without one; global selection is unchanged. `PostProcessSettings::local_volumes` lists the enabled local volumes with a factor above zero in ascending priority, ties in ascending object id with a warning once per priority, and each applies over the result of those before it, so the highest priority applies last.
 - **Override per effect**: an effect component present and enabled on the volume overrides every one of its fields; there are no per-field override flags. One the volume lacks or holds disabled inherits the value below it. A disabled local volume takes no part.
 - **Blending per field** (`render/postprocess/blend.rs`, `BlendEffect`): `f32` fields interpolate, colours interpolate in linear space, and integer and enum fields (bloom radius, SSAO sample count, the tone-mapping preset, the fog mode) switch to the volume's at a factor of 0.5.
-- **Fade-in**: an effect off below and on in the volume fades in from its neutral values, the volume's own values with the strength at rest: SSAO, bloom and vignette intensity 0, fog opacity 0, depth of field blur 0, and the colour grading defaults. FXAA has no neutral value and switches on at 0.5. Tone mapping is always on below a volume.
+- **Fade-in**: an effect off below and on in the volume fades in from its neutral values, the volume's own values with the strength at rest: SSAO, bloom and vignette intensity 0, fog and outline opacity 0, depth of field blur 0, and the colour grading defaults. FXAA has no neutral value and switches on at 0.5. Tone mapping is always on below a volume.
 - **Gathering**: `PostProcessEffects::from_game_object` reads one volume's effects, its profile overlaid with its enabled effect components (see Profiles), for global and local volumes alike; `PostProcessSettings::from_game_object` is it with tone mapping defaulted.
 - **Gizmos**: the editor draws a local volume's shape, and more faintly the outer edge of its blend distance: a sphere of radius plus blend distance, or the box grown by the blend distance on every side, which traces the faces of the rounded blend region.
 
@@ -427,6 +448,7 @@ A profile is a look saved as an asset, which any number of global and local volu
 - `assets/shaders/postprocess/bloom_prefilter.wgsl`, `bloom_downsample.wgsl`, `bloom_upsample.wgsl` and `bloom_composite.wgsl`: the bloom passes. `bloom_filters.wgsl` holds the 13-tap downsample and the tent upsample they share.
 - `assets/shaders/postprocess/color_grading.wgsl`: the colour grading and vignette pass.
 - `assets/shaders/postprocess/fxaa.wgsl`: the FXAA pass.
+- `assets/shaders/postprocess/outline.wgsl`: the ink outline pass.
 - `assets/shaders/postprocess/fog.wgsl`: the fog pass.
 - `assets/shaders/postprocess/depth_resolve.wgsl`: copies sample 0 of the multisampled depth.
 - `assets/shaders/postprocess/dof_coc.wgsl` and `dof_blur.wgsl`: the depth of field passes. `dof_common.wgsl` holds their uniform, the depth linearization and the circle of confusion.
@@ -474,6 +496,7 @@ Headless tests in `crates/calyx_engine/src/render/postprocess/`:
 - Local volumes (`local_volume_tests.rs`): the blend factor inside, at the edge, within the blend distance and outside a box, a rotated and scaled box and a sphere, and with no blend distance; a factor of zero changes nothing; overlapping volumes apply in ascending priority, and ties in object id order with the tie reported; an absent or disabled effect inherits the value below; an effect off below fades in from its neutral values and FXAA switches on at 0.5; integer and enum fields switch at 0.5 and colours blend in linear space; a disabled volume takes no part; the scene renderer resolves at the camera it draws with; and a volume saves and loads with its scene.
 - Fog (`fog/tests.rs`): a plane facing the camera fades to the fog colour by its distance along each pixel's ray, linear and exponential, at the expected amount, and keeps alpha; a surface before linear fog starts is unchanged; the background, at a cleared or skybox depth, takes the fog colour under linear fog that ends before the far plane and the far plane's fog under exponential fog; in a rendered scene the far of two identical cubes is closer to the fog colour than the near one, at one and four samples, while without fog they look the same; the renderer runs fog first in the `Hdr` stage, before depth of field and bloom; a partial component loads with the defaults. Fog blends between a global and a local volume and fades in from opacity 0 (`local_volume_tests.rs`), and a profile's fog entry round-trips and switches fog on (`post_process_profile/tests.rs`).
 - FXAA smooths a hard diagonal edge and keeps each pixel's alpha, leaves a flat colour and its alpha unchanged, and leaves the plan unchanged while disabled. A partial component loads with the defaults.
+- Outlines (`outline/tests.rs`): a cube against the background gets a line of exactly the set width around it, 1 to 4 pixels, straddling the edge with the odd pixel on the cube, across the middle row and down the middle column, at one and four samples, and none on its flat face; a ground slab filling the view, seen steeply and at a grazing angle, gets none; a box standing on the ground gets a line along the crease and none on its face, its top or the ground in front; a smooth sphere gets its silhouette and no line across its curve; the renderer runs the pass after colour grading and before FXAA; the effect is off by default, a partial component loads with the defaults, and the width rounds to whole pixels from 1 to 8. In `scene_renderer.rs`, an unlit forward box and an alpha-blended particle on the ground draw no line while a PBR box beside them is outlined, at one and four samples. Outlines blend between a global and a local volume and fade in from opacity 0 (`local_volume_tests.rs`), and a profile's outline entry round-trips and switches outlines on (`post_process_profile/tests.rs`).
 
 Headless tests in `crates/calyx_engine/src/render/overlay/` and `scene_renderer.rs`:
 

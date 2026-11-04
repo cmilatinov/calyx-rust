@@ -16,6 +16,7 @@ pub use bloom::*;
 pub use color_grading::*;
 pub use depth_of_field::*;
 pub use fog::*;
+pub use outline::*;
 pub use tonemap::*;
 pub use vignette::*;
 
@@ -25,6 +26,7 @@ mod bloom;
 mod color_grading;
 mod depth_of_field;
 mod fog;
+mod outline;
 mod tonemap;
 mod vignette;
 

@@ -3,7 +3,7 @@
 
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
-    ComponentDepthOfField, ComponentFog, ComponentTonemap, ComponentVignette,
+    ComponentDepthOfField, ComponentFog, ComponentOutline, ComponentTonemap, ComponentVignette,
 };
 use egui::{Color32, Rgba};
 
@@ -190,6 +190,26 @@ impl BlendEffect for ComponentVignette {
     fn neutral(target: &Self) -> Option<Self> {
         Some(Self {
             intensity: 0.0,
+            ..*target
+        })
+    }
+}
+
+impl BlendEffect for ComponentOutline {
+    fn blend(&self, target: &Self, factor: f32) -> Self {
+        Self {
+            color: lerp_color(self.color, target.color, factor),
+            width: lerp(self.width, target.width, factor),
+            depth_threshold: lerp(self.depth_threshold, target.depth_threshold, factor),
+            normal_threshold: lerp(self.normal_threshold, target.normal_threshold, factor),
+            opacity: lerp(self.opacity, target.opacity, factor),
+        }
+    }
+
+    /// No lines: nothing takes any of the ink.
+    fn neutral(target: &Self) -> Option<Self> {
+        Some(Self {
+            opacity: 0.0,
             ..*target
         })
     }

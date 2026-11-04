@@ -2,8 +2,8 @@ use super::*;
 use crate::assets::texture::Texture;
 use crate::component::{
     Component, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading, ComponentDepthOfField,
-    ComponentFog, ComponentGlobalPostProcessVolume, ComponentTonemap, ComponentVignette,
-    TonemappingPreset,
+    ComponentFog, ComponentGlobalPostProcessVolume, ComponentOutline, ComponentTonemap,
+    ComponentVignette, TonemappingPreset,
 };
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
 use crate::render::{
@@ -620,6 +620,7 @@ fn run_frame(
             particle_depth: None,
             normals: None,
             albedo: None,
+            gbuffer_depth: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));
@@ -1117,6 +1118,7 @@ fn no_enabled_volume_selects_nothing_and_the_defaults_tone_map_alone() {
             bloom: None,
             color_grading: None,
             vignette: None,
+            outline: None,
             anti_aliasing: None,
         },
         "every effect but tone mapping is off"
@@ -1249,6 +1251,7 @@ fn adding_or_disabling_an_effect_component_switches_its_pass_in_the_plan() {
     check_effect::<ComponentVignette>(passes, &mut scene, volume, "color_grading");
     check_effect::<ComponentAntiAliasing>(passes, &mut scene, volume, "fxaa");
     check_effect::<ComponentFog>(passes, &mut scene, volume, "fog");
+    check_effect::<ComponentOutline>(passes, &mut scene, volume, "outline");
 
     // A disabled volume's effects are off too.
     scene.add_component(volume, ComponentBloom::default());
@@ -1504,6 +1507,7 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
             particle_depth: None,
             normals: None,
             albedo: None,
+            gbuffer_depth: None,
         },
     );
     render_context.queue().submit(Some(encoder.finish()));

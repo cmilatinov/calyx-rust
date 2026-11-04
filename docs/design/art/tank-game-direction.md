@@ -127,15 +127,23 @@ Adding a player colour, or changing one:
 
 ## Ink outlines
 
-- Inverted hulls: each mesh has a copy pushed out along its smoothed normals
-  with its winding flipped, drawn in the ink material with shadows off, so
-  back-face culling leaves only a rim.
-- Thickness: 0.07 m on rounded props and walls (thinner hulls look patchy on
-  soft bevels); 0.1 mesh units (0.045 m) on the tank parts.
-- The ink is `#121212`, matte (roughness 1).
-- A screen-space outline pass (edges from depth and normals in the
-  post-processing chain) would replace the hulls and halve the draw count;
-  until then every new mesh needs its hull.
+- Drawn by the Outline effect on each map's post-process volume: a
+  screen-space pass that inks silhouettes and creases of every opaque PBR
+  mesh from the depth and normals (see Outlines in
+  `docs/design/post-processing/architecture.md`). No mesh needs an outline
+  copy.
+- Settings, both maps: ink `#121212`, width 2 px, depth threshold 0.01,
+  normal threshold 40°, opacity 1. The lines draw after tone mapping and
+  grading, so the ink shows as its hex.
+- The width is in pixels, so a line is 2 px around a tank at the Far
+  framing and around a rock at the screen's edge alike. Smooth-shaded clay
+  curves draw no lines across them; interior creases and steps in the tank
+  model (turret on hull, tracks against hull, the turret's hatch and
+  rivets) do.
+- Particles and meshes with other shaders get no lines. Emissive signals
+  (projectiles, muzzle flashes) are PBR meshes, so they are outlined too.
+- Keep the dark player at least 14 ΔE from the ink (see Tank colours), so it
+  never merges with its outline.
 
 ## Lighting and post-processing
 
@@ -178,6 +186,8 @@ the game view is very wide and the vignette is round.
 ## Evidence
 
 Final look-dev captures (Far and the match scenario at Far):
-<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-492/final>.
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-492/final>, with
+inverted-hull outlines; the outline pass against them:
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-509>.
 Earlier rounds, including the dropped candidates and pattern experiments,
 are beside them under `et-492/`.
