@@ -1,0 +1,6 @@
+kind = "box"
+role = "crates"
+outline = 0.07
+size = [1.1, 1.1, 1.1]
+bevel = 0.12
+band = { height = 0.18, overhang = 0.04 }

@@ -1,0 +1,9 @@
+# A barrier, 2.4 x 1.0 x 0.9 m on a wider foot.
+kind = "box"
+role = "barriers"
+outline = 0.07
+
+size = [2.4, 1.0, 0.9]
+bevel = 0.32
+segments = 4
+foot = { height = 0.25, overhang = 0.12 }

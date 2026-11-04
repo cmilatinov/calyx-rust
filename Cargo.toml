@@ -8,6 +8,7 @@ members = [
     "crates/calyx_remote_protocol",
     "crates/calyx_ctl",
     "crates/calyx_unity_import",
+    "crates/calyx_model_gen",
     "sandbox",
     "demos",
 ]

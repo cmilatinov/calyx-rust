@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "565b6ea6-c73e-5593-8cd0-6c1d8ff64bb5",
+    "name": "generated/models/tree_canopy",
+    "display_name": "tree_canopy",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

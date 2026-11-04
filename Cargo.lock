@@ -1380,6 +1380,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "calyx_model_gen"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "serde",
+ "serde_json",
+ "sha-1",
+ "toml 0.9.12+spec-1.1.0",
+ "uuid 1.22.0",
+]
+
+[[package]]
 name = "calyx_project"
 version = "0.1.0"
 dependencies = [

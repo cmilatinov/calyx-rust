@@ -1,5 +1,15 @@
 # Third-Party Sandbox Assets
 
+Every third-party asset committed to the sandbox is listed here with its
+source, author, licence and URL. Only assets licensed CC0 or CC-BY are
+committed; CC-BY assets carry their credit here. Unity Asset Store packs and
+anything under another licence stay out of git.
+
+Sourced models go through `calyx_model_gen` as `import` models
+(`asset_sources/models/*.toml`): each parameter file carries its source's
+credit, and the generator refuses a licence other than CC0 or CC-BY and a
+source this file does not credit.
+
 ## tank-game Tank_002 mesh
 
 - Source repository: https://github.com/cmilatinov/tank-game
@@ -9,6 +19,7 @@
   - `assets/game/meshes/*.obj` (all but `arena_cube.obj`)
   - `assets/game/materials/*.cxmat`
 - Notes: exported from the source FBX into OBJ parts for the Calyx mesh loader; the source repository does not include an explicit license file.
+- License: not recorded. This entry predates the CC0 / CC-BY rule above; its licence still needs confirming.
 
 ## Fox model
 
