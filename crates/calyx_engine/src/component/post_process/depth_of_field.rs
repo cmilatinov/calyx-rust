@@ -45,7 +45,7 @@ impl ComponentDepthOfField {
     }
 }
 
-impl PostProcessEffect for ComponentDepthOfField {}
+impl_post_process_effect!(ComponentDepthOfField);
 
 impl Component for ComponentDepthOfField {
     /// A disabled effect component switches its pass off.

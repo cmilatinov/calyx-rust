@@ -6,8 +6,8 @@ use super::*;
 use crate::assets::{Asset, AssetRef};
 use crate::component::{
     ComponentBloom, ComponentCamera, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentTonemap, ComponentVignette, FogMode,
-    TonemappingPreset,
+    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
+    FogMode, TonemappingPreset,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::render::postprocess::{PostProcessEffects, PostProcessSettings};
@@ -146,6 +146,41 @@ fn a_profile_saves_as_a_list_of_entries_keyed_by_type_uuid() {
 }
 
 #[test]
+fn enabled_effect_access_borrows_every_registered_type_and_skips_disabled_entries() {
+    let registries = test_registries();
+    let types = registries.types.read();
+    let mut profile = PostProcessProfile::default();
+    let effect_types = PostProcessProfile::effect_types(&types);
+    assert!(!effect_types.is_empty(), "registered effects are exercised");
+    for type_uuid in &effect_types {
+        assert!(profile.add_entry(&types, *type_uuid));
+    }
+    for effect in profile.enabled_effects() {
+        let entry = profile.entry(effect.uuid()).unwrap();
+        assert!(
+            std::ptr::eq(effect, entry.settings.as_ref()),
+            "settings are borrowed, not cloned"
+        );
+    }
+    assert_eq!(profile.enabled_effects().count(), effect_types.len());
+    let bloom = profile.effect::<ComponentBloom>().unwrap();
+    assert!(std::ptr::eq(
+        bloom,
+        profile
+            .entry(ComponentBloom::type_uuid())
+            .unwrap()
+            .settings()
+            .unwrap()
+    ));
+    profile
+        .entry_mut(ComponentBloom::type_uuid())
+        .unwrap()
+        .enabled = false;
+    assert!(profile.effect::<ComponentBloom>().is_none());
+    assert_eq!(profile.enabled_effects().count(), effect_types.len() - 1);
+}
+
+#[test]
 fn a_profile_saves_and_loads_through_the_asset_registry() {
     let root = TempRoot::new();
     let path = root.path("look.cxpostfx");
@@ -195,7 +230,7 @@ fn a_fog_entry_round_trips_and_switches_fog_on() {
     let loaded = load(&registries, id);
 
     assert_eq!(*loaded.read(), profile);
-    assert_eq!(loaded.read().effects().fog, Some(fog));
+    assert_eq!(loaded.read().effect::<ComponentFog>(), Some(&fog));
     let mut scene = registries.scene();
     spawn_global(&mut scene, id);
     assert_eq!(
@@ -248,7 +283,7 @@ fn an_outline_entry_round_trips_and_switches_outlines_on() {
     let loaded = load(&registries, id);
 
     assert_eq!(*loaded.read(), profile);
-    assert_eq!(loaded.read().effects().outline, Some(outline.clone()));
+    assert_eq!(loaded.read().effect::<ComponentOutline>(), Some(&outline));
     let mut scene = registries.scene();
     spawn_global(&mut scene, id);
     assert_eq!(
@@ -548,5 +583,8 @@ fn a_profile_from_a_volume_copies_its_effect_components_and_keeps_the_look() {
             ProfileEntry::disabled(vignette),
         ])
     );
-    assert_eq!(PostProcessSettings::from(profile.effects()), before);
+    assert_eq!(
+        PostProcessSettings::from(PostProcessEffects::from_profile(&profile)),
+        before
+    );
 }

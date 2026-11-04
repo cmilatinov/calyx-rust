@@ -3,7 +3,7 @@
 //!
 //! A volume's effects are its profile's entries overlaid with the enabled
 //! effect components on its own game object; see
-//! [`PostProcessEffects::from_game_object`].
+//! [`PostProcessEffects::from_game_object`](crate::render::postprocess::PostProcessEffects::from_game_object).
 //!
 //! # File format
 //!
@@ -37,16 +37,13 @@ use crate::assets::error::AssetError;
 use crate::assets::{Asset, AssetAccess, AssetRegistry, LoadedAsset};
 use crate::class_registry::ComponentRegistry;
 use crate::component::{
-    ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
-    ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
-    PostProcessEffect, ReflectPostProcessEffect,
+    ComponentGlobalPostProcessVolume, ComponentLocalPostProcessVolume, PostProcessEffect,
+    ReflectPostProcessEffect,
 };
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::reflect::ReflectDefault;
-use crate::render::postprocess::PostProcessEffects;
 use crate::scene::{GameObject, Scene};
 use crate::type_uuids;
 use crate::utils::TypeUuid;
@@ -276,32 +273,20 @@ impl PostProcessProfile {
         self.entries.len() != count
     }
 
-    /// The effects the profile switches on: each enabled entry's settings,
-    /// and `None` for a disabled or absent one.
-    ///
-    /// This maps the entries onto the fixed fields of [`PostProcessEffects`],
-    /// one line per effect; #477 replaces those fields with a set keyed by
-    /// type UUID and removes this mapping.
-    pub fn effects(&self) -> PostProcessEffects {
-        PostProcessEffects {
-            tonemapping: self.effect::<ComponentTonemap>(),
-            ambient_occlusion: self.effect::<ComponentAmbientOcclusion>(),
-            fog: self.effect::<ComponentFog>(),
-            depth_of_field: self.effect::<ComponentDepthOfField>(),
-            bloom: self.effect::<ComponentBloom>(),
-            color_grading: self.effect::<ComponentColorGrading>(),
-            vignette: self.effect::<ComponentVignette>(),
-            outline: self.effect::<ComponentOutline>(),
-            anti_aliasing: self.effect::<ComponentAntiAliasing>(),
-        }
+    /// Borrows each enabled effect, in profile order, without copying its settings.
+    /// The iterator is generic: registering a new effect requires no profile code.
+    pub fn enabled_effects(&self) -> impl Iterator<Item = &dyn PostProcessEffect> {
+        self.entries
+            .iter()
+            .filter(|entry| entry.enabled)
+            .map(|entry| entry.settings.as_ref())
     }
 
     /// The settings of `T`'s entry when it is enabled.
-    fn effect<T: PostProcessEffect + TypeUuid + Clone>(&self) -> Option<T> {
+    pub fn effect<T: PostProcessEffect + TypeUuid>(&self) -> Option<&T> {
         self.entry(T::type_uuid())
             .filter(|entry| entry.enabled)
             .and_then(ProfileEntry::settings::<T>)
-            .cloned()
     }
 
     /// A profile that keeps the look of the volume on `game_object`: its

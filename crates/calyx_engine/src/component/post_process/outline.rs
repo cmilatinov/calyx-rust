@@ -50,7 +50,7 @@ pub struct ComponentOutline {
 /// The most outline styles the pass draws; entries past it are ignored.
 pub const MAX_OUTLINE_STYLES: usize = 8;
 
-impl PostProcessEffect for ComponentOutline {}
+impl_post_process_effect!(ComponentOutline);
 
 impl Component for ComponentOutline {
     /// A disabled effect component switches its pass off.

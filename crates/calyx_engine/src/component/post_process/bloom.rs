@@ -31,7 +31,7 @@ pub struct ComponentBloom {
     pub radius: u32,
 }
 
-impl PostProcessEffect for ComponentBloom {}
+impl_post_process_effect!(ComponentBloom);
 
 impl Component for ComponentBloom {
     /// A disabled effect component switches its pass off.

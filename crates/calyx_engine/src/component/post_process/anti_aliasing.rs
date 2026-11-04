@@ -24,7 +24,7 @@ pub struct ComponentAntiAliasing {
     pub subpixel: f32,
 }
 
-impl PostProcessEffect for ComponentAntiAliasing {}
+impl_post_process_effect!(ComponentAntiAliasing);
 
 impl Component for ComponentAntiAliasing {
     /// A disabled effect component switches its pass off.

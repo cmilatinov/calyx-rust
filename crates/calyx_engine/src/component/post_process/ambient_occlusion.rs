@@ -29,7 +29,7 @@ pub struct ComponentAmbientOcclusion {
     pub sample_count: u32,
 }
 
-impl PostProcessEffect for ComponentAmbientOcclusion {}
+impl_post_process_effect!(ComponentAmbientOcclusion);
 
 impl Component for ComponentAmbientOcclusion {
     /// A disabled effect component switches its pass off.

@@ -29,7 +29,7 @@ pub struct ComponentColorGrading {
     pub tint: f32,
 }
 
-impl PostProcessEffect for ComponentColorGrading {}
+impl_post_process_effect!(ComponentColorGrading);
 
 impl Component for ComponentColorGrading {
     /// A disabled effect component switches its pass off.

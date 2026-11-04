@@ -42,7 +42,7 @@ pub struct ComponentFog {
     pub opacity: f32,
 }
 
-impl PostProcessEffect for ComponentFog {}
+impl_post_process_effect!(ComponentFog);
 
 impl Component for ComponentFog {
     /// A disabled effect component switches its pass off.

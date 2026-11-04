@@ -32,7 +32,7 @@ impl Default for ComponentTonemap {
     }
 }
 
-impl PostProcessEffect for ComponentTonemap {}
+impl_post_process_effect!(ComponentTonemap);
 
 impl Component for ComponentTonemap {
     /// A disabled tone-mapping component leaves the defaults in effect.

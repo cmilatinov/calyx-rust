@@ -25,7 +25,7 @@ pub struct ComponentVignette {
     pub color: Color32,
 }
 
-impl PostProcessEffect for ComponentVignette {}
+impl_post_process_effect!(ComponentVignette);
 
 impl Component for ComponentVignette {
     /// A disabled effect component switches its pass off.
