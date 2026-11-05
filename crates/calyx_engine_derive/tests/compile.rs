@@ -1,4 +1,11 @@
 #[test]
+fn post_process_effect_derive() {
+    let t = trybuild::TestCases::new();
+    t.pass("tests/ui/post_process_effect_valid.rs");
+    t.compile_fail("tests/ui/post_process_effect_missing_blend.rs");
+}
+
+#[test]
 fn type_uuid_derive() {
     let t = trybuild::TestCases::new();
     t.compile_fail("tests/ui/type_uuid_malformed.rs");
