@@ -1,0 +1,138 @@
+{
+  "ammo_before": 6,
+  "ammo_after": 5,
+  "projectile": {
+    "components": [
+      "calyx_engine::component::point_light::ComponentPointLight",
+      "calyx_engine::component::collider::ComponentCollider",
+      "calyx_engine::component::transform::ComponentTransform",
+      "sandbox::tank::ComponentProjectile",
+      "calyx_engine::component::rigid_body::ComponentRigidBody",
+      "calyx_engine::component::id::ComponentID"
+    ],
+    "disabled_components": [],
+    "id": "ac96249c-2143-47db-8bd4-b22871407da2",
+    "local_transform": {
+      "position": [
+        394.6257629394531,
+        1.6066198348999023,
+        56.87264633178711
+      ],
+      "rotation_euler_deg": [
+        0.0,
+        49.96974563598633,
+        0.0
+      ],
+      "rotation_quat": [
+        0.0,
+        0.4223789572715759,
+        0.0,
+        0.9064193367958068
+      ],
+      "scale": [
+        0.36000001430511475,
+        0.36000001430511475,
+        0.36000001430511475
+      ]
+    },
+    "name": "Projectile",
+    "parent": "5b7be9f7-5c5f-4909-a91d-b363bb0b6462",
+    "prefab_link": null,
+    "world_transform": {
+      "position": [
+        394.6257629394531,
+        1.6066198348999023,
+        56.87264633178711
+      ],
+      "rotation_euler_deg": [
+        0.0,
+        49.96974563598633,
+        0.0
+      ],
+      "rotation_quat": [
+        0.0,
+        0.4223789572715759,
+        0.0,
+        0.9064193367958068
+      ],
+      "scale": [
+        0.36000001430511475,
+        0.36000001430511475,
+        0.36000001430511475
+      ]
+    }
+  },
+  "projectile_component": {
+    "damage": 35.0,
+    "direction": [
+      0.7657049298286438,
+      0.0,
+      0.6431920528411865
+    ],
+    "lifetime_remaining": 2.0,
+    "radius": 0.18000000715255737,
+    "shooter": "fb502b82-4062-490e-8de1-8c39cb2f1a09",
+    "speed": 28.0
+  },
+  "flash": {
+    "components": [
+      "calyx_engine::component::point_light::ComponentPointLight",
+      "calyx_engine::component::particle::ComponentParticleSystem",
+      "calyx_engine::component::transform::ComponentTransform",
+      "sandbox::combat_vfx::ComponentCombatEffectLifetime",
+      "calyx_engine::component::id::ComponentID"
+    ],
+    "disabled_components": [],
+    "id": "22b8ca37-cd35-4d81-a288-35cbbe26db0f",
+    "local_transform": {
+      "position": [
+        394.8171997070313,
+        1.6066198348999023,
+        57.033443450927734
+      ],
+      "rotation_euler_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "rotation_quat": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "name": "Muzzle Flash",
+    "parent": "5b7be9f7-5c5f-4909-a91d-b363bb0b6462",
+    "prefab_link": null,
+    "world_transform": {
+      "position": [
+        394.8171997070313,
+        1.6066198348999023,
+        57.033443450927734
+      ],
+      "rotation_euler_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "rotation_quat": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  },
+  "simulated_steps": 1
+}

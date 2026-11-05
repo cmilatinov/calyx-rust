@@ -1,0 +1,79 @@
+{
+  "target": "41301851-8eb1-5a39-b576-6eeeeb9cd68d",
+  "health_before": {
+    "current_health": 100.0,
+    "dead": false,
+    "destroy_on_death": false,
+    "max_health": 100.0
+  },
+  "health_after": {
+    "current_health": 65.0,
+    "dead": false,
+    "destroy_on_death": false,
+    "max_health": 100.0
+  },
+  "impact": {
+    "components": [
+      "calyx_engine::component::particle::ComponentParticleSystem",
+      "calyx_engine::component::transform::ComponentTransform",
+      "sandbox::combat_vfx::ComponentCombatEffectLifetime",
+      "calyx_engine::component::id::ComponentID"
+    ],
+    "disabled_components": [],
+    "id": "ccec1595-4a6b-42d0-a7b4-7166a1db34b7",
+    "local_transform": {
+      "position": [
+        4.560909271240234,
+        1.6066198348999023,
+        65.21817016601562
+      ],
+      "rotation_euler_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "rotation_quat": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    },
+    "name": "Tank Impact Sparks",
+    "parent": "7917c87e-4d0d-48f0-a9b9-1ac1316bd10a",
+    "prefab_link": null,
+    "world_transform": {
+      "position": [
+        4.560909271240234,
+        1.6066198348999023,
+        65.21817016601562
+      ],
+      "rotation_euler_deg": [
+        0.0,
+        -0.0,
+        0.0
+      ],
+      "rotation_quat": [
+        0.0,
+        0.0,
+        0.0,
+        1.0
+      ],
+      "scale": [
+        1.0,
+        1.0,
+        1.0
+      ]
+    }
+  },
+  "simulated_steps": 5,
+  "lifetime": {
+    "follow": "00000000-0000-0000-0000-000000000000",
+    "remaining": 0.550000011920929
+  }
+}

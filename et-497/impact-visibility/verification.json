@@ -1,0 +1,41 @@
+{
+  "capture_run": "run-20261104-210033-344866",
+  "palettes": {
+    "sunny": {
+      "ammo": [
+        6,
+        5
+      ],
+      "health": [
+        100,
+        65
+      ],
+      "transients": 0,
+      "capture_steps_at_hit": 5
+    },
+    "sunbaked": {
+      "ammo": [
+        6,
+        5
+      ],
+      "health": [
+        100,
+        65
+      ],
+      "transients": 0,
+      "capture_steps_at_hit": 4
+    },
+    "moonlit": {
+      "ammo": [
+        6,
+        5
+      ],
+      "health": [
+        100,
+        65
+      ],
+      "transients": 0,
+      "capture_steps_at_hit": 4
+    }
+  }
+}
