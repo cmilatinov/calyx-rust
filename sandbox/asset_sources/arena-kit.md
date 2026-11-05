@@ -63,7 +63,7 @@ Every opaque part material has `outline_style = 1`; pickup signal orbs use 0
 to retain their glow. Palette roles and construction rules are in
 [the direction guide](../../docs/design/art/tank-game-direction.md).
 
-Moonlit uses the merged authored night rig unchanged (moon strength 7, sky 1,
+Moonlit retains the authored night lighting and bloom (moon strength 7, sky 1,
 bloom 4.5 / threshold 2.5 / knee 0.1 / radius 6). Its primary kit roles match
 the direction reference; additional timber/foliage details stay in cool steel
 and pine shades. The lantern uses sodium `#FF9330` at strength 4. Pickup
