@@ -10,7 +10,7 @@ use crate::component::{
     FogMode, TonemappingPreset,
 };
 use crate::context::ReadOnlyRegistryContext;
-use crate::render::postprocess::{PostProcessEffects, PostProcessSettings};
+use crate::render::postprocess::PostProcessSettings;
 use crate::scene::{GameObject, Scene};
 use crate::test_support::{test_registries, test_registries_with_assets};
 use notify::{Event, EventKind};
@@ -234,7 +234,9 @@ fn a_fog_entry_round_trips_and_switches_fog_on() {
     let mut scene = registries.scene();
     spawn_global(&mut scene, id);
     assert_eq!(
-        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros()).fog,
+        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros())
+            .get::<ComponentFog>()
+            .copied(),
         Some(fog),
         "a volume using the profile renders with its fog"
     );
@@ -287,7 +289,9 @@ fn an_outline_entry_round_trips_and_switches_outlines_on() {
     let mut scene = registries.scene();
     spawn_global(&mut scene, id);
     assert_eq!(
-        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros()).outline,
+        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros())
+            .get::<ComponentOutline>()
+            .cloned(),
         Some(outline),
         "a volume using the profile renders with its outlines"
     );
@@ -314,7 +318,10 @@ fn a_neutral_tone_mapping_entry_round_trips_and_selects_the_curve() {
     let mut scene = registries.scene();
     spawn_global(&mut scene, id);
     assert_eq!(
-        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros()).tonemapping,
+        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros())
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default(),
         tonemap,
         "a volume using the profile tone-maps with the neutral curve"
     );
@@ -441,7 +448,11 @@ fn an_enabled_effect_component_replaces_the_profile_entry_and_a_disabled_or_abse
     scene.add_component(disabled, bloom(0.9));
     scene.set_component_enabled::<ComponentBloom>(disabled, false);
 
-    let bloom_of = |object| PostProcessSettings::from_game_object(&scene, object).bloom;
+    let bloom_of = |object| {
+        PostProcessSettings::from_game_object(&scene, object)
+            .get::<ComponentBloom>()
+            .copied()
+    };
     assert_eq!(bloom_of(absent), Some(bloom(0.3)), "absent component");
     assert_eq!(bloom_of(enabled), Some(bloom(0.9)), "enabled component");
     assert_eq!(bloom_of(disabled), Some(bloom(0.3)), "disabled component");
@@ -466,11 +477,15 @@ fn a_disabled_profile_entry_is_off_unless_an_enabled_component_replaces_it() {
     scene.add_component(overridden, vignette);
 
     assert_eq!(
-        PostProcessSettings::from_game_object(&scene, plain).vignette,
+        PostProcessSettings::from_game_object(&scene, plain)
+            .get::<ComponentVignette>()
+            .copied(),
         None
     );
     assert_eq!(
-        PostProcessSettings::from_game_object(&scene, overridden).vignette,
+        PostProcessSettings::from_game_object(&scene, overridden)
+            .get::<ComponentVignette>()
+            .copied(),
         Some(vignette)
     );
 }
@@ -486,8 +501,14 @@ fn a_profile_without_tone_mapping_leaves_the_tone_mapping_defaults() {
 
     let settings = PostProcessSettings::from_game_object(&scene, volume);
 
-    assert_eq!(settings.tonemapping, ComponentTonemap::default());
-    assert_eq!(settings.bloom, Some(bloom(0.3)));
+    assert_eq!(
+        settings
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default(),
+        ComponentTonemap::default()
+    );
+    assert_eq!(settings.get::<ComponentBloom>().copied(), Some(bloom(0.3)));
 }
 
 #[test]
@@ -498,11 +519,8 @@ fn a_volume_whose_profile_does_not_load_uses_its_components_alone() {
     scene.add_component(volume, bloom(0.9));
 
     assert_eq!(
-        PostProcessEffects::from_game_object(&scene, volume),
-        PostProcessEffects {
-            bloom: Some(bloom(0.9)),
-            ..Default::default()
-        }
+        PostProcessSettings::from_game_object(&scene, volume),
+        PostProcessSettings::default().with(bloom(0.9))
     );
 }
 
@@ -515,16 +533,28 @@ fn two_volumes_sharing_a_profile_both_follow_an_edit_to_it() {
     let mut scene = registries.scene();
     let global = spawn_global(&mut scene, id);
     let local = spawn_local(&mut scene, id);
-    let effects_of = |scene: &Scene, object| PostProcessEffects::from_game_object(scene, object);
-    assert_eq!(effects_of(&scene, global).bloom, Some(bloom(0.3)));
-    assert_eq!(effects_of(&scene, local).bloom, Some(bloom(0.3)));
+    let effects_of = |scene: &Scene, object| PostProcessSettings::from_game_object(scene, object);
+    assert_eq!(
+        effects_of(&scene, global).get::<ComponentBloom>().copied(),
+        Some(bloom(0.3))
+    );
+    assert_eq!(
+        effects_of(&scene, local).get::<ComponentBloom>().copied(),
+        Some(bloom(0.3))
+    );
 
     load(&registries, id)
         .write()
         .insert(ProfileEntry::new(bloom(0.6)));
 
-    assert_eq!(effects_of(&scene, global).bloom, Some(bloom(0.6)));
-    assert_eq!(effects_of(&scene, local).bloom, Some(bloom(0.6)));
+    assert_eq!(
+        effects_of(&scene, global).get::<ComponentBloom>().copied(),
+        Some(bloom(0.6))
+    );
+    assert_eq!(
+        effects_of(&scene, local).get::<ComponentBloom>().copied(),
+        Some(bloom(0.6))
+    );
 }
 
 #[test]
@@ -536,14 +566,20 @@ fn a_hot_reload_of_the_profile_changes_the_resolved_settings() {
     let mut scene = registries.scene();
     spawn_global(&mut scene, id);
     let resolve = |scene: &Scene| PostProcessSettings::resolve(scene, &Default::default());
-    assert_eq!(resolve(&scene).bloom, Some(bloom(0.3)));
+    assert_eq!(
+        resolve(&scene).get::<ComponentBloom>().copied(),
+        Some(bloom(0.3))
+    );
 
     let file = serde_json::json!({
         "entries": [{ "type": ComponentBloom::type_uuid(), "settings": { "intensity": 1.25 } }]
     });
     rewrite_and_hot_reload(&registries, &path, &file.to_string());
 
-    assert_eq!(resolve(&scene).bloom, Some(bloom(1.25)));
+    assert_eq!(
+        resolve(&scene).get::<ComponentBloom>().copied(),
+        Some(bloom(1.25))
+    );
 }
 
 #[test]
@@ -583,8 +619,5 @@ fn a_profile_from_a_volume_copies_its_effect_components_and_keeps_the_look() {
             ProfileEntry::disabled(vignette),
         ])
     );
-    assert_eq!(
-        PostProcessSettings::from(PostProcessEffects::from_profile(&profile)),
-        before
-    );
+    assert_eq!(PostProcessSettings::from_profile(&profile), before);
 }

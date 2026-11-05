@@ -4,7 +4,7 @@
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
     ComponentDepthOfField, ComponentFog, ComponentOutline, ComponentTonemap, ComponentVignette,
-    OutlineStyle,
+    OutlineStyle, MAX_OUTLINE_STYLES,
 };
 use egui::{Color32, Rgba};
 
@@ -218,6 +218,11 @@ impl BlendEffect for ComponentVignette {
 
 impl BlendEffect for ComponentOutline {
     fn copy_in_place(&mut self, source: &Self) {
+        // Reserve the full supported style table on the first copy, even when
+        // that volume supplies only one style. Later supported-size edits
+        // must not allocate in the per-view settings resolver.
+        self.styles
+            .reserve(MAX_OUTLINE_STYLES.saturating_sub(self.styles.len()));
         self.styles.clone_from(&source.styles);
         self.depth_threshold = source.depth_threshold;
         self.silhouette_threshold = source.silhouette_threshold;

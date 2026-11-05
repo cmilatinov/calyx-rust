@@ -5,7 +5,10 @@ use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::skybox::Skybox;
 use crate::assets::texture::Texture;
 use crate::assets::{Asset, AssetId, AssetRegistry, BackgroundLoad};
-use crate::component::{ComponentMesh, ComponentSkinnedMesh, ComponentSkyLight};
+use crate::component::{
+    ComponentAmbientOcclusion, ComponentMesh, ComponentOutline, ComponentSkinnedMesh,
+    ComponentSkyLight,
+};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
@@ -525,8 +528,8 @@ impl SceneRenderer {
             })])
             .build();
         self.build_asset_data(&render_context, scene);
-        self.post_process_settings =
-            PostProcessSettings::resolve(scene, &camera_transform.position);
+        self.post_process_settings
+            .resolve_into(scene, &camera_transform.position);
         if let Some(gizmo_options) = &self.options.gizmos {
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;
@@ -561,7 +564,7 @@ impl SceneRenderer {
         self.skybox_renderer
             .prepare(&render_context, &mut encoder, &self.assets);
         let assets = self.assets.lock();
-        if let Some(outline) = &self.post_process_settings.outline {
+        if let Some(outline) = self.post_process_settings.get::<ComponentOutline>() {
             warn_unknown_outline_styles(
                 &self.asset_context,
                 &assets,
@@ -654,7 +657,8 @@ impl SceneRenderer {
         let occlusion = self.ssao.render(
             &render_context,
             &mut encoder,
-            self.post_process_settings.ambient_occlusion.as_ref(),
+            self.post_process_settings
+                .get::<ComponentAmbientOcclusion>(),
             SsaoInputs {
                 depth: gbuffer_depth,
                 normals: &gbuffer.normals,
@@ -788,8 +792,12 @@ impl SceneRenderer {
         queue.submit(Some(encoder.finish()));
     }
 
-    /// The post-processing settings the last [`Self::render_scene_base`]
-    /// resolved from its scene.
+    /// Drops resolved effects before unloading an assembly that may define them.
+    pub fn clear_post_process_settings(&mut self) {
+        self.post_process_settings.clear();
+    }
+
+    /// The settings resolved by the most recent scene render.
     pub fn post_process_settings(&self) -> &PostProcessSettings {
         &self.post_process_settings
     }
@@ -2916,7 +2924,12 @@ mod tests {
             renderer.render_scene_base(&camera, &transform, &scene, None, None);
             renderer.finalize_scene();
             assert_eq!(
-                renderer.post_process_settings().tonemapping.exposure_ev,
+                renderer
+                    .post_process_settings()
+                    .get::<ComponentTonemap>()
+                    .copied()
+                    .unwrap_or_default()
+                    .exposure_ev,
                 3.0
             );
             let image = read_scene_texture(&renderer, &render_context);

@@ -5,6 +5,7 @@ use super::{
     CameraPlanes, NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass,
     PostProcessSettings, PostProcessStage, SceneInput,
 };
+use crate::component::ComponentFog;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
@@ -75,11 +76,11 @@ impl PostProcessPass for FogPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.fog.is_some()
+        settings.get::<ComponentFog>().is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let Some(fog) = &settings.fog else {
+        let Some(fog) = settings.get::<ComponentFog>() else {
             return;
         };
         let color = egui::Rgba::from(fog.color);

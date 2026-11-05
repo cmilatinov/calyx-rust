@@ -3,7 +3,7 @@
 //!
 //! A volume's effects are its profile's entries overlaid with the enabled
 //! effect components on its own game object; see
-//! [`PostProcessEffects::from_game_object`](crate::render::postprocess::PostProcessEffects::from_game_object).
+//! [`PostProcessSettings::from_game_object`](crate::render::postprocess::PostProcessSettings::from_game_object).
 //!
 //! # File format
 //!
@@ -329,11 +329,11 @@ impl PostProcessProfile {
     /// load is warned about once.
     pub fn of_volume(scene: &Scene, game_object: GameObject) -> Option<Ref<Self>> {
         let id = Self::volume_profile_id(scene, game_object)?;
-        let loaded = scene
-            .registries()
-            .assets
-            .read()
-            .load_by_id::<PostProcessProfile>(id);
+        let assets = scene.registries().assets.read();
+        let loaded = assets
+            .loaded_by_id::<Self>(id)
+            .map(Ok)
+            .unwrap_or_else(|| assets.load_by_id::<Self>(id));
         match loaded {
             Ok(profile) => Some(profile),
             Err(error) => {

@@ -2,7 +2,7 @@
 //!
 //! Each effect is its own component on the game object of a
 //! [`ComponentGlobalPostProcessVolume`](super::ComponentGlobalPostProcessVolume).
-//! [`PostProcessSettings::resolve`](crate::render::postprocess::PostProcessSettings::resolve)
+//! [`PostProcessSettings::resolve_into`](crate::render::postprocess::PostProcessSettings::resolve_into)
 //! gathers the enabled ones beside the selected volume, and the passes in
 //! `render/postprocess/` read them from there.
 
