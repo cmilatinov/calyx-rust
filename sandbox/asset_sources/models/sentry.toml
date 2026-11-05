@@ -1,4 +1,5 @@
-# Fixed clay turret. Head descendants turn together; muzzle is (0,0.5,1.2) from ground pivot.
+# Anchored clay sentry: armor cheeks, visible bearings, recoil sleeve, cooling banks and optic.
+# Head descendants turn together; muzzle is (0,0.5,1.2) from the ground pivot.
 # Metres, Y up, forward +Z; regenerate with calyx_model_gen.
 
 [[parts]]
@@ -24,22 +25,32 @@ segments = 3
 offset = [0, 0.15, 0]
 
 [[parts]]
+name = "yaw_bearing"
+kind = "ring"
+role = "sentry_armor"
+radius = 0.33
+inner_radius = 0.27
+height = 0.065
+vertices = 32
+offset = [0, 0.195, 0]
+
+[[parts]]
 name = "head"
 kind = "box"
 role = "sentry_team"
-size = [0.92, 0.4, 0.82]
-offset = [0, 0.3, 0]
-bevel = 0.12
+size = [0.88, 0.4, 0.78]
+bevel = 0.1
 segments = 3
+offset = [0, 0.3, 0]
 
 [[parts]]
 name = "mantlet"
 kind = "box"
-role = "metal_caps"
-size = [0.4, 0.3, 0.2]
-offset = [0, 0.05, 0.34]
+role = "sentry_armor"
+size = [0.42, 0.31, 0.25]
 bevel = 0.06
 segments = 3
+offset = [0, 0.045, 0.32]
 parent = "head"
 
 [[parts]]
@@ -58,7 +69,7 @@ rotation = [90, 0, 0]
 [[parts]]
 name = "muzzle"
 kind = "ring"
-role = "metal"
+role = "sentry_armor"
 radius = 0.15
 inner_radius = 0.085
 height = 0.08
@@ -70,55 +81,296 @@ rotation = [90, 0, 0]
 [[parts]]
 name = "hatch"
 kind = "cylinder"
-role = "metal_caps"
-radius = 0.18
+role = "sentry_armor"
+radius = 0.155
+height = 0.045
+vertices = 16
+bevel = 0.007
+segments = 3
+offset = [0, 0.4, -0.13]
+parent = "head"
+
+[[parts]]
+name = "hatch_grip"
+kind = "box"
+role = "metal"
+size = [0.17, 0.035, 0.055]
+bevel = 0.012
+segments = 3
+offset = [0, 0.445, -0.13]
+parent = "head"
+
+[[parts]]
+name = "recoil_sleeve"
+kind = "cylinder"
+role = "metal"
+radius = 0.155
+height = 0.34
+vertices = 16
+bevel = 0.025
+segments = 3
+offset = [0, 0.2, 0.43]
+parent = "head"
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "recoil_collar"
+kind = "ring"
+role = "sentry_armor"
+radius = 0.166
+inner_radius = 0.12
+height = 0.075
+vertices = 32
+offset = [0, 0.2, 0.7]
+parent = "head"
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "muzzle_shoulder"
+kind = "ring"
+role = "metal"
+radius = 0.17
+inner_radius = 0.085
+height = 0.1
+vertices = 32
+offset = [0, 0.2, 1.03]
+parent = "head"
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "armor_left"
+kind = "prism"
+role = "sentry_armor"
+points = [[-0.505, -0.25], [-0.43, -0.35], [-0.33, -0.32], [-0.33, 0.32], [-0.505, 0.24]]
+height = 0.28
+bevel = 0.035
+segments = 3
+offset = [0, 0.065, 0]
+parent = "head"
+
+[[parts]]
+name = "armor_right"
+kind = "prism"
+role = "sentry_armor"
+points = [[0.505, -0.25], [0.43, -0.35], [0.33, -0.32], [0.33, 0.32], [0.505, 0.24]]
+height = 0.28
+bevel = 0.035
+segments = 3
+offset = [0, 0.065, 0]
+parent = "head"
+
+[[parts]]
+name = "pitch_pivot_left"
+kind = "cylinder"
+role = "metal"
+radius = 0.12
 height = 0.055
 vertices = 16
-bevel = 0.00825
+bevel = 0.012
 segments = 3
-offset = [0, 0.4, -0.1]
+offset = [-0.505, 0.2, 0.12]
 parent = "head"
+rotation = [0, 0, 90]
+
+[[parts]]
+name = "pitch_pivot_right"
+kind = "cylinder"
+role = "metal"
+radius = 0.12
+height = 0.055
+vertices = 16
+bevel = 0.012
+segments = 3
+offset = [0.505, 0.2, 0.12]
+parent = "head"
+rotation = [0, 0, -90]
+
+[[parts]]
+name = "optic_housing"
+kind = "box"
+role = "metal"
+size = [0.3, 0.12, 0.2]
+bevel = 0.035
+segments = 3
+offset = [0, 0.395, 0.2]
+parent = "head"
+
+[[parts]]
+name = "optic_lens"
+kind = "box"
+role = "sentry_optic"
+size = [0.2, 0.065, 0.022]
+bevel = 0.009
+segments = 3
+offset = [0, 0.421, 0.303]
+parent = "head"
+
+[[parts]]
+name = "optic_brow"
+kind = "box"
+role = "sentry_team"
+size = [0.32, 0.035, 0.09]
+bevel = 0.014
+segments = 3
+offset = [0, 0.505, 0.27]
+parent = "head"
+
+[[parts]]
+name = "vent_bank_left"
+kind = "box"
+role = "metal"
+size = [0.16, 0.035, 0.34]
+bevel = 0.014
+segments = 3
+offset = [-0.265, 0.39, -0.12]
+parent = "head"
+
+[[parts]]
+name = "vent_bank_right"
+kind = "box"
+role = "metal"
+size = [0.16, 0.035, 0.34]
+bevel = 0.014
+segments = 3
+offset = [0.265, 0.39, -0.12]
+parent = "head"
+
+[[parts]]
+name = "vent_left_1"
+kind = "box"
+role = "sentry_armor"
+size = [0.17, 0.026, 0.045]
+bevel = 0.009
+segments = 3
+offset = [-0.265, 0.42, -0.22]
+parent = "head"
+
+[[parts]]
+name = "vent_left_2"
+kind = "box"
+role = "sentry_armor"
+size = [0.17, 0.026, 0.045]
+bevel = 0.009
+segments = 3
+offset = [-0.265, 0.42, -0.12]
+parent = "head"
+
+[[parts]]
+name = "vent_left_3"
+kind = "box"
+role = "sentry_armor"
+size = [0.17, 0.026, 0.045]
+bevel = 0.009
+segments = 3
+offset = [-0.265, 0.42, -0.02]
+parent = "head"
+
+[[parts]]
+name = "vent_right_1"
+kind = "box"
+role = "sentry_armor"
+size = [0.17, 0.026, 0.045]
+bevel = 0.009
+segments = 3
+offset = [0.265, 0.42, -0.22]
+parent = "head"
+
+[[parts]]
+name = "vent_right_2"
+kind = "box"
+role = "sentry_armor"
+size = [0.17, 0.026, 0.045]
+bevel = 0.009
+segments = 3
+offset = [0.265, 0.42, -0.12]
+parent = "head"
+
+[[parts]]
+name = "vent_right_3"
+kind = "box"
+role = "sentry_armor"
+size = [0.17, 0.026, 0.045]
+bevel = 0.009
+segments = 3
+offset = [0.265, 0.42, -0.02]
+parent = "head"
+
+[[parts]]
+name = "anchor_pad_l_rear"
+kind = "box"
+role = "metal"
+size = [0.24, 0.12, 0.22]
+bevel = 0.035
+segments = 3
+offset = [-0.38, 0.09, -0.28]
 
 [[parts]]
 name = "anchor_l_rear"
 kind = "cylinder"
-role = "metal"
-radius = 0.055
-height = 0.035
-vertices = 16
-bevel = 0.00525
+role = "sentry_armor"
+radius = 0.075
+height = 0.055
+vertices = 8
+bevel = 0.008
 segments = 3
-offset = [-0.38, 0.15, -0.28]
+offset = [-0.38, 0.21, -0.28]
+
+[[parts]]
+name = "anchor_pad_l_front"
+kind = "box"
+role = "metal"
+size = [0.24, 0.12, 0.22]
+bevel = 0.035
+segments = 3
+offset = [-0.38, 0.09, 0.28]
 
 [[parts]]
 name = "anchor_l_front"
 kind = "cylinder"
-role = "metal"
-radius = 0.055
-height = 0.035
-vertices = 16
-bevel = 0.00525
+role = "sentry_armor"
+radius = 0.075
+height = 0.055
+vertices = 8
+bevel = 0.008
 segments = 3
-offset = [-0.38, 0.15, 0.28]
+offset = [-0.38, 0.21, 0.28]
+
+[[parts]]
+name = "anchor_pad_r_rear"
+kind = "box"
+role = "metal"
+size = [0.24, 0.12, 0.22]
+bevel = 0.035
+segments = 3
+offset = [0.38, 0.09, -0.28]
 
 [[parts]]
 name = "anchor_r_rear"
 kind = "cylinder"
-role = "metal"
-radius = 0.055
-height = 0.035
-vertices = 16
-bevel = 0.00525
+role = "sentry_armor"
+radius = 0.075
+height = 0.055
+vertices = 8
+bevel = 0.008
 segments = 3
-offset = [0.38, 0.15, -0.28]
+offset = [0.38, 0.21, -0.28]
+
+[[parts]]
+name = "anchor_pad_r_front"
+kind = "box"
+role = "metal"
+size = [0.24, 0.12, 0.22]
+bevel = 0.035
+segments = 3
+offset = [0.38, 0.09, 0.28]
 
 [[parts]]
 name = "anchor_r_front"
 kind = "cylinder"
-role = "metal"
-radius = 0.055
-height = 0.035
-vertices = 16
-bevel = 0.00525
+role = "sentry_armor"
+radius = 0.075
+height = 0.055
+vertices = 8
+bevel = 0.008
 segments = 3
-offset = [0.38, 0.15, 0.28]
+offset = [0.38, 0.21, 0.28]

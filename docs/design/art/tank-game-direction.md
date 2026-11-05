@@ -83,6 +83,9 @@ convention.
 | Crate inset panel | honey timber `#C28B3C` | muted timber `#B99863` | weathered steel `#6B8086` |
 | Hazard yellow | yellow `#F3C84B` | ochre yellow `#E6B84C` | muted gold `#CDA559` |
 | Hazard black | charcoal `#303038` | graphite `#303030` | charcoal `#30373F` |
+| Explosive drums | danger red `#BE382B` | oxide red `#C43B27` | warm red `#E4513B` |
+| Sentry armor | pale steel `#B9BBAE` | bone steel `#C4BAA5` | cool steel `#A5B9C5` |
+| Sentry optic | pale cyan `#88DBE3` | turquoise `#79D0D8` | ice cyan `#9CDAE8` |
 | Grass tufts | grass `#83AC38` | scrub green `#9AAB61` | night grass `#507165` |
 | Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` | granite `#848C96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` | night bark `#4C4541` |
@@ -241,6 +244,19 @@ camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
 `pickup_yellow`, `pickup_blue`) are defined alongside these roles in
 `calyx_model_gen::palette`.
 
+Combat props use the same broad shape language. Explosive barrels are red
+drums with a large yellow lid badge and a black flame silhouette, including
+a yellow inner lick. The lid warning must read at the Far camera; side
+diamonds repeat it without relying on text. Narrow hazard hoops, rolled rims
+and a slotted bung retain the drum silhouette. Sentries retain the red
+player-2 center, framed by pale armor cheeks, visible pitch/yaw bearings,
+a thick recoil sleeve and open muzzle. Paired roof cooling banks, a hatch
+handle, a shaded cyan optic and broad anchor pads explain the mechanism
+from above. Their extra details are substantial forms, not tiny surface noise.
+The `explosive_red`, `sentry_armor` and `sentry_optic` roles are matte clay
+(roughness 0.95, metalness 0) with no emission; the optic is a colored lens,
+not an additional gameplay signal.
+
 ## Silhouette and scale
 
 - Chunky, softly rounded shapes; generous bevels (0.12–0.35 m), no thin
@@ -350,3 +366,6 @@ views of every model and all three Far galleries/pens are under
 The generated Sentry, explosive barrel and ground reticle, including Far views
 against both terrain colours in each palette and arena firing/aim captures,
 are under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526>.
+The revised explosive drum and detailed Sentry, including the same Far-pitch
+views, lower three-quarter views and live arena checks for all three palettes,
+are under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526/v2>.

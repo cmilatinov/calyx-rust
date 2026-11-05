@@ -1,10 +1,11 @@
-# Steel drum with hazard bands and cap; visual asset only, explosion behavior belongs to cover gameplay.
+# Red explosive drum: broad lid flame badge, opposing warning plaques, rolled rims and bung.
+# Visual asset only; explosion behavior belongs to cover gameplay.
 # Metres, Y up, forward +Z; regenerate with calyx_model_gen.
 
 [[parts]]
 name = "drum"
 kind = "cylinder"
-role = "tracks"
+role = "explosive_red"
 radius = 0.43
 height = 1.065
 vertices = 16
@@ -38,7 +39,7 @@ kind = "ring"
 role = "hazard_yellow"
 radius = 0.436
 inner_radius = 0.425
-height = 0.16
+height = 0.085
 vertices = 32
 offset = [0, 0.19, 0]
 
@@ -48,9 +49,9 @@ kind = "ring"
 role = "hazard_yellow"
 radius = 0.436
 inner_radius = 0.425
-height = 0.16
+height = 0.085
 vertices = 32
-offset = [0, 0.75, 0]
+offset = [0, 0.84, 0]
 
 [[parts]]
 name = "middle_hoop"
@@ -58,14 +59,14 @@ kind = "ring"
 role = "hazard_black"
 radius = 0.45
 inner_radius = 0.42
-height = 0.065
+height = 0.055
 vertices = 32
-offset = [0, 0.515, 0]
+offset = [0, 0.535, 0]
 
 [[parts]]
 name = "lid"
 kind = "cylinder"
-role = "metal_caps"
+role = "explosive_red"
 radius = 0.395
 height = 0.025
 vertices = 16
@@ -77,9 +78,128 @@ offset = [0, 1.075, 0]
 name = "cap"
 kind = "cylinder"
 role = "hazard_black"
-radius = 0.085
+radius = 0.065
 height = 0.045
 vertices = 16
 bevel = 0.00675
 segments = 3
-offset = [0.19, 1.1, 0]
+offset = [0.235, 1.1, -0.21]
+
+[[parts]]
+name = "bung_slot"
+kind = "box"
+role = "metal_caps"
+size = [0.075, 0.012, 0.02]
+bevel = 0.004
+segments = 3
+offset = [0.235, 1.133, -0.21]
+
+[[parts]]
+name = "lid_warning_border"
+kind = "cylinder"
+role = "hazard_black"
+radius = 0.31
+height = 0.007
+vertices = 32
+bevel = 0.001
+segments = 3
+offset = [-0.045, 1.1, 0.025]
+
+[[parts]]
+name = "lid_warning_field"
+kind = "cylinder"
+role = "hazard_yellow"
+radius = 0.286
+height = 0.007
+vertices = 32
+bevel = 0.001
+segments = 3
+offset = [-0.045, 1.107, 0.025]
+
+[[parts]]
+name = "lid_flame"
+kind = "prism"
+role = "hazard_black"
+points = [[-0.03, -0.17], [-0.12, -0.14], [-0.17, -0.065], [-0.16, 0.025], [-0.105, 0.11], [-0.1, 0.025], [-0.055, 0.075], [0.015, 0.195], [0.035, 0.095], [0.09, 0.04], [0.115, 0.11], [0.165, 0.015], [0.16, -0.07], [0.1, -0.145], [0.035, -0.17]]
+height = 0.007
+offset = [-0.045, 1.114, 0.025]
+
+[[parts]]
+name = "lid_flame_core"
+kind = "prism"
+role = "hazard_yellow"
+points = [[-0.035, -0.13], [-0.08, -0.085], [-0.07, -0.035], [-0.015, 0.04], [0.005, -0.015], [0.05, -0.055], [0.055, -0.1], [0.015, -0.13]]
+height = 0.004
+offset = [-0.045, 1.121, 0.025]
+
+[[parts]]
+name = "front_warning_border"
+kind = "prism"
+role = "hazard_black"
+points = [[0, -0.24], [0.24, 0], [0, 0.24], [-0.24, 0]]
+height = 0.008
+offset = [0, 0.555, -0.428]
+rotation = [-90, 0, 0]
+
+[[parts]]
+name = "front_warning_field"
+kind = "prism"
+role = "hazard_yellow"
+points = [[0.0, -0.2088], [0.2088, 0.0], [0.0, 0.2088], [-0.2088, 0.0]]
+height = 0.006
+offset = [0, 0.555, -0.436]
+rotation = [-90, 0, 0]
+
+[[parts]]
+name = "front_flame"
+kind = "prism"
+role = "hazard_black"
+points = [[-0.0216, -0.1224], [-0.0864, -0.1008], [-0.1224, -0.0468], [-0.1152, 0.018], [-0.0756, 0.0792], [-0.072, 0.018], [-0.0396, 0.054], [0.0108, 0.1404], [0.0252, 0.0684], [0.0648, 0.0288], [0.0828, 0.0792], [0.1188, 0.0108], [0.1152, -0.0504], [0.072, -0.1044], [0.0252, -0.1224]]
+height = 0.006
+offset = [0, 0.555, -0.442]
+rotation = [-90, 0, 0]
+
+[[parts]]
+name = "front_flame_core"
+kind = "prism"
+role = "hazard_yellow"
+points = [[-0.0252, -0.0936], [-0.0576, -0.0612], [-0.0504, -0.0252], [-0.0108, 0.0288], [0.0036, -0.0108], [0.036, -0.0396], [0.0396, -0.072], [0.0108, -0.0936]]
+height = 0.004
+offset = [0, 0.555, -0.448]
+rotation = [-90, 0, 0]
+
+[[parts]]
+name = "back_warning_border"
+kind = "prism"
+role = "hazard_black"
+points = [[0, -0.24], [0.24, 0], [0, 0.24], [-0.24, 0]]
+height = 0.008
+offset = [0, 0.555, 0.428]
+rotation = [-90, 180, 0]
+
+[[parts]]
+name = "back_warning_field"
+kind = "prism"
+role = "hazard_yellow"
+points = [[0.0, -0.2088], [0.2088, 0.0], [0.0, 0.2088], [-0.2088, 0.0]]
+height = 0.006
+offset = [0, 0.555, 0.436]
+rotation = [-90, 180, 0]
+
+[[parts]]
+name = "back_flame"
+kind = "prism"
+role = "hazard_black"
+points = [[-0.0216, -0.1224], [-0.0864, -0.1008], [-0.1224, -0.0468], [-0.1152, 0.018], [-0.0756, 0.0792], [-0.072, 0.018], [-0.0396, 0.054], [0.0108, 0.1404], [0.0252, 0.0684], [0.0648, 0.0288], [0.0828, 0.0792], [0.1188, 0.0108], [0.1152, -0.0504], [0.072, -0.1044], [0.0252, -0.1224]]
+height = 0.006
+offset = [0, 0.555, 0.442]
+rotation = [-90, 180, 0]
+
+[[parts]]
+name = "back_flame_core"
+kind = "prism"
+role = "hazard_yellow"
+points = [[-0.0252, -0.0936], [-0.0576, -0.0612], [-0.0504, -0.0252], [-0.0108, 0.0288], [0.0036, -0.0108], [0.036, -0.0396], [0.0396, -0.072], [0.0108, -0.0936]]
+height = 0.004
+offset = [0, 0.555, 0.448]
+rotation = [-90, 180, 0]

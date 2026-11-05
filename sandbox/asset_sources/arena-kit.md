@@ -58,8 +58,8 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `grass_tuft` | Five tapered leaves in a fan | Normally non-blocking; a bounds box is available if an interaction needs one |
 | `sandbag_stack` | Three staggered rows of soft bags, 1.27 m total height, with restrained seam bands | Box around the stack |
 | `pickup_yellow`, `pickup_blue` | Green and blue glowing orbs over octagonal pads; legacy yellow name retains stable IDs | Box around pad; collection trigger belongs to gameplay |
-| `sentry` | Anchored circular base, red player-2 head, mantlet, barrel and open muzzle; the head's named children turn with it | Cylinder around base, radius 0.57 m and height 0.15 m, plus a box around the solid head if cover collision is desired; visual integration preserves existing gameplay |
-| `explosive_barrel` | Steel drum, two yellow hazard bands, dark middle hoop, rolled rims, lid and cap | Cylinder, radius 0.455 m and height 1.145 m, centered 0.5725 m above the ground pivot; explosion behavior belongs to cover gameplay |
+| `sentry` | Anchored circular base with broad mounting pads and exposed yaw bearing; red player-2 head with clipped armor cheeks, pitch hubs, recoil sleeve, open muzzle, roof cooling banks and shaded optic | Cylinder around base, radius 0.57 m and height 0.15 m, plus a box around the solid head if cover collision is desired; visual integration preserves existing gameplay |
+| `explosive_barrel` | Red explosive drum with a broad yellow-and-black lid flame badge, opposing diamond flame plaques, narrow hazard hoops, rolled rims and a slotted bung | Cylinder, radius 0.455 m and height 1.145 m, centered 0.5725 m above the ground pivot; explosion behavior belongs to cover gameplay |
 | `aim_reticle` | Flat open ring and four ticks, light marks over a dark contrast border; 1.66 m overall width | Non-blocking, no collider |
 
 Every opaque prop part material has `outline_style = 1`; pickup signal orbs
@@ -74,9 +74,21 @@ to that pivot. The gameplay Sentry root stays at its original height of
 0.5 m; its generated visual root sits 0.5 m below it, and `ComponentSentry.head`
 references the head child. Thus `muzzle_offset = 1.2` still fires exactly at
 the visible muzzle, with the same projectile height, range and shooter identity.
-The barrel, muzzle, mantlet and hatch name `parent = "head"` in the source;
-their offsets are local to that part. Part names, not source order, identify
+The barrel, muzzle, mantlet, hatch, armor, pitch hubs, cooling banks and optic
+name `parent = "head"` in the source; their offsets are local to that part.
+The pedestal, yaw bearing and mounting pads stay fixed. Part names, not source order, identify
 parents, meshes and prefab objects. A missing parent or cycle is rejected.
+
+The explosive drum puts its largest warning on the lid, which dominates at
+the Far camera's 68-degree pitch. The black flame and yellow inner lick are
+closed relief meshes, with a yellow field around them; opposing side plaques
+repeat the symbol for lower views. The red body separates this prop from a
+generic utility drum. Rims and bung retain its familiar drum construction.
+The Sentry's red center remains visible between pale cheek armor and paired
+dark cooling banks. The recoil sleeve, lateral pitch hubs and anchor pads
+describe how the machine turns, fires and stays planted. These are broad
+mechanical forms rather than a field of small bolts. Its cyan optic is matte
+and non-emissive, so it cannot compete with combat signals on Moonlit.
 
 The arena contains a linked Sunny Sentry prefab under its gameplay root and
 the Sunny reticle geometry. The player prefab carries the same reticle under
@@ -91,5 +103,6 @@ bloom 4.5 / threshold 2.5 / knee 0.1 / radius 6). Its primary kit roles match
 the direction reference; additional timber/foliage details stay in cool steel
 and pine shades. The lantern uses sodium `#FF9330` at strength 4. Pickup
 emission (Sunny/Sunbaked/Moonlit) is 12/12/6 for green and 24/24/16 for blue,
-with distinct colored halos at Far. Non-pickup material colors remain unchanged.
+with distinct colored halos at Far. The combat props add `explosive_red`,
+`sentry_armor` and `sentry_optic` roles; existing kit material colors remain unchanged.
 All three look-dev rigs use 2 px inner ink; outer ink and thresholds are unchanged.
