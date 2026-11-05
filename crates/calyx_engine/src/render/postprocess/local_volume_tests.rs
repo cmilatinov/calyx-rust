@@ -156,8 +156,24 @@ fn a_local_volume_blends_its_effects_over_the_global_settings_by_camera_position
         &scene,
         PostProcessSettings::selected_volume(&scene).unwrap(),
     );
-    assert_close(resolve(0.0).bloom.unwrap().intensity, 1.0, "inside");
-    assert_close(resolve(2.0).bloom.unwrap().intensity, 0.6, "halfway out");
+    assert_close(
+        resolve(0.0)
+            .get::<ComponentBloom>()
+            .copied()
+            .unwrap()
+            .intensity,
+        1.0,
+        "inside",
+    );
+    assert_close(
+        resolve(2.0)
+            .get::<ComponentBloom>()
+            .copied()
+            .unwrap()
+            .intensity,
+        0.6,
+        "halfway out",
+    );
     assert_eq!(resolve(3.0), global, "a factor of zero contributes nothing");
     assert_eq!(resolve(50.0), global);
 }
@@ -175,7 +191,15 @@ fn without_a_global_volume_local_volumes_blend_over_the_defaults() {
         },
     );
     let settings = PostProcessSettings::resolve(&scene, &Vec3::zeros());
-    assert_close(settings.tonemapping.exposure_ev, 1.0, "half of 2 EV over 0");
+    assert_close(
+        settings
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .exposure_ev,
+        1.0,
+        "half of 2 EV over 0",
+    );
     assert_eq!(
         PostProcessSettings::resolve(&scene, &vec3(10.0, 0.0, 0.0)),
         PostProcessSettings::default()
@@ -207,7 +231,11 @@ fn overlapping_local_volumes_apply_in_ascending_priority() {
     // 0 EV, then half way to 2 (1 EV), then half way to 4.
     let settings = PostProcessSettings::resolve(&scene, &Vec3::zeros());
     assert_close(
-        settings.tonemapping.exposure_ev,
+        settings
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .exposure_ev,
         2.5,
         "the higher applies last",
     );
@@ -216,13 +244,13 @@ fn overlapping_local_volumes_apply_in_ascending_priority() {
 #[test]
 fn tied_local_volumes_apply_in_object_id_order_and_report_the_tie() {
     let ids = [Uuid::from_u128(3), Uuid::from_u128(1), Uuid::from_u128(2)];
-    let order = order_local_volumes([(0, ids[0], 'a'), (0, ids[1], 'b'), (-1, ids[2], 'c')]);
-    assert_eq!(order.ordered, vec!['c', 'b', 'a']);
-    assert_eq!(order.tie, Some(0));
+    let mut volumes = [(0, ids[0], 'a'), (0, ids[1], 'b'), (-1, ids[2], 'c')];
+    assert_eq!(order_local_volumes(&mut volumes), Some(0));
+    assert_eq!(volumes.map(|(_, _, item)| item), ['c', 'b', 'a']);
 
-    let order = order_local_volumes([(2, ids[0], 'a'), (1, ids[1], 'b')]);
-    assert_eq!(order.ordered, vec!['b', 'a']);
-    assert_eq!(order.tie, None);
+    let mut volumes = [(2, ids[0], 'a'), (1, ids[1], 'b')];
+    assert_eq!(order_local_volumes(&mut volumes), None);
+    assert_eq!(volumes.map(|(_, _, item)| item), ['b', 'a']);
 }
 
 #[test]
@@ -240,9 +268,25 @@ fn an_effect_the_local_volume_lacks_or_disables_inherits_the_value_below() {
     assert!(scene.set_component_enabled::<ComponentBloom>(local, false));
 
     let settings = PostProcessSettings::resolve(&scene, &Vec3::zeros());
-    assert_eq!(settings.bloom, Some(bloom(0.2, 6)), "a disabled effect");
-    assert_eq!(settings.vignette, Some(vignette), "an absent effect");
-    assert_close(settings.tonemapping.exposure_ev, 1.0, "absent tone mapping");
+    assert_eq!(
+        settings.get::<ComponentBloom>().copied(),
+        Some(bloom(0.2, 6)),
+        "a disabled effect"
+    );
+    assert_eq!(
+        settings.get::<ComponentVignette>().copied(),
+        Some(vignette),
+        "an absent effect"
+    );
+    assert_close(
+        settings
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .exposure_ev,
+        1.0,
+        "absent tone mapping",
+    );
 }
 
 #[test]
@@ -256,7 +300,9 @@ fn a_disabled_local_volume_takes_no_part_in_the_blend() {
 
     assert!(PostProcessSettings::local_volumes(&scene, &Vec3::zeros()).is_empty());
     assert_eq!(
-        PostProcessSettings::resolve(&scene, &Vec3::zeros()).bloom,
+        PostProcessSettings::resolve(&scene, &Vec3::zeros())
+            .get::<ComponentBloom>()
+            .copied(),
         None
     );
 }
@@ -264,50 +310,55 @@ fn a_disabled_local_volume_takes_no_part_in_the_blend() {
 #[test]
 fn an_effect_off_below_fades_in_from_its_neutral_values() {
     let below = PostProcessSettings::default();
-    let effects = PostProcessEffects {
-        ambient_occlusion: Some(ComponentAmbientOcclusion {
+    let effects = PostProcessSettings::empty()
+        .with(ComponentAmbientOcclusion {
             intensity: 2.0,
             radius: 0.8,
             ..Default::default()
-        }),
-        depth_of_field: Some(ComponentDepthOfField {
+        })
+        .with(ComponentDepthOfField {
             max_blur: 8.0,
             focus_distance: 4.0,
             ..Default::default()
-        }),
-        bloom: Some(ComponentBloom {
+        })
+        .with(ComponentBloom {
             threshold: 2.0,
             ..bloom(1.0, 4)
-        }),
-        color_grading: Some(ComponentColorGrading {
+        })
+        .with(ComponentColorGrading {
             saturation: 0.0,
             contrast: 1.5,
             ..Default::default()
-        }),
-        vignette: Some(ComponentVignette {
+        })
+        .with(ComponentVignette {
             intensity: 0.8,
             ..Default::default()
-        }),
-        ..Default::default()
-    };
+        });
     let settings = below.blend(&effects, 0.25);
 
-    let ssao = settings.ambient_occlusion.unwrap();
+    let ssao = settings
+        .get::<ComponentAmbientOcclusion>()
+        .copied()
+        .unwrap();
     assert_close(ssao.intensity, 0.5, "SSAO intensity from 0");
     assert_close(ssao.radius, 0.8, "SSAO keeps the volume's radius");
-    let dof = settings.depth_of_field.unwrap();
+    let dof = settings.get::<ComponentDepthOfField>().copied().unwrap();
     assert_close(dof.max_blur, 2.0, "depth of field blur from 0");
     assert_close(dof.focus_distance, 4.0, "and keeps the volume's focus");
-    let bloom = settings.bloom.unwrap();
+    let bloom = settings.get::<ComponentBloom>().copied().unwrap();
     assert_close(bloom.intensity, 0.25, "bloom intensity from 0");
     assert_close(bloom.threshold, 2.0, "bloom keeps the volume's threshold");
     assert_eq!(bloom.radius, 4);
-    let grading = settings.color_grading.unwrap();
+    let grading = settings.get::<ComponentColorGrading>().copied().unwrap();
     assert_close(grading.saturation, 0.75, "saturation from neutral 1");
     assert_close(grading.contrast, 1.125, "contrast from neutral 1");
     assert_close(grading.temperature, 0.0, "temperature stays neutral");
     assert_close(
-        settings.vignette.unwrap().intensity,
+        settings
+            .get::<ComponentVignette>()
+            .copied()
+            .unwrap()
+            .intensity,
         0.2,
         "vignette intensity from 0",
     );
@@ -315,49 +366,73 @@ fn an_effect_off_below_fades_in_from_its_neutral_values() {
 
 #[test]
 fn fxaa_has_no_neutral_value_and_switches_on_at_half() {
-    let effects = PostProcessEffects {
-        anti_aliasing: Some(ComponentAntiAliasing::default()),
-        ..Default::default()
-    };
+    let effects = PostProcessSettings::empty().with(ComponentAntiAliasing::default());
     let below = PostProcessSettings::default();
-    assert_eq!(below.blend(&effects, 0.49).anti_aliasing, None);
     assert_eq!(
-        below.blend(&effects, 0.5).anti_aliasing,
+        below
+            .blend(&effects, 0.49)
+            .get::<ComponentAntiAliasing>()
+            .copied(),
+        None
+    );
+    assert_eq!(
+        below
+            .blend(&effects, 0.5)
+            .get::<ComponentAntiAliasing>()
+            .copied(),
         Some(ComponentAntiAliasing::default())
     );
 }
 
 #[test]
 fn integer_and_enum_fields_switch_at_half_while_floats_interpolate() {
-    let below = PostProcessSettings {
-        bloom: Some(bloom(0.0, 2)),
-        ambient_occlusion: Some(ComponentAmbientOcclusion {
-            sample_count: 8,
-            ..Default::default()
-        }),
-        ..Default::default()
-    };
-    let effects = PostProcessEffects {
-        bloom: Some(bloom(1.0, 6)),
-        ambient_occlusion: Some(ComponentAmbientOcclusion {
+    let below =
+        PostProcessSettings::default()
+            .with(bloom(0.0, 2))
+            .with(ComponentAmbientOcclusion {
+                sample_count: 8,
+                ..Default::default()
+            });
+    let effects = PostProcessSettings::empty()
+        .with(bloom(1.0, 6))
+        .with(ComponentAmbientOcclusion {
             sample_count: 32,
             ..Default::default()
-        }),
-        tonemapping: Some(ComponentTonemap::default()),
-        ..Default::default()
-    };
+        })
+        .with(ComponentTonemap::default());
     let before = below.blend(&effects, 0.49);
-    assert_eq!(before.bloom.unwrap().radius, 2);
+    assert_eq!(before.get::<ComponentBloom>().copied().unwrap().radius, 2);
     assert_close(
-        before.bloom.unwrap().intensity,
+        before.get::<ComponentBloom>().copied().unwrap().intensity,
         0.49,
         "intensity interpolates",
     );
-    assert_eq!(before.ambient_occlusion.unwrap().sample_count, 8);
+    assert_eq!(
+        before
+            .get::<ComponentAmbientOcclusion>()
+            .copied()
+            .unwrap()
+            .sample_count,
+        8
+    );
     let after = below.blend(&effects, 0.5);
-    assert_eq!(after.bloom.unwrap().radius, 6);
-    assert_eq!(after.ambient_occlusion.unwrap().sample_count, 32);
-    assert_eq!(after.tonemapping.preset, ComponentTonemap::default().preset);
+    assert_eq!(after.get::<ComponentBloom>().copied().unwrap().radius, 6);
+    assert_eq!(
+        after
+            .get::<ComponentAmbientOcclusion>()
+            .copied()
+            .unwrap()
+            .sample_count,
+        32
+    );
+    assert_eq!(
+        after
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .preset,
+        ComponentTonemap::default().preset
+    );
 }
 
 #[test]
@@ -375,7 +450,12 @@ fn the_tone_mapping_preset_switches_at_half_while_exposure_interpolates() {
             exposure_ev: 2.0,
         },
     );
-    let resolve = |x: f32| PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0)).tonemapping;
+    let resolve = |x: f32| {
+        PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0))
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+    };
 
     assert_eq!(resolve(0.0).preset, TonemappingPreset::Neutral, "inside");
     assert_eq!(resolve(2.0).preset, TonemappingPreset::Neutral, "at half");
@@ -387,27 +467,31 @@ fn the_tone_mapping_preset_switches_at_half_while_exposure_interpolates() {
 
 #[test]
 fn colours_interpolate_in_linear_space() {
-    let below = PostProcessSettings {
-        vignette: Some(ComponentVignette {
-            color: Color32::BLACK,
-            ..Default::default()
-        }),
+    let below = PostProcessSettings::default().with(ComponentVignette {
+        color: Color32::BLACK,
         ..Default::default()
-    };
-    let effects = PostProcessEffects {
-        vignette: Some(ComponentVignette {
-            color: Color32::WHITE,
-            ..Default::default()
-        }),
+    });
+    let effects = PostProcessSettings::empty().with(ComponentVignette {
+        color: Color32::WHITE,
         ..Default::default()
-    };
-    let color = below.blend(&effects, 0.5).vignette.unwrap().color;
+    });
+    let color = below
+        .blend(&effects, 0.5)
+        .get::<ComponentVignette>()
+        .copied()
+        .unwrap()
+        .color;
     // Linear 0.5 encodes to sRGB 188; a gamma-space blend would give 128.
     assert!((187..=189).contains(&color.r()), "{color:?}");
     assert_eq!(color.r(), color.g());
     assert_eq!(color.a(), 255);
     assert_eq!(
-        below.blend(&effects, 1.0).vignette.unwrap().color,
+        below
+            .blend(&effects, 1.0)
+            .get::<ComponentVignette>()
+            .copied()
+            .unwrap()
+            .color,
         Color32::WHITE
     );
 }
@@ -429,7 +513,10 @@ fn the_scene_renderer_resolves_settings_at_the_camera_it_draws_with() {
             Transform::from_components(position, UnitQuaternion::identity(), vec3(1.0, 1.0, 1.0));
         renderer.render_scene_base(&camera, &transform, &scene, None, None);
         renderer.finalize_scene();
-        renderer.post_process_settings().bloom
+        renderer
+            .post_process_settings()
+            .get::<ComponentBloom>()
+            .copied()
     };
     assert_eq!(frame(Vec3::zeros()), None, "outside the volume");
     assert_eq!(
@@ -537,7 +624,11 @@ fn fog_blends_between_a_global_and_a_local_volume_by_camera_position() {
         },
     );
 
-    let resolve = |x: f32| PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0)).fog;
+    let resolve = |x: f32| {
+        PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0))
+            .get::<ComponentFog>()
+            .copied()
+    };
     let inside = resolve(0.0).expect("fog inside the volume");
     assert_eq!(inside.mode, FogMode::Exponential, "inside");
     assert_eq!(inside.color, Color32::WHITE);
@@ -578,22 +669,29 @@ fn fog_blends_between_a_global_and_a_local_volume_by_camera_position() {
 #[test]
 fn fog_off_below_fades_in_from_no_opacity() {
     let below = PostProcessSettings::default();
-    let effects = PostProcessEffects {
-        fog: Some(ComponentFog {
-            opacity: 0.8,
-            ..fog(FogMode::Linear, Color32::WHITE, 5.0, 50.0)
-        }),
-        ..Default::default()
-    };
+    let effects = PostProcessSettings::empty().with(ComponentFog {
+        opacity: 0.8,
+        ..fog(FogMode::Linear, Color32::WHITE, 5.0, 50.0)
+    });
 
     let settings = below.blend(&effects, 0.25);
 
-    let fog = settings.fog.expect("fog fades in");
+    let fog = settings
+        .get::<ComponentFog>()
+        .copied()
+        .expect("fog fades in");
     assert_close(fog.opacity, 0.2, "opacity from 0");
     assert_close(fog.start, 5.0, "keeps the volume's start");
     assert_close(fog.end, 50.0, "keeps the volume's end");
     assert_eq!(fog.color, Color32::WHITE, "keeps the volume's colour");
-    assert_eq!(below.blend(&effects, 0.0).fog.map(|f| f.opacity), Some(0.0));
+    assert_eq!(
+        below
+            .blend(&effects, 0.0)
+            .get::<ComponentFog>()
+            .copied()
+            .map(|f| f.opacity),
+        Some(0.0)
+    );
 }
 
 fn ink(color: Color32, width: f32, inner_width: f32, opacity: f32) -> OutlineStyle {
@@ -633,7 +731,8 @@ fn outline_styles_blend_entry_by_entry_between_a_global_and_a_local_volume() {
 
     let resolve = |x: f32| {
         PostProcessSettings::resolve(&scene, &vec3(x, 0.0, 0.0))
-            .outline
+            .get::<ComponentOutline>()
+            .cloned()
             .expect("outlines are on")
     };
     assert_eq!(resolve(0.0), volume, "inside, the volume's outlines");
@@ -680,20 +779,15 @@ fn outline_styles_blend_entry_by_entry_between_a_global_and_a_local_volume() {
     assert_eq!(resolve(3.0), below, "outside, the global outlines apply");
 
     // A style the volume lacks fades out towards opacity 0.
-    let fewer = PostProcessEffects {
-        outline: Some(ComponentOutline {
-            styles: vec![ink(Color32::BLACK, 1.0, 1.0, 1.0)],
-            ..volume.clone()
-        }),
-        ..Default::default()
-    };
-    let two_below = PostProcessSettings {
-        outline: Some(volume.clone()),
-        ..Default::default()
-    };
+    let fewer = PostProcessSettings::empty().with(ComponentOutline {
+        styles: vec![ink(Color32::BLACK, 1.0, 1.0, 1.0)],
+        ..volume.clone()
+    });
+    let two_below = PostProcessSettings::default().with(volume.clone());
     let faded = two_below
         .blend(&fewer, 0.25)
-        .outline
+        .get::<ComponentOutline>()
+        .cloned()
         .expect("outlines stay on");
     assert_eq!(faded.styles.len(), 2);
     assert_close(faded.styles[1].opacity, 0.6, "0.8 towards 0 by a quarter");
@@ -703,20 +797,18 @@ fn outline_styles_blend_entry_by_entry_between_a_global_and_a_local_volume() {
 #[test]
 fn outlines_off_below_fade_in_from_no_opacity() {
     let below = PostProcessSettings::default();
-    let effects = PostProcessEffects {
-        outline: Some(ComponentOutline {
-            styles: vec![
-                ink(Color32::BLACK, 2.0, 1.0, 1.0),
-                ink(Color32::WHITE, 3.0, 1.0, 0.6),
-            ],
-            ..Default::default()
-        }),
+    let effects = PostProcessSettings::empty().with(ComponentOutline {
+        styles: vec![
+            ink(Color32::BLACK, 2.0, 1.0, 1.0),
+            ink(Color32::WHITE, 3.0, 1.0, 0.6),
+        ],
         ..Default::default()
-    };
+    });
 
     let faded = below
         .blend(&effects, 0.25)
-        .outline
+        .get::<ComponentOutline>()
+        .cloned()
         .expect("outlines fade in");
 
     assert_close(faded.styles[0].opacity, 0.25, "opacity from 0");
@@ -730,7 +822,8 @@ fn outlines_off_below_fade_in_from_no_opacity() {
     assert!(
         below
             .blend(&effects, 0.0)
-            .outline
+            .get::<ComponentOutline>()
+            .cloned()
             .expect("on at a factor of 0")
             .styles
             .iter()

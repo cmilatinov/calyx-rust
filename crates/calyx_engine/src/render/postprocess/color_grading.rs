@@ -4,6 +4,7 @@
 use super::{
     NoPipeline, PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
 };
+use crate::component::{ComponentColorGrading, ComponentVignette};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
@@ -74,16 +75,22 @@ struct ColorGradingUniform {
 impl ColorGradingUniform {
     fn new(settings: &PostProcessSettings) -> Self {
         // A missing effect reaches the shader as neutral values.
-        let grading = settings.color_grading.unwrap_or_default();
+        let grading = settings
+            .get::<ComponentColorGrading>()
+            .copied()
+            .unwrap_or_default();
         let matrix = white_balance(grading.temperature, grading.tint);
-        let vignette = settings.vignette.unwrap_or_default();
+        let vignette = settings
+            .get::<ComponentVignette>()
+            .copied()
+            .unwrap_or_default();
         Self {
             white_balance: std::array::from_fn(|column| {
                 [matrix[0][column], matrix[1][column], matrix[2][column], 0.0]
             }),
             contrast: grading.contrast,
             saturation: grading.saturation,
-            vignette_intensity: if settings.vignette.is_some() {
+            vignette_intensity: if settings.get::<ComponentVignette>().is_some() {
                 vignette.intensity
             } else {
                 0.0
@@ -137,7 +144,8 @@ impl PostProcessPass for ColorGradingPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.color_grading.is_some() || settings.vignette.is_some()
+        settings.get::<ComponentColorGrading>().is_some()
+            || settings.get::<ComponentVignette>().is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {

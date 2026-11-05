@@ -960,7 +960,12 @@ mod tests {
 
     #[test]
     fn ssao_is_off_by_default_and_a_partial_component_loads_with_defaults() {
-        assert_eq!(PostProcessSettings::default().ambient_occlusion, None);
+        assert_eq!(
+            PostProcessSettings::default()
+                .get::<ComponentAmbientOcclusion>()
+                .copied(),
+            None
+        );
         let partial = r#"{ "radius": 2.0 }"#;
         let ao: ComponentAmbientOcclusion = serde_json::from_str(partial).expect("ssao loads");
         assert_eq!(

@@ -5,6 +5,7 @@ use super::{
     PostProcessSettings, PostProcessStage, SceneInput,
 };
 use crate::assets::texture::Texture;
+use crate::component::ComponentDepthOfField;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
@@ -130,11 +131,11 @@ impl PostProcessPass for DepthOfFieldPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.depth_of_field.is_some()
+        settings.get::<ComponentDepthOfField>().is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let Some(dof) = &settings.depth_of_field else {
+        let Some(dof) = settings.get::<ComponentDepthOfField>() else {
             return;
         };
         let uniform = DofUniform {
@@ -281,14 +282,11 @@ mod tests {
     type Image = Vec<[f32; 4]>;
 
     fn dof_on() -> PostProcessSettings {
-        PostProcessSettings {
-            depth_of_field: Some(ComponentDepthOfField {
-                focus_distance: FOCUS,
-                focus_range: RANGE,
-                max_blur: MAX_BLUR,
-            }),
-            ..Default::default()
-        }
+        PostProcessSettings::default().with(ComponentDepthOfField {
+            focus_distance: FOCUS,
+            focus_range: RANGE,
+            max_blur: MAX_BLUR,
+        })
     }
 
     /// Lets a test inspect a pass the chain owns.
@@ -632,7 +630,12 @@ mod tests {
 
     #[test]
     fn depth_of_field_is_off_by_default_and_a_partial_component_loads_with_defaults() {
-        assert_eq!(PostProcessSettings::default().depth_of_field, None);
+        assert_eq!(
+            PostProcessSettings::default()
+                .get::<ComponentDepthOfField>()
+                .copied(),
+            None
+        );
         let defaults = ComponentDepthOfField::default();
         let partial = r#"{"focus_distance":4.0}"#;
         let dof: ComponentDepthOfField = serde_json::from_str(partial).expect("partial loads");

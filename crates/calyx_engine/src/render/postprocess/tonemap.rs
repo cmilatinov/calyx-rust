@@ -3,6 +3,7 @@
 use super::{
     NoPipeline, PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
 };
+use crate::component::ComponentTonemap;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
@@ -63,9 +64,13 @@ impl PostProcessPass for TonemapPass {
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
+        let tonemap = settings
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default();
         let uniform = TonemapUniform {
-            exposure_scale: settings.tonemapping.exposure_scale(),
-            preset: settings.tonemapping.preset.shader_index(),
+            exposure_scale: tonemap.exposure_scale(),
+            preset: tonemap.preset.shader_index(),
             _padding: Default::default(),
         };
         context.render_context.queue().write_buffer(

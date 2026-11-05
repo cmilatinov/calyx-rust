@@ -44,7 +44,7 @@ impl Default for LocalVolumeShape {
 /// While the render camera is inside the shape they blend over the
 /// global volume's settings by `weight`; the blend falls linearly to zero
 /// over `blend_distance` outside it. See
-/// [`PostProcessSettings::resolve`](crate::render::postprocess::PostProcessSettings::resolve).
+/// [`PostProcessSettings::resolve_into`](crate::render::postprocess::PostProcessSettings::resolve_into).
 #[derive(Clone, Debug, PartialEq, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8d3c6a2e-5b71-4f0a-9c84-1e2f7a6b9d53"]
 #[reflect(Default, TypeUuidDynamic, Component)]

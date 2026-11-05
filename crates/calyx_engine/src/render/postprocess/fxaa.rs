@@ -3,6 +3,7 @@
 use super::{
     NoPipeline, PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
 };
+use crate::component::ComponentAntiAliasing;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
@@ -67,11 +68,11 @@ impl PostProcessPass for FxaaPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.anti_aliasing.is_some()
+        settings.get::<ComponentAntiAliasing>().is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let Some(anti_aliasing) = &settings.anti_aliasing else {
+        let Some(anti_aliasing) = settings.get::<ComponentAntiAliasing>() else {
             return;
         };
         let uniform = FxaaUniform {

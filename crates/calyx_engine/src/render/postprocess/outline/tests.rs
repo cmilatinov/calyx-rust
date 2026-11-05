@@ -5,6 +5,7 @@ use super::*;
 use crate::assets::material::{Material, ShaderVariableValue};
 use crate::assets::mesh::Mesh;
 use crate::assets::AssetRef;
+use crate::component::ComponentOutline;
 use crate::component::{ComponentGlobalPostProcessVolume, ComponentMesh};
 use crate::math::Transform;
 use crate::render::{Camera, ReadbackPoll, RenderContext, SceneRenderer, SceneRendererOptions};
@@ -712,7 +713,12 @@ fn the_renderer_draws_outlines_after_colour_grading_and_before_fxaa() {
 
 #[test]
 fn outlines_are_off_by_default_and_a_partial_component_loads_with_defaults() {
-    assert_eq!(PostProcessSettings::default().outline, None);
+    assert_eq!(
+        PostProcessSettings::default()
+            .get::<ComponentOutline>()
+            .cloned(),
+        None
+    );
     let partial: ComponentOutline =
         serde_json::from_str(r#"{ "styles": [{ "width": 3.0 }], "normal_threshold": 30.0 }"#)
             .expect("outline loads");

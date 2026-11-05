@@ -4,6 +4,7 @@ use super::{
     NoPipeline, PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
 };
 use crate::assets::texture::Texture;
+use crate::component::ComponentBloom;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{
@@ -250,11 +251,11 @@ impl PostProcessPass for BloomPass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.bloom.is_some()
+        settings.get::<ComponentBloom>().is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let Some(bloom) = &settings.bloom else {
+        let Some(bloom) = settings.get::<ComponentBloom>() else {
             return;
         };
         self.mip_count = bloom.mip_count(context.size);
@@ -601,14 +602,11 @@ mod tests {
     }
 
     fn bloom(intensity: f32, radius: u32) -> PostProcessSettings {
-        PostProcessSettings {
-            bloom: Some(ComponentBloom {
-                intensity,
-                radius,
-                ..Default::default()
-            }),
+        PostProcessSettings::default().with(ComponentBloom {
+            intensity,
+            radius,
             ..Default::default()
-        }
+        })
     }
 
     /// Runs a chain of bloom alone over `source` and returns its output.
@@ -895,7 +893,12 @@ mod tests {
 
     #[test]
     fn bloom_is_off_by_default_and_a_partial_component_loads_with_defaults() {
-        assert_eq!(PostProcessSettings::default().bloom, None);
+        assert_eq!(
+            PostProcessSettings::default()
+                .get::<ComponentBloom>()
+                .copied(),
+            None
+        );
         let saved = r#"{ "intensity": 0.25 }"#;
         let bloom: ComponentBloom = serde_json::from_str(saved).expect("bloom loads");
         assert_eq!(
@@ -920,7 +923,7 @@ mod tests {
             PostProcessStage::Hdr
         }
         fn enabled(&self, settings: &PostProcessSettings) -> bool {
-            settings.bloom.is_some()
+            settings.get::<ComponentBloom>().copied().is_some()
         }
         fn prepare(&mut self, _: &PassContext, _: &PostProcessSettings) {}
         fn record(

@@ -296,6 +296,10 @@ impl ThumbnailGenerator {
             renderer.resize_textures(size_px, size_px);
             renderer.render_scene_base(&view.camera, &view.camera_transform, scene, None, None);
             renderer.finalize_scene();
+            // A cached thumbnail renderer outlives this job's scene. Release
+            // project effect values before the scene-job guard permits a DLL
+            // reload; keep its GPU resources for the next thumbnail.
+            renderer.clear_post_process_settings();
         }
 
         if self.texture_downscaler.is_none() {
@@ -683,4 +687,46 @@ fn add_preview_lighting(scene: &mut Scene) {
             intensity: 0.8,
         },
     );
+}
+
+#[cfg(test)]
+mod effect_lifetime_tests {
+    use super::*;
+    use calyx_engine::component::{
+        ComponentBloom, ComponentGlobalPostProcessVolume, ComponentTonemap,
+    };
+    use calyx_engine::test_support::TestAssets;
+
+    #[test]
+    fn a_scene_job_releases_its_resolved_effects_before_assembly_reload() {
+        let fixture = TestAssets::engine();
+        let assets = fixture.asset_context();
+        let context = assets.lock_read();
+        let mut scene = context.scene();
+        let volume = scene.create(None, None);
+        scene.add_component(volume, ComponentGlobalPostProcessVolume::default());
+        scene.add_component(volume, ComponentBloom::default());
+        let view = SceneThumbnailView {
+            camera: Camera::default(),
+            camera_transform: Transform::from_xyz(0.0, 0.0, -5.0),
+            clear_color: Color32::TRANSPARENT,
+            from_main_camera: false,
+        };
+        let mut generator =
+            ThumbnailGenerator::with_render_settings(ThumbnailRenderSettings::with_size_px(64));
+        for _ in 0..2 {
+            generator
+                .render_scene_view(&context, context.render_context.as_ref(), &scene, &view)
+                .expect("the scene thumbnail renders");
+            let renderer = generator.scene_renderer.as_ref().unwrap();
+            assert!(renderer
+                .post_process_settings()
+                .get::<ComponentBloom>()
+                .is_none());
+            assert!(renderer
+                .post_process_settings()
+                .get::<ComponentTonemap>()
+                .is_none());
+        }
+    }
 }

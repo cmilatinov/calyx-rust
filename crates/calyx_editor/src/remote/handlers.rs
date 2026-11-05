@@ -1097,7 +1097,7 @@ impl EditorApp {
         ctx: &egui::Context,
     ) -> Result<(), (ErrorKind, String)> {
         let Some(size) = game_capture_size(
-            Self::get_physical_size(ctx, self.state.game_size),
+            Self::game_physical_size(ctx, self.state.game_size),
             Self::get_physical_size(ctx, self.state.viewport_size),
             Self::get_physical_size(ctx, (1.0, 1.0)),
         )?
