@@ -1,0 +1,14 @@
+{
+  "crop_physical": [
+    1646,
+    413,
+    160,
+    44
+  ],
+  "display_scale": 2,
+  "captures": [
+    "hp-hold.png",
+    "hp-mid-shrink.png",
+    "hp-settled.png"
+  ]
+}

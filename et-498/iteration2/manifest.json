@@ -1,0 +1,122 @@
+[
+  {
+    "capture": "normal-play.png",
+    "metadata": "normal-play.json",
+    "comparison": "comparison-normal-play.html",
+    "title": "Latest gameplay layout",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "kill-feed.png",
+    "metadata": "kill-feed.json",
+    "comparison": "comparison-kill-feed.html",
+    "title": "Compact upper-right kill feed and neutral hazard attribution",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "stacked-damage.png",
+    "metadata": "stacked-damage.json",
+    "comparison": "comparison-stacked-damage.html",
+    "title": "Unchanged damage tiers, above projected HP",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "fog-contours.png",
+    "metadata": "fog-contours.json",
+    "comparison": "comparison-fog-contours.html",
+    "title": "Playable contours and cover-clipped visibility",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "scoreboard-populated.png",
+    "metadata": "scoreboard-populated.json",
+    "comparison": "comparison-scoreboard-populated.html",
+    "title": "Scoreboard with one clean edge",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "hp-hold.png",
+    "metadata": "hp-hold.json",
+    "comparison": "comparison-hp-hold.html",
+    "title": "Incoming damage: white segment holds",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "hp-mid-shrink.png",
+    "metadata": "hp-mid-shrink.json",
+    "comparison": "comparison-hp-mid-shrink.html",
+    "title": "Incoming damage: white segment drains",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "hp-settled.png",
+    "metadata": "hp-settled.json",
+    "comparison": "comparison-hp-settled.html",
+    "title": "Incoming damage: segment settles",
+    "crop_physical": [
+      881.9999694824219,
+      86.00000381469727,
+      1658.0000305175781,
+      933.0000305175781
+    ]
+  },
+  {
+    "capture": "compact-gameplay.png",
+    "metadata": "compact-gameplay.json",
+    "comparison": "comparison-compact-gameplay.html",
+    "title": "1800 x 1120 physical window: gameplay",
+    "crop_physical": [
+      357.00000762939453,
+      148.00000190734863,
+      1068.0000305175781,
+      600.0000381469727
+    ]
+  },
+  {
+    "capture": "compact-scoreboard.png",
+    "metadata": "compact-scoreboard.json",
+    "comparison": "comparison-compact-scoreboard.html",
+    "title": "1800 x 1120 physical window: scoreboard",
+    "crop_physical": [
+      357.00000762939453,
+      148.00000190734863,
+      1068.0000305175781,
+      600.0000381469727
+    ]
+  }
+]

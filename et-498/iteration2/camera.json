@@ -1,0 +1,13 @@
+{
+  "aim_ahead": 0.25,
+  "aim_ahead_dead_zone": 4.0,
+  "aim_ahead_max": 6.0,
+  "aim_ahead_smoothing": 0.3499999940395355,
+  "back": 13.699999809265137,
+  "height": 34.0,
+  "max_zoom": 1.0,
+  "min_zoom": 0.6000000238418579,
+  "zoom": 1.0,
+  "zoom_sensitivity": 0.0020000000949949026,
+  "zoom_smoothing": 0.119999997317791
+}

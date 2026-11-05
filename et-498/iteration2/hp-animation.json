@@ -1,0 +1,84 @@
+{
+  "target": "Tank",
+  "shooter": "Sentry",
+  "damage": 45,
+  "simulation_before_hit": 0.20246100425720215,
+  "confirmed_hit_time": 0.2911217212677002,
+  "hold_seconds": 0.35,
+  "shrink_seconds": 0.6,
+  "edge_note": "Expected edge is derived from tested timing, not exposed runtime state; impact occurred in one stepped frame between before and confirmed time; interval allows health/projectile update ordering. Raw screenshots independently show the rendered edge.",
+  "frames": [
+    {
+      "capture": "hp-hold.png",
+      "simulation_time": 0.2911217212677002,
+      "elapsed_since_confirmed_hit": 0.0,
+      "health": 55.0,
+      "expected_edge_interval": [
+        100,
+        100
+      ],
+      "pixel_measurement": {
+        "row": 435,
+        "cyan_span": [
+          1671,
+          1729
+        ],
+        "white_span": [
+          1730,
+          1776
+        ],
+        "white_pixel_count": 47,
+        "method": "Read-only RGB scan of local HP region; counts interior bright pixels, excludes anti-aliased edge."
+      }
+    },
+    {
+      "capture": "hp-mid-shrink.png",
+      "simulation_time": 0.9327179789543152,
+      "elapsed_since_confirmed_hit": 0.641596257686615,
+      "health": 55.0,
+      "expected_edge_interval": [
+        71.48072689771652,
+        78.13028067350388
+      ],
+      "pixel_measurement": {
+        "row": 434,
+        "cyan_span": [
+          1672,
+          1729
+        ],
+        "white_span": [
+          1730,
+          1753
+        ],
+        "white_pixel_count": 24,
+        "method": "Read-only RGB scan of local HP region; counts interior bright pixels, excludes anti-aliased edge."
+      }
+    },
+    {
+      "capture": "hp-settled.png",
+      "simulation_time": 1.46168053150177,
+      "elapsed_since_confirmed_hit": 1.1705588102340698,
+      "health": 55.0,
+      "expected_edge_interval": [
+        55,
+        55
+      ],
+      "pixel_measurement": {
+        "row": 433,
+        "cyan_span": [
+          1672,
+          1729
+        ],
+        "white_span": null,
+        "white_pixel_count": 0,
+        "method": "Read-only RGB scan of local HP region; counts interior bright pixels, excludes anti-aliased edge."
+      }
+    }
+  ],
+  "detail_crop_physical": [
+    1610,
+    400,
+    240,
+    245
+  ]
+}
