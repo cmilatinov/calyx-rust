@@ -21,7 +21,7 @@ use calyx_engine::component::{
     ComponentTonemap, ComponentVignette,
 };
 use calyx_engine::context::AssetContext;
-use calyx_engine::scene::{Prefab, Scene};
+use calyx_engine::scene::{Prefab, Scene, SceneData};
 use calyx_engine::test_support::TestAssets;
 use calyx_engine::utils::{TypeUuid, Uuid};
 use serde_json::Value;
@@ -360,6 +360,66 @@ fn sandbox_assets() -> (TestAssets, AssetContext) {
         .write()
         .refresh_class_lists(&assets.registries.types.read());
     (copy, assets)
+}
+
+/// Exercise real component deserialization, not just a JSON parse/format pass.
+/// To migrate checked-in scenes after an intentional format change, run this
+/// test with CALYX_UPDATE_SCENES=1 and review the resulting asset-only diff.
+#[test]
+fn checked_in_scenes_save_byte_for_byte() {
+    let (_copy, assets) = sandbox_assets();
+    let registries = assets.registries.lock_read();
+    let root = repository_root();
+    let mut paths = Vec::new();
+    for asset_root in ["assets", "sandbox/assets", "demos/assets"] {
+        files_with_extensions(&root.join(asset_root), &["cxscene"], &mut paths);
+    }
+    paths.sort();
+    assert!(!paths.is_empty());
+    let update = std::env::var("CALYX_UPDATE_SCENES").as_deref() == Ok("1");
+    let mut changed = Vec::new();
+    for path in paths {
+        let source = std::fs::read_to_string(&path).unwrap();
+        let data: SceneData = serde_json::from_str(&source).unwrap();
+        let (scene, dropped) = Scene::load(&registries, data);
+        assert!(dropped.is_empty(), "{}: {dropped:?}", path.display());
+        let saved = serde_json::to_string_pretty(&scene).unwrap();
+        let (reloaded, dropped) = Scene::load(&registries, serde_json::from_str(&saved).unwrap());
+        assert!(dropped.is_empty(), "{}: {dropped:?}", path.display());
+        assert!(
+            saved == serde_json::to_string_pretty(&reloaded).unwrap(),
+            "{} changes on its second save",
+            path.display()
+        );
+        // Adding one child must leave every pre-existing component, root,
+        // prefab link and disabled flag byte-identical. Only its parent's
+        // child list and the new object's component block may change.
+        let mut edited = reloaded;
+        let parent = edited.root_objects().next().expect("scene has a root");
+        let parent_id = edited.uuid(parent);
+        let before: SceneData = (&edited).into();
+        let child = edited.create(None, Some(parent));
+        let child_id = edited.uuid(child);
+        let mut after: SceneData = (&edited).into();
+        assert!(after.components.remove(&child_id).is_some());
+        let children = after.hierarchy.get_mut(&parent_id).unwrap();
+        assert_eq!(children.pop(), Some(child_id));
+        if children.is_empty() {
+            after.hierarchy.remove(&parent_id);
+        }
+        assert!(
+            serde_json::to_string_pretty(&after).unwrap()
+                == serde_json::to_string_pretty(&before).unwrap(),
+            "{} changed unrelated data when adding a child",
+            path.display()
+        );
+        if update {
+            std::fs::write(&path, &saved).unwrap();
+        } else if source != saved {
+            changed.push(path.strip_prefix(&root).unwrap().display().to_string());
+        }
+    }
+    assert!(changed.is_empty(), "scenes changed on save: {changed:#?}");
 }
 
 #[test]

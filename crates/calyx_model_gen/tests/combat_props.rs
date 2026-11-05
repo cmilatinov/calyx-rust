@@ -54,9 +54,17 @@ fn assert_prefab_geometry(data: &Value, instance_name: &str, model: &str) {
             let expected = &source["data"]["components"][original];
             let actual = &data["components"][actual];
             assert_eq!(expected[ID]["name"], actual[ID]["name"]);
-            for field in ["mesh", "material", "cast_shadows"] {
+            for field in ["mesh", "material"] {
                 assert_eq!(expected[MESH][field], actual[MESH][field]);
             }
+            // Scene saves materialize ComponentMesh defaults; generated prefabs
+            // may omit the default true shadow flag. Compare their behavior.
+            let casts_shadows = |mesh: &Value| {
+                mesh.get("cast_shadows").map_or(true, |value| {
+                    value.as_bool().expect("a shadow flag is boolean")
+                })
+            };
+            assert_eq!(casts_shadows(&expected[MESH]), casts_shadows(&actual[MESH]));
             for field in ["position", "rotation", "scale"] {
                 for (expected, actual) in expected[TRANSFORM]["transform"][field]
                     .as_array()

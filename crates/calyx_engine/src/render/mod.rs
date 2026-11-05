@@ -40,6 +40,7 @@ mod bind_group_cache;
 pub mod buffer;
 mod camera;
 mod deferred_lighting;
+mod foliage;
 mod gbuffer;
 mod gizmo_renderer;
 mod gizmos;
