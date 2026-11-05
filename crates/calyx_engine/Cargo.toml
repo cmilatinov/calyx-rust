@@ -61,5 +61,6 @@ gltf.workspace = true
 urlencoding.workspace = true
 pollster.workspace = true
 toml.workspace = true
+winit.workspace = true
 
 [dev-dependencies]

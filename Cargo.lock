@@ -1311,6 +1311,7 @@ dependencies = [
  "ufbx",
  "urlencoding",
  "uuid 1.22.0",
+ "winit",
 ]
 
 [[package]]
@@ -1950,6 +1951,7 @@ name = "demos"
 version = "0.1.0"
 dependencies = [
  "calyx_engine",
+ "eframe",
 ]
 
 [[package]]
@@ -6292,7 +6294,6 @@ dependencies = [
  "rapier3d",
  "serde",
  "serde_json",
- "winit",
 ]
 
 [[package]]

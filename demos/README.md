@@ -15,6 +15,18 @@ project's startup scene, the first demo below. To switch demos, open another
 scene from the content browser, or with `calyx_ctl scene load <path>`, and
 press play.
 
+Run the startup scene in its standalone player with
+
+```
+cargo run --release -p demos --bin demos_game
+```
+
+The launcher in `src/game.rs` calls the engine's shared
+`calyx_engine::runtime::run_player` with this project's root and `plugin_main`.
+New projects can use the same entry point with their own uniquely named Cargo
+binary; see [standalone players](../docs/architecture/overview.md#standalone-players).
+The RPG Poly assets still need the one-time import below.
+
 ## Demos
 
 | Demo | Scene | |
