@@ -1,0 +1,58 @@
+[
+  {
+    "capture": "normal-play.png",
+    "metadata": "normal-play.json",
+    "comparison": "comparison-normal-play.html",
+    "title": "Normal play",
+    "concept": "concept-gameplay-hud.png"
+  },
+  {
+    "capture": "kill-feed.png",
+    "metadata": "kill-feed.json",
+    "comparison": "comparison-kill-feed.html",
+    "title": "Confirmed kills and neutral hazard attribution",
+    "concept": "concept-gameplay-hud.png"
+  },
+  {
+    "capture": "stacked-damage.png",
+    "metadata": "stacked-damage.json",
+    "comparison": "comparison-stacked-damage.html",
+    "title": "Actual low, normal and high hits stacked above the target",
+    "concept": "concept-gameplay-hud.png"
+  },
+  {
+    "capture": "fog-cover.png",
+    "metadata": "fog-cover.json",
+    "comparison": "comparison-fog-cover.html",
+    "title": "Player-centred visibility with live cover occlusion",
+    "concept": "concept-gameplay-hud.png"
+  },
+  {
+    "capture": "scoreboard-populated.png",
+    "metadata": "scoreboard-populated.json",
+    "comparison": "comparison-scoreboard-populated.html",
+    "title": "Tank-only scoreboard with grouped scores",
+    "concept": "concept-scoreboard.png"
+  },
+  {
+    "capture": "scoreboard-second-page.png",
+    "metadata": "scoreboard-second-page.json",
+    "comparison": "comparison-scoreboard-second-page.html",
+    "title": "Scoreboard page 2",
+    "concept": "concept-scoreboard.png"
+  },
+  {
+    "capture": "compact-gameplay.png",
+    "metadata": "compact-gameplay.json",
+    "comparison": "comparison-compact-gameplay.html",
+    "title": "1800 x 1120 window: gameplay",
+    "concept": "concept-gameplay-hud.png"
+  },
+  {
+    "capture": "compact-scoreboard.png",
+    "metadata": "compact-scoreboard.json",
+    "comparison": "comparison-compact-scoreboard.html",
+    "title": "1800 x 1120 window: scoreboard",
+    "concept": "concept-scoreboard.png"
+  }
+]

@@ -1,0 +1,62 @@
+{
+  "Tank": {
+    "assist_score": 50,
+    "assist_window": 10.0,
+    "assists": 0,
+    "deaths": 0,
+    "kill_score": 100,
+    "kills": 1,
+    "score": 100,
+    "team": 4294967295
+  },
+  "Scout": {
+    "assist_score": 50,
+    "assist_window": 10.0,
+    "assists": 0,
+    "deaths": 1,
+    "kill_score": 100,
+    "kills": 0,
+    "score": 0,
+    "team": 0
+  },
+  "Support": {
+    "assist_score": 50,
+    "assist_window": 10.0,
+    "assists": 1,
+    "deaths": 0,
+    "kill_score": 100,
+    "kills": 0,
+    "score": 50,
+    "team": 0
+  },
+  "Vanguard": {
+    "assist_score": 50,
+    "assist_window": 10.0,
+    "assists": 0,
+    "deaths": 0,
+    "kill_score": 100,
+    "kills": 0,
+    "score": 0,
+    "team": 0
+  },
+  "Sentry": {
+    "assist_score": 50,
+    "assist_window": 10.0,
+    "assists": 0,
+    "deaths": 0,
+    "kill_score": 100,
+    "kills": 0,
+    "score": 0,
+    "team": 4294967295
+  },
+  "Raider": {
+    "assist_score": 50,
+    "assist_window": 10.0,
+    "assists": 0,
+    "deaths": 1,
+    "kill_score": 100,
+    "kills": 0,
+    "score": 0,
+    "team": 1
+  }
+}

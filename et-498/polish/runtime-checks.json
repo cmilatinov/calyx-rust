@@ -1,0 +1,36 @@
+{
+  "camera": {
+    "aim_ahead": 0.25,
+    "aim_ahead_dead_zone": 4.0,
+    "aim_ahead_max": 6.0,
+    "aim_ahead_smoothing": 0.3499999940395355,
+    "back": 13.699999809265137,
+    "height": 34.0,
+    "max_zoom": 1.0,
+    "min_zoom": 0.6000000238418579,
+    "zoom": 1.0,
+    "zoom_sensitivity": 0.0020000000949949026,
+    "zoom_smoothing": 0.119999997317791
+  },
+  "scoreboard_scroll_zoom": [
+    1.0,
+    1.0
+  ],
+  "blur_removed": true,
+  "crosshair_visible": true,
+  "compact_window": [
+    1800,
+    1120
+  ],
+  "scoreboard_fixture": "Authored counters for thousands grouping; seven tank-controller participants per team for paging. Combat attribution validated separately before these assignments in combat-state.json.",
+  "world_fixture": "Seven tank-controller actors with cloned real Tank meshes; actual projectile hits. Existing terrain unchanged; player moved to [0,0,18] for fog proof, restored to origin.",
+  "proof_note": "Window PNGs are unmodified calyx_ctl output; comparison HTML crops via CSS using recorded Game panel metadata.",
+  "compact_physical_outer_rect": [
+    100,
+    80,
+    1800,
+    1120
+  ],
+  "late_ink_suppressed_during_scoreboard": true,
+  "blur_override_removed_on_release": true
+}
