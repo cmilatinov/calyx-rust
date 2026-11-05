@@ -91,6 +91,12 @@ pub const ROLES: &[Role] = &[
     role("tree_canopies_light", "#AACF58", "#C1C989", "#62817B", 0.95),
     role("tracks", "#6C6C74", "#66635F", "#3D4348", 0.9),
     role("road_wheels", "#D4D2CD", "#C0BCB6", "#9FA7AF", 0.9),
+    role("sentry_team", "#B23A3A", "#F54530", "#FF4E45", 0.9),
+    role("explosive_red", "#BE382B", "#C43B27", "#E4513B", 0.95),
+    role("sentry_armor", "#B9BBAE", "#C4BAA5", "#A5B9C5", 0.95),
+    role("sentry_optic", "#88DBE3", "#79D0D8", "#9CDAE8", 0.95),
+    role("reticle_light", "#FCF9F3", "#F3F3F3", "#F3F3F3", 1.0),
+    role("reticle_dark", "#243647", "#303030", "#3D3630", 1.0),
     Role {
         name: "signals",
         sunny: "#FFB000",
@@ -167,7 +173,7 @@ impl Role {
                 uniform("emission_strength", 12, 4, json!({"Float": strength})),
                 uniform("emission_color", 16, 16, json!({"Color": emission_color})),
                 uniform("base_color_factor", 32, 16, json!({"Color": color})),
-                uniform("outline_style", 60, 4, json!({"Uint": if self.name.starts_with("ground_") || matches!(self.name, "ground" | "road" | "signals" | "pickup_yellow" | "pickup_blue" | "ink") { 0 } else { 1 }})),
+                uniform("outline_style", 60, 4, json!({"Uint": if self.name.starts_with("ground_") || matches!(self.name, "ground" | "road" | "signals" | "pickup_yellow" | "pickup_blue" | "ink" | "reticle_light" | "reticle_dark") { 0 } else { 1 }})),
             ]
         })
     }

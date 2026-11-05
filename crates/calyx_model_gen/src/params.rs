@@ -2,7 +2,7 @@
 //!
 //! ```toml
 //! # crate.toml
-//! kind = "box"            # box, rock, cylinder, blob, prism or import
+//! kind = "box"            # box, rock, cylinder, ring, blob, prism or import
 //! role = "crates"         # a palette role; gives the model's material
 //! shading = "smooth"      # "smooth" (the default) or "flat"
 //! smooth_angle = 60       # degrees; smooth shading only
@@ -58,8 +58,17 @@ pub enum Shading {
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Shape {
     /// Named pieces, assembled by a generated prefab per map. Transforms
-    /// are local to the model root; meshes keep their ordinary ground origin.
+    /// are local to the model root or the named parent part; meshes keep
+    /// their ordinary ground origin.
     Parts { parts: Vec<Part> },
+    /// A flat annular band, used for ground reticles and barrel rims.
+    Ring {
+        radius: f64,
+        inner_radius: f64,
+        height: f64,
+        #[serde(default = "default_vertices")]
+        vertices: u32,
+    },
     /// A closed footprint extruded upwards. Used for clipped paint stripes,
     /// Jersey barrier sections and matching modular wall junctions.
     Prism {
@@ -139,6 +148,10 @@ pub enum Shape {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct Part {
     pub name: String,
+    /// Another part's stable name. None attaches directly to the model root.
+    pub parent: Option<String>,
+    /// False for ground reticles that must not cast a separate shadow.
+    pub cast_shadows: bool,
     pub role: String,
     pub shape: Shape,
     pub shading: Shading,
@@ -254,6 +267,20 @@ impl Model {
                 if !names.insert(name.clone()) {
                     return Err(format!("duplicate part name {name:?}"));
                 }
+                let parent = part
+                    .remove("parent")
+                    .map(|value| {
+                        value
+                            .as_str()
+                            .map(str::to_owned)
+                            .ok_or("parent must name another part")
+                    })
+                    .transpose()?;
+                let cast_shadows = part
+                    .remove("cast_shadows")
+                    .map(|value| value.as_bool().ok_or("cast_shadows must be a boolean"))
+                    .transpose()?
+                    .unwrap_or(true);
                 let vector = |table: &mut toml::Table, key: &str| -> Result<[f64; 3], String> {
                     match table.remove(key) {
                         None => Ok([0.0; 3]),
@@ -294,16 +321,34 @@ impl Model {
                     dir,
                 )?;
                 if matches!(model.shape, Shape::Import { .. } | Shape::Parts { .. }) {
-                    return Err("parts use box, rock, cylinder, blob or prism shapes".into());
+                    return Err("parts use box, rock, cylinder, ring, blob or prism shapes".into());
                 }
                 parsed.push(Part {
                     name,
+                    parent,
+                    cast_shadows,
                     role: model.role,
                     shape: model.shape,
                     shading: model.shading,
                     offset,
                     rotation,
                 });
+            }
+            // Resolve after parsing so file order never constrains the hierarchy.
+            for part in &parsed {
+                let mut ancestors = std::collections::BTreeSet::from([part.name.as_str()]);
+                let mut parent = part.parent.as_deref();
+                while let Some(name) = parent {
+                    if !ancestors.insert(name) {
+                        return Err(format!("part hierarchy contains a cycle at {name:?}"));
+                    }
+                    parent = parsed
+                        .iter()
+                        .find(|part| part.name == name)
+                        .ok_or_else(|| format!("unknown parent part {name:?}"))?
+                        .parent
+                        .as_deref();
+                }
             }
             // Reuse common-key validation, rejecting kind/role and unknown keys
             // on an assembly rather than silently ignoring them.
@@ -401,6 +446,22 @@ impl Model {
             }
         };
         match &self.shape {
+            Shape::Ring {
+                radius,
+                inner_radius,
+                height,
+                vertices,
+            } => {
+                positive("radius", *radius)?;
+                positive("inner_radius", *inner_radius)?;
+                positive("height", *height)?;
+                if inner_radius >= radius {
+                    return Err("inner_radius must be smaller than radius".into());
+                }
+                if !(3..=64).contains(vertices) {
+                    return Err(format!("vertices is 3 to 64, not {vertices}"));
+                }
+            }
             Shape::Prism {
                 points,
                 height,

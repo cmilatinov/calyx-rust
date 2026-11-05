@@ -510,7 +510,7 @@ fn main() {
         let generated = component_text(&output, id).to_string();
         output = output.replacen(&generated, &original, 1);
     }
-    std::fs::write(&path, output + "\n").unwrap();
+    std::fs::write(&path, output).unwrap();
     println!(
         "Authored {} objects into {}",
         data.components.len(),

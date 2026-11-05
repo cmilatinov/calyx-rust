@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b4e18526-306c-54be-aede-58064f0dde9d",
+    "name": "generated/models/sentry__barrel",
+    "display_name": "sentry__barrel",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}
