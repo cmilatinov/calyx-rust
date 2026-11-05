@@ -8,5 +8,10 @@ name = "demos"
 path = "src/lib.rs"
 crate-type = ["cdylib", "rlib"]
 
+[[bin]]
+name = "demos_game"
+path = "src/game.rs"
+
 [dependencies]
 calyx_engine = { path = "../crates/calyx_engine" }
+eframe.workspace = true

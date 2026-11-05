@@ -62,6 +62,12 @@ Derive macros:
 ### `calyx_project` (library)
 Project scaffolding. Generates project.toml, Cargo.toml (from template), and assets/lib.rs. Loads/validates project structure.
 
+### Standalone players
+
+`calyx_engine::runtime::run_player(project_directory, plugin_main)` owns the standalone window, GPU setup, frame loop, input, HUD and scene rendering. It reads the project's startup scene and window settings from `project.toml`, registers the linked project's component types before loading the scene, and runs until the window closes. Player logs use `calyx_player_*.log` in the working directory's `logs/` folder.
+
+A project adds a uniquely named Cargo binary and an `eframe` dependency for the return type. Its entry point calls `run_player(env!("CARGO_MANIFEST_DIR"), project_crate::plugin_main)` and returns `eframe::Result<()>`; see `sandbox/src/game.rs` and `demos/src/game.rs`. Run the sandbox with `cargo run --release -p sandbox --bin game`, or the demo collection with `cargo run --release -p demos --bin demos_game`. The project needs its assets locally, including any licensed imports; the player uses the same asset loader as the editor.
+
 ### `sandbox` (cdylib + binary)
 Example game project. Compiles as dynamic library (plugin) with `plugin_main` entry point for type registration. Contains:
 - `player.rs` — ComponentPlayerController (WASD movement, camera-relative, network ownership check).
