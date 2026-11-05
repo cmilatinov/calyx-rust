@@ -254,19 +254,23 @@ the game view is very wide and the vignette is round.
 - No textures are needed for the style itself.
 - Combat rounds reuse the showcase sphere and signal material: a 0.4 m
   round head and a 0.18 m wide, 1.6 m long ellipsoid tail, centred 0.8 m
-  behind the head. They have no shadow or outline. A warm point light uses
-  intensity 1.5 and radius 3 m. Visual dimensions are independent of the
-  collision radius.
+  behind the head. They have no shadow or outline. Their warm point light
+  uses intensity 1.5 and radius 3 m by day, or 0.3 within 2 m for Moonlit.
+  Visual dimensions are independent of the collision radius.
 - The muzzle flash is a single directional HDR particle: 0.64 m wide and
   1 m long initially, centred 0.25 m ahead of the muzzle, lasting 0.1 s.
   It uses the map's linear signal colour and emission strength, with a
-  short point light (intensity 3, radius 4 m). Smoke is a quiet alpha-blended
-  wake behind the luminous tail. Tank impacts use narrow HDR spark streaks;
-  cover impacts use expanding dust.
+  short point light (intensity 3, radius 4 m by day; 1 within 2.5 m for
+  Moonlit). Smoke is a quiet alpha-blended wake behind the luminous tail.
+  Tank impacts burst 24 HDR spark streaks lasting up to 0.5 s, with size
+  and opacity held briefly before fading. Their intensity is 30 by day and
+  4 for Moonlit, independently of the weaker night shell and muzzle signal.
+  Cover impacts use expanding dust.
 - Sunny Battlefield is the default combat palette. Add one **Combat Palette**
-  component to a scene and enable **Sunbaked** to use that map's signal
-  material and flash colour/strength. Both choices use the actual look-dev
-  materials, so changes to the approved signal also update gameplay.
+  component to a scene and select **Sunny**, **Sunbaked** or **Moonlit**.
+  Each choice uses its actual look-dev signal material, colour and emission
+  strength; Moonlit uses the shell amber, separately from its sodium lamps.
+  Changes to the approved signal material also update gameplay.
 
 ## Evidence
 

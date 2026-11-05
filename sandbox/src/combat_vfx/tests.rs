@@ -15,42 +15,121 @@ fn effect_scene() -> (TestAssets, Scene) {
 fn shell_mesh_and_signal_material_resolve_from_the_project_assets() {
     let copy = calyx_engine::test_support::TestAssets::game();
     let assets = copy.asset_context();
-    let visual = shell_visual(ComponentCombatPalette::default());
-    assert!(visual
-        .mesh
-        .get_ref(&assets.registries.lock_read())
-        .is_some());
-    assert!(visual
-        .material
-        .get_ref(&assets.registries.lock_read())
-        .is_some());
-    assert!(!visual.cast_shadows);
+    for palette in [
+        CombatPalette::Sunny,
+        CombatPalette::Sunbaked,
+        CombatPalette::Moonlit,
+    ] {
+        let visual = shell_visual(ComponentCombatPalette { palette });
+        assert!(visual
+            .mesh
+            .get_ref(&assets.registries.lock_read())
+            .is_some());
+        assert!(visual
+            .material
+            .get_ref(&assets.registries.lock_read())
+            .is_some());
+        assert!(!visual.cast_shadows);
+    }
 }
 
 #[test]
-fn sunbaked_scene_uses_its_showcase_signal_for_mesh_particles_and_lights() {
-    let (_assets, mut scene) = effect_scene();
-    let palette_object = scene.create(None, None);
-    scene.add_component(palette_object, ComponentCombatPalette { sunbaked: true });
-    shot(&mut scene);
-    let round = named(&scene, "Round");
-    let projectile = named(&scene, "Projectile");
-    let flash = named(&scene, "Muzzle Flash");
-    assert_eq!(
-        scene.read_component::<ComponentMesh, _, _>(round, |mesh| mesh.material.id()),
-        Some("b8f3abdd-57c2-56a0-8178-3aae785d9351".parse().unwrap())
-    );
-    assert_eq!(
-        scene.read_component::<ComponentParticleSystem, _, _>(flash, |system| system
-            .rendering
-            .intensity),
-        Some(40.0)
-    );
-    for object in [projectile, flash] {
+fn scene_palette_selects_its_authored_signal_and_local_lights() {
+    for (palette, material, flash_intensity, rgb, shell_light, muzzle_light) in [
+        (
+            CombatPalette::Sunny,
+            "38769fe0-eb3a-543a-bfc5-9ad1ce971c3d",
+            30.0,
+            [255, 176, 0],
+            (1.5, 3.0),
+            (3.0, 4.0),
+        ),
+        (
+            CombatPalette::Sunbaked,
+            "b8f3abdd-57c2-56a0-8178-3aae785d9351",
+            40.0,
+            [255, 181, 71],
+            (1.5, 3.0),
+            (3.0, 4.0),
+        ),
+        (
+            CombatPalette::Moonlit,
+            "8b8c4290-d872-482d-a9c1-a4e3167496e8",
+            2.0,
+            [255, 166, 64],
+            (0.3, 2.0),
+            (1.0, 2.5),
+        ),
+    ] {
+        let (_assets, mut scene) = effect_scene();
+        let palette_object = scene.create(None, None);
+        scene.add_component(palette_object, ComponentCombatPalette { palette });
+        shot(&mut scene);
+        let round = named(&scene, "Round");
+        let projectile = named(&scene, "Projectile");
+        let flash = named(&scene, "Muzzle Flash");
         assert_eq!(
-            scene.read_component::<ComponentPointLight, _, _>(object, |light| light.color),
-            Some(Color32::from_rgb(255, 181, 71))
+            scene.read_component::<ComponentMesh, _, _>(round, |mesh| mesh.material.id()),
+            Some(material.parse().unwrap())
         );
+        assert_eq!(
+            scene.read_component::<ComponentParticleSystem, _, _>(flash, |system| system
+                .rendering
+                .intensity),
+            Some(flash_intensity)
+        );
+        for (object, (intensity, radius)) in [(projectile, shell_light), (flash, muzzle_light)] {
+            assert_eq!(
+                scene.read_component::<ComponentPointLight, _, _>(object, |light| (
+                    light.color,
+                    light.intensity,
+                    light.radius
+                )),
+                Some((Color32::from_rgb(rgb[0], rgb[1], rgb[2]), intensity, radius))
+            );
+        }
+        spawn_impact(&mut scene, Vec3::zeros(), true);
+        let sparks = named(&scene, "Tank Impact Sparks");
+        assert_eq!(
+            scene.read_component::<ComponentParticleSystem, _, _>(sparks, |system| system
+                .rendering
+                .intensity),
+            Some(if palette == CombatPalette::Moonlit {
+                4.0
+            } else {
+                30.0
+            })
+        );
+    }
+}
+
+#[test]
+fn combat_palette_round_trips_all_three_reflected_variants_and_defaults_to_sunny() {
+    assert_eq!(
+        serde_json::from_str::<ComponentCombatPalette>("{}")
+            .unwrap()
+            .palette,
+        CombatPalette::Sunny
+    );
+    for palette in [
+        CombatPalette::Sunny,
+        CombatPalette::Sunbaked,
+        CombatPalette::Moonlit,
+    ] {
+        let encoded = serde_json::to_string(&ComponentCombatPalette { palette }).unwrap();
+        assert_eq!(
+            serde_json::from_str::<ComponentCombatPalette>(&encoded)
+                .unwrap()
+                .palette,
+            palette
+        );
+        let mut reflected = palette;
+        assert_eq!(
+            reflected.as_enum().unwrap().variant_name(),
+            format!("{palette:?}")
+        );
+        assert!(reflected.as_enum_mut().unwrap().set_unit_variant("Moonlit"));
+        assert_eq!(reflected, CombatPalette::Moonlit);
     }
 }
 
@@ -179,7 +258,7 @@ fn tank_and_cover_hits_have_distinct_effects_and_both_expire() {
     let dust = named(&scene, "Cover Impact Dust");
     let mut runner = HeadlessSceneRunner::from_scene(scene).with_particles();
     runner.step();
-    assert_eq!(runner.particles().unwrap().live_count(sparks), Some(14));
+    assert_eq!(runner.particles().unwrap().live_count(sparks), Some(24));
     assert_eq!(runner.particles().unwrap().live_count(dust), Some(10));
     assert_eq!(
         runner

@@ -9,7 +9,7 @@ use calyx_engine::component::{
     ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
-use calyx_engine::math::{Gradient, Transform};
+use calyx_engine::math::{CurveKey, Gradient, GradientKey, Transform};
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
@@ -21,6 +21,15 @@ use serde::{Deserialize, Serialize};
 
 const SMOKE_LIFETIME: f32 = 0.45;
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Reflect)]
+#[uuid = "d79f7d60-f39b-47a5-9f6a-501f6605e78a"]
+pub enum CombatPalette {
+    #[default]
+    Sunny,
+    Sunbaked,
+    Moonlit,
+}
+
 /// The map's combat signals use the same palette as its look-dev rig.
 #[derive(Clone, Copy, Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "0c190930-9a40-49c8-84a0-c35a48c57c0e"]
@@ -28,7 +37,7 @@ const SMOKE_LIFETIME: f32 = 0.45;
 #[reflect_attr(name = "Combat Palette")]
 #[serde(default)]
 pub struct ComponentCombatPalette {
-    pub sunbaked: bool,
+    pub palette: CombatPalette,
 }
 
 impl Component for ComponentCombatPalette {}
@@ -42,32 +51,48 @@ impl ComponentCombatPalette {
     }
 
     fn material(self) -> &'static str {
-        if self.sunbaked {
-            "b8f3abdd-57c2-56a0-8178-3aae785d9351"
-        } else {
-            "38769fe0-eb3a-543a-bfc5-9ad1ce971c3d"
+        match self.palette {
+            CombatPalette::Sunny => "38769fe0-eb3a-543a-bfc5-9ad1ce971c3d",
+            CombatPalette::Sunbaked => "b8f3abdd-57c2-56a0-8178-3aae785d9351",
+            CombatPalette::Moonlit => "8b8c4290-d872-482d-a9c1-a4e3167496e8",
         }
     }
 
     fn intensity(self) -> f32 {
-        if self.sunbaked {
-            40.0
-        } else {
-            30.0
+        match self.palette {
+            CombatPalette::Sunny => 30.0,
+            CombatPalette::Sunbaked => 40.0,
+            CombatPalette::Moonlit => 2.0,
         }
     }
 
     fn color(self) -> ParticleColorOverLifetime {
-        let rgb = if self.sunbaked {
-            [1.0, 0.46208, 0.06301]
-        } else {
-            [1.0, 0.43415, 0.0]
+        let rgb = match self.palette {
+            CombatPalette::Sunny => [1.0, 0.43415, 0.0],
+            CombatPalette::Sunbaked => [1.0, 0.46208, 0.06301],
+            CombatPalette::Moonlit => [1.0, 0.38133, 0.05127],
         };
         ParticleColorOverLifetime {
             gradient: Gradient::linear(
                 [rgb[0], rgb[1], rgb[2], 1.0],
                 [rgb[0], rgb[1], rgb[2], 0.0],
             ),
+        }
+    }
+
+    fn shell_light(self) -> ComponentPointLight {
+        if self.palette == CombatPalette::Moonlit {
+            signal_light(self, 0.3, 2.0)
+        } else {
+            signal_light(self, 1.5, 3.0)
+        }
+    }
+
+    fn muzzle_light(self) -> ComponentPointLight {
+        if self.palette == CombatPalette::Moonlit {
+            signal_light(self, 1.0, 2.5)
+        } else {
+            signal_light(self, 3.0, 4.0)
         }
     }
 }
@@ -167,7 +192,7 @@ pub(crate) fn spawn_round_visual(scene: &mut Scene, projectile: GameObject) {
         );
         scene.add_component(part, shell_visual(palette));
     }
-    scene.add_component(projectile, signal_light(palette, 1.5, 3.0));
+    scene.add_component(projectile, palette.shell_light());
 }
 
 fn signal_light(
@@ -176,10 +201,10 @@ fn signal_light(
     radius: f32,
 ) -> ComponentPointLight {
     ComponentPointLight {
-        color: if palette.sunbaked {
-            Color32::from_rgb(255, 181, 71)
-        } else {
-            Color32::from_rgb(255, 176, 0)
+        color: match palette.palette {
+            CombatPalette::Sunny => Color32::from_rgb(255, 176, 0),
+            CombatPalette::Sunbaked => Color32::from_rgb(255, 181, 71),
+            CombatPalette::Moonlit => Color32::from_rgb(255, 166, 64),
         },
         intensity,
         radius,
@@ -277,7 +302,7 @@ pub(crate) fn spawn_shot(
         0.1,
         Default::default(),
     );
-    scene.add_component(muzzle, signal_light(palette, 3.0, 4.0));
+    scene.add_component(muzzle, palette.muzzle_light());
 
     let mut smoke = burst(1, SMOKE_LIFETIME);
     smoke.emission = ParticleEmission {
@@ -311,8 +336,8 @@ pub(crate) fn spawn_shot(
 }
 
 pub(crate) fn spawn_impact(scene: &mut Scene, position: Vec3, tank: bool) {
-    let lifetime = if tank { 0.32 } else { 0.55 };
-    let mut system = burst(if tank { 14 } else { 10 }, lifetime);
+    let lifetime = if tank { 0.5 } else { 0.55 };
+    let mut system = burst(if tank { 24 } else { 10 }, lifetime);
     system.velocity = ParticleVelocity {
         initial: vec3(0.0, 1.2, 0.0),
         randomness: if tank {
@@ -346,11 +371,21 @@ pub(crate) fn spawn_impact(scene: &mut Scene, position: Vec3, tank: bool) {
     };
     system.rendering.min_screen_size = 0.0;
     if tank {
+        let palette = ComponentCombatPalette::in_scene(scene);
         system.rendering.texture = Default::default();
-        system.rendering.intensity = 12.0;
-        system.rendering.billboard = ParticleBillboard::VelocityAligned { length_scale: 4.0 };
-        system.size = ParticleSizeOverLifetime::linear(0.09, 0.0, 0.025);
-        system.color = ComponentCombatPalette::in_scene(scene).color();
+        system.rendering.intensity = if palette.palette == CombatPalette::Moonlit {
+            4.0
+        } else {
+            30.0
+        };
+        system.rendering.min_screen_size = 1.5;
+        system.rendering.billboard = ParticleBillboard::VelocityAligned { length_scale: 5.5 };
+        system.size = ParticleSizeOverLifetime::linear(0.18, 0.0, 0.035);
+        // Hold a readable streak through the initial outward burst, then fade.
+        system.size.curve.insert(CurveKey::new(0.3, 0.18));
+        system.color = palette.color();
+        let color = system.color.gradient.keys[0].color;
+        system.color.gradient.insert(GradientKey::new(0.35, color));
     }
     emitter(
         scene,
