@@ -43,7 +43,7 @@ The gameplay camera is the **Far** framing:
 
 | Height | Back offset | Pitch | Horizontal fov | Ground width at the tank |
 | --- | --- | --- | --- | --- |
-| 34 m | 13.7 m | 68° | 64° | about 46 m (23 m deep) |
+| 34 m | 13.7 m | 68Â° | 64Â° | about 46 m (23 m deep) |
 
 A tank (2.3 m wide at the game's 0.45 scale) is about 100 px wide in a
 2062 px wide view. Judge every visual change at this framing first.
