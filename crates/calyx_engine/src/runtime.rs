@@ -1,6 +1,10 @@
 //! Game runtime setup shared by the standalone player and the editor: the
 //! project's runtime settings, the GPU device both open, and per-frame
-//! bookkeeping.
+//! bookkeeping. [`run_player`] hosts a linked project in the standalone player.
+
+mod player;
+
+pub use player::run_player;
 
 use std::fs;
 use std::path::{Path, PathBuf};
