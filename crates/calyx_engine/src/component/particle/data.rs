@@ -62,6 +62,9 @@ pub(crate) struct ParticleRenderInstance {
     pub position_size: [f32; 4],
     /// Linear RGBA.
     pub color: [f32; 4],
+    /// World direction times billboard length/width, or zero for camera-facing,
+    /// and the minimum screen width in pixels.
+    pub direction_min_size: [f32; 4],
 }
 
 /// Where a system's particles live and how emitter-local spawn values map

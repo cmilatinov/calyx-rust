@@ -34,8 +34,9 @@ pub use emission::ParticleEmission;
 pub(crate) use emitter::LedgerSlot;
 pub(crate) use emitter::{EmitterState, ParticleSpawn};
 pub use modules::{
-    ParticleBlendMode, ParticleColorOverLifetime, ParticleForces, ParticleRendering,
-    ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
+    ParticleBillboard, ParticleBlendMode, ParticleColorOverLifetime, ParticleForces,
+    ParticleRendering, ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape,
+    ParticleVelocity,
 };
 
 use super::{
@@ -78,7 +79,7 @@ pub struct ComponentParticleSystem {
     pub size: ParticleSizeOverLifetime,
     /// Color over normalized particle lifetime.
     pub color: ParticleColorOverLifetime,
-    /// Blend mode and texture of the billboards.
+    /// Billboard shape, HDR intensity, pixel-size floor, blend mode and texture.
     pub rendering: ParticleRendering,
     /// Counts the resets asked for. The simulation re-seeds the system when
     /// it changes. Never serialized.

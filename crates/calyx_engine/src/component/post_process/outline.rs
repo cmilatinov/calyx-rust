@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 /// one of [`Self::styles`].
 ///
 /// A material's `outline_style` is 0 for no outline, or `N` for
-/// `styles[N - 1]`. An edge takes the nearer surface's style, or the farther
-/// one's when the nearer surface has none. Silhouettes (a surface against the
+/// `styles[N - 1]`. An edge takes the nearer surface's style; a nearer surface
+/// of style 0 hides the farther surface's ink. Silhouettes (a surface against the
 /// background, a large jump in distance, or a change of style) draw at the
 /// style's `width` in full ink; inner lines (a crease, or a small step in
 /// distance) draw at its `inner_width`, at `inner_opacity`.

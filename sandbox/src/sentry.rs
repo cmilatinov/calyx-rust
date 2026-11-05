@@ -1,8 +1,8 @@
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{flatten_xz, spawn_round, yaw_rotation, ComponentProjectile};
 use calyx_engine::component::{
-    Component, ComponentEventContext, ComponentMesh, ComponentRef, ComponentUpdate,
-    ReflectComponent, ReflectComponentUpdate,
+    Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
@@ -99,11 +99,6 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
         return;
     }
 
-    let visual = scene.read_component::<ComponentMesh, _, _>(game_object, |mesh| ComponentMesh {
-        mesh: mesh.mesh.clone(),
-        material: mesh.material.clone(),
-        cast_shadows: mesh.cast_shadows,
-    });
     spawn_round(
         scene,
         transform.position + direction * sentry.muzzle_offset,
@@ -116,7 +111,6 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
             radius: sentry.projectile_radius,
             shooter: GameObjectRef::new(scene.uuid(game_object)),
         },
-        visual,
     );
     sentry.fire_cooldown_remaining = sentry.fire_interval;
 }

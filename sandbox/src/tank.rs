@@ -2,8 +2,8 @@ use crate::combat::{record_kill, KillEvent};
 use crate::spawn::ComponentRespawnState;
 use crate::tank_camera::{cursor_ground_point, update_tank_camera};
 use calyx_engine::component::{
-    ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentMesh,
-    ComponentRef, ComponentRigidBody, ComponentTransform, ComponentUpdate, ReflectComponent,
+    ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentRef,
+    ComponentRigidBody, ComponentTransform, ComponentUpdate, ReflectComponent,
     ReflectComponentUpdate,
 };
 use calyx_engine::core::TimeType;
@@ -702,11 +702,6 @@ fn spawn_projectile(
         return false;
     }
 
-    let visual = scene.read_component::<ComponentMesh, _, _>(barrel_object, |mesh| ComponentMesh {
-        mesh: mesh.mesh.clone(),
-        material: mesh.material.clone(),
-        cast_shadows: mesh.cast_shadows,
-    });
     spawn_round(
         scene,
         barrel_transform.position + direction * controller.muzzle_offset,
@@ -719,19 +714,17 @@ fn spawn_projectile(
             radius: controller.projectile_radius,
             shooter: GameObjectRef::new(scene.uuid(tank)),
         },
-        visual,
     );
     true
 }
 
 /// Spawns a "Projectile" object at `position` that flies as `projectile`
-/// says, drawn with `visual` scaled to the round's diameter.
+/// says, with the round head and luminous tail from the approved showcase.
 pub(crate) fn spawn_round(
     scene: &mut Scene,
     position: Vec3,
     rotation: UnitQuaternion<f32>,
     projectile: ComponentProjectile,
-    visual: Option<ComponentMesh>,
 ) {
     let projectile_object = scene.create(
         Some(ComponentID {
@@ -762,9 +755,14 @@ pub(crate) fn spawn_round(
             ..Default::default()
         },
     );
-    if let Some(visual) = visual {
-        scene.add_component(projectile_object, visual);
-    }
+    crate::combat_vfx::spawn_round_visual(scene, projectile_object);
+    crate::combat_vfx::spawn_shot(
+        scene,
+        projectile_object,
+        position,
+        rotation,
+        projectile.lifetime_remaining,
+    );
 }
 
 fn update_projectile(
@@ -798,14 +796,17 @@ fn update_projectile(
     // target only takes damage when it is reached before the first obstacle.
     let obstacle_time = first_obstacle_time(scene, start, end, projectile.radius);
     let reach = obstacle_time.map_or(end, |time| start + (end - start) * time);
-    if let Some(target) = first_projectile_hit(scene, game_object, start, reach, projectile.radius)
+    if let Some((target, hit_position)) =
+        first_projectile_hit(scene, game_object, start, reach, projectile.radius)
     {
         let shooter = projectile.shooter.game_object(scene);
+        crate::combat_vfx::spawn_impact(scene, hit_position, true);
         apply_projectile_damage(scene, target, projectile.damage, shooter);
         scene.delete(game_object);
         return;
     }
     if obstacle_time.is_some() {
+        crate::combat_vfx::spawn_impact(scene, reach, false);
         scene.delete(game_object);
         return;
     }
@@ -903,32 +904,46 @@ fn first_projectile_hit(
     start: Vec3,
     end: Vec3,
     projectile_radius: f32,
-) -> Option<calyx_engine::scene::GameObject> {
-    scene.objects().find(|&candidate| {
-        candidate != projectile_object
-            && scene
+) -> Option<(calyx_engine::scene::GameObject, Vec3)> {
+    scene
+        .objects()
+        .filter(|&candidate| candidate != projectile_object)
+        .find_map(|candidate| {
+            scene
                 .read_component::<ComponentProjectileTarget, _, _>(candidate, |target| {
-                    let target_transform = scene.world_transform(candidate);
-                    segment_intersects_sphere(
-                        start,
-                        end,
-                        target_transform.position,
-                        projectile_radius + target.hit_radius,
-                    )
+                    let center = scene.world_transform(candidate).position;
+                    segment_sphere_entry(start, end, center, projectile_radius + target.hit_radius)
+                        .map(|time| (candidate, start + (end - start) * time))
                 })
-                .unwrap_or(false)
-    })
+                .flatten()
+        })
 }
 
+#[cfg(test)]
 fn segment_intersects_sphere(start: Vec3, end: Vec3, center: Vec3, radius: f32) -> bool {
+    segment_sphere_entry(start, end, center, radius).is_some()
+}
+
+/// First contact along the swept round, for placing feedback on the hit
+/// surface instead of hiding it at the target's centre.
+fn segment_sphere_entry(start: Vec3, end: Vec3, center: Vec3, radius: f32) -> Option<f32> {
     let segment = end - start;
     let segment_length_squared = segment.magnitude_squared();
-    if segment_length_squared <= f32::EPSILON {
-        return (start - center).magnitude_squared() <= radius * radius;
+    let offset = start - center;
+    let distance_squared = offset.magnitude_squared() - radius * radius;
+    if distance_squared <= 0.0 {
+        return Some(0.0);
     }
-    let t = ((center - start).dot(&segment) / segment_length_squared).clamp(0.0, 1.0);
-    let closest = start + segment * t;
-    (closest - center).magnitude_squared() <= radius * radius
+    if segment_length_squared <= f32::EPSILON {
+        return None;
+    }
+    let projection = offset.dot(&segment);
+    let discriminant = projection * projection - segment_length_squared * distance_squared;
+    if discriminant < 0.0 {
+        return None;
+    }
+    let time = (-projection - discriminant.sqrt()) / segment_length_squared;
+    (0.0..=1.0).contains(&time).then_some(time)
 }
 
 fn follow_camera_xz(

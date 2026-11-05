@@ -6,8 +6,8 @@
 //
 // Each surface's material names an outline style in the G-buffer's material alpha: 0 for none,
 // N for `ink.styles[N - 1]`. An edge between two neighbouring pixels takes the nearer surface's
-// style, or the farther one's when the nearer has none; a style past the end of the list draws
-// nothing. Edges are:
+// style. A nearer surface of style 0 hides the farther surface's ink instead of inheriting it;
+// a style past the end of the list draws nothing. Edges are:
 //
 // - silhouettes, at the style's `width` in full ink: a surface against the background, two
 //   surfaces of different styles, or a jump in distance above the silhouette threshold (one
@@ -129,10 +129,7 @@ fn edge_between(a: Surface, b: Surface, c: Surface, d: Surface, ray: vec3f) -> E
     edge.style = 0u;
     edge.silhouette = false;
     let b_nearer = b.inverse_depth >= c.inverse_depth;
-    var style = select(c.style, b.style, b_nearer);
-    if style == 0u {
-        style = select(b.style, c.style, b_nearer);
-    }
+    let style = select(c.style, b.style, b_nearer);
     if style == 0u || style > ink.style_count {
         return edge;
     }
@@ -155,6 +152,7 @@ fn edge_between(a: Surface, b: Surface, c: Surface, d: Surface, ray: vec3f) -> E
 // The ink at `pixel`: the colour of the strongest line within reach in rgb, how much of it the
 // pixel takes in a (0 for none).
 fn ink_at(pixel: vec2i) -> vec4f {
+    let receiver = surface_at(pixel);
     let widest_reach = (i32(ink.max_width) + 1) / 2;
     // The view-space direction through the pixel.
     let size = vec2f(textureDimensions(gbuffer_depth));
@@ -184,7 +182,12 @@ fn ink_at(pixel: vec2i) -> vec4f {
                     let b_nearer = b.inverse_depth >= c.inverse_depth;
                     let reach = select(width / 2, (width + 1) / 2, on_b_side == b_nearer);
                     let amount = style.color.a * select(style.inner_opacity, 1.0, edge.silhouette);
-                    if distance < f32(reach) && amount > best.a {
+                    // A nearby edge can reach beyond the two pixels that formed it.
+                    // Do not dilate its ink across a nearer, unoutlined PBR surface
+                    // such as an emissive projectile passing over outlined cover.
+                    let occluded = receiver.covered && receiver.style == 0u
+                        && receiver.inverse_depth > max(b.inverse_depth, c.inverse_depth) * 1.0001;
+                    if !occluded && distance < f32(reach) && amount > best.a {
                         best = vec4f(style.color.rgb, amount);
                     }
                 }

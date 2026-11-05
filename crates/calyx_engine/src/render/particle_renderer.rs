@@ -1,6 +1,8 @@
 use crate::assets::texture::Texture;
 use crate::assets::AssetId;
-use crate::component::{ComponentParticleSystem, ParticleBlendMode, ParticleRenderInstance};
+use crate::component::{
+    ComponentParticleSystem, ParticleBillboard, ParticleBlendMode, ParticleRenderInstance,
+};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::{wgpu_buffer_init_desc, BufferLayout};
@@ -34,8 +36,8 @@ impl BufferLayout for ParticleVertex {
 }
 
 impl ParticleRenderInstance {
-    const ATTRIBUTES: [wgpu::VertexAttribute; 2] =
-        wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4];
+    const ATTRIBUTES: [wgpu::VertexAttribute; 3] =
+        wgpu::vertex_attr_array![2 => Float32x4, 3 => Float32x4, 4 => Float32x4];
 }
 
 impl BufferLayout for ParticleRenderInstance {
@@ -54,6 +56,12 @@ struct RenderParams {
     _padding: [u32; 2],
     size_curve: GpuCurveRange,
     color_gradient: GpuGradientRange,
+    intensity: f32,
+    min_screen_size: f32,
+    length_scale: f32,
+    billboard_mode: u32,
+    direction: [f32; 3],
+    _render_padding: f32,
 }
 
 /// `SortParams` of `particles_simulate.wgsl`.
@@ -507,6 +515,14 @@ impl ParticleRenderer {
                 *view = ViewSystem::new(device, slot_count);
             }
             let keys = simulated.keys().clone();
+            let (billboard_mode, direction, length_scale) = match system.rendering.billboard {
+                ParticleBillboard::CameraFacing => (0, [0.0; 3], 1.0),
+                ParticleBillboard::VelocityAligned { length_scale } => (1, [0.0; 3], length_scale),
+                ParticleBillboard::Directional {
+                    direction,
+                    length_scale,
+                } => (2, direction.into(), length_scale),
+            };
             queue.write_buffer(
                 &view.params,
                 0,
@@ -519,6 +535,12 @@ impl ParticleRenderer {
                     _padding: [0; 2],
                     size_curve: keys.size_curve,
                     color_gradient: keys.color_gradient,
+                    intensity: system.rendering.intensity.max(0.0),
+                    min_screen_size: system.rendering.min_screen_size.max(0.0),
+                    length_scale: length_scale.max(1.0),
+                    billboard_mode,
+                    direction,
+                    _render_padding: 0.0,
                 }),
             );
             let texture = system

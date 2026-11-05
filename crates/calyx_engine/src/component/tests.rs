@@ -246,6 +246,7 @@ mod tests {
         particle_system.rendering = ParticleRendering {
             blend_mode: ParticleBlendMode::Alpha,
             texture: AssetRef::from_id(particle_texture_id),
+            ..Default::default()
         };
         scene.add_component(go, particle_system);
 

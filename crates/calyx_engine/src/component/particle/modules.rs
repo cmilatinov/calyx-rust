@@ -317,7 +317,7 @@ pub enum ParticleBlendMode {
 }
 
 /// Rendering module: how the particle renderer draws the system's billboards.
-#[derive(Clone, Default, Serialize, Deserialize, TypeUuid, Reflect)]
+#[derive(Clone, Serialize, Deserialize, TypeUuid, Reflect)]
 #[uuid = "dc67d8fd-a232-4830-ba3d-c02830d5e964"]
 #[reflect(Default)]
 #[serde(default)]
@@ -326,6 +326,49 @@ pub struct ParticleRendering {
     pub blend_mode: ParticleBlendMode,
     /// Optional texture asset for billboard rendering. White when unset.
     pub texture: AssetRef<Texture>,
+    /// Multiplies RGB radiance, including values above one for bloom. Alpha is unchanged.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub intensity: f32,
+    /// Smallest billboard width in physical pixels. Zero disables the screen-size floor.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub min_screen_size: f32,
+    /// Orientation and length of the camera-facing quad. The colour and depth passes
+    /// use the same shape, including the texture and elliptical silhouette.
+    pub billboard: ParticleBillboard,
+}
+
+impl Default for ParticleRendering {
+    fn default() -> Self {
+        Self {
+            blend_mode: Default::default(),
+            texture: Default::default(),
+            intensity: 1.0,
+            min_screen_size: 6.0,
+            billboard: Default::default(),
+        }
+    }
+}
+
+/// How a particle's camera-facing billboard is oriented in the image.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "7f998df4-bf0f-4c5e-9b07-3652377cf280"]
+pub enum ParticleBillboard {
+    /// The existing circular billboard, with the camera's horizontal and vertical axes.
+    #[default]
+    CameraFacing,
+    /// The long axis follows the particle's projected world velocity. A stationary
+    /// particle uses the emitter's forward (+Z) axis instead.
+    VelocityAligned {
+        /// Length divided by width, at least one. Size curves control the width.
+        length_scale: f32,
+    },
+    /// The long axis follows an emitter-local direction, including for still particles.
+    Directional {
+        /// Direction in emitter-local space. A zero vector falls back to emitter +Z.
+        direction: Vec3,
+        /// Length divided by width, at least one. Size curves control the width.
+        length_scale: f32,
+    },
 }
 
 #[cfg(test)]
