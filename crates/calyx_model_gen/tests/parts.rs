@@ -66,8 +66,8 @@ fn assembly_prefabs_reference_each_parts_mesh_material_and_transform() {
     let layout = Layout::new(Path::new("sandbox/assets/generated")).unwrap();
     let plan = layout.plan(&[model]);
     assert_eq!(plan.meshes.len(), 2);
-    assert_eq!(plan.prefabs.len(), 2);
-    assert_eq!(plan.materials.len(), 4);
+    assert_eq!(plan.prefabs.len(), 3);
+    assert_eq!(plan.materials.len(), 6);
     let sunny = &plan.prefabs[0];
     let data = sunny.data(&layout);
     let root = data["root"].as_str().unwrap();
@@ -104,7 +104,7 @@ fn assembly_prefabs_reference_each_parts_mesh_material_and_transform() {
 }
 
 #[test]
-fn every_new_role_has_two_clay_materials_and_screen_space_ink() {
+fn every_new_role_has_three_clay_materials_and_screen_space_ink() {
     for name in [
         "hazard_yellow",
         "hazard_black",

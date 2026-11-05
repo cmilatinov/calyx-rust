@@ -141,3 +141,65 @@ fn long_wall_replaces_two_short_walls_on_the_documented_root_grid() {
         assert!((root - root.round()).abs() < 1e-4);
     }
 }
+
+#[test]
+fn moonlit_primary_materials_match_the_authored_reference() {
+    use calyx_model_gen::palette::{self, Map};
+    use serde_json::Value;
+    let variable = |material: &Value, name: &str| {
+        material["variables"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|v| v["name"] == name)
+            .map(|v| v["value"].clone())
+            .unwrap_or_else(|| {
+                assert_eq!(name, "emission_strength");
+                serde_json::json!({"Float": 0.0})
+            })
+    };
+    for (role, reference) in [
+        ("ground", "blue_slate"),
+        ("road", "moon_dust"),
+        ("walls", "bluestone"),
+        ("barriers", "pale_concrete"),
+        ("crate_panel", "weathered_steel"),
+        ("rocks", "granite"),
+        ("tree_trunks", "night_bark"),
+        ("tree_canopies", "pine"),
+        ("metal", "dark_steel"),
+        ("signals", "signal_sodium"),
+    ] {
+        let authored: Value = serde_json::from_str(
+            &std::fs::read_to_string(sandbox().join(format!(
+                "assets/lookdev/materials/moonlit/{reference}.cxmat"
+            )))
+            .unwrap(),
+        )
+        .unwrap();
+        let generated = palette::find(role).unwrap().material(Map::Moonlit);
+        for name in ["base_color_factor", "emission_strength"] {
+            let a = if name == "base_color_factor" {
+                serde_json::json!({"Color": variable(&authored, "texture_diffuse")["Texture2D"]["Color"]})
+            } else {
+                variable(&authored, name)
+            };
+            let b = variable(&generated, name);
+            if name == "base_color_factor" {
+                for (a, b) in a["Color"]
+                    .as_array()
+                    .unwrap()
+                    .iter()
+                    .zip(b["Color"].as_array().unwrap())
+                {
+                    assert!(
+                        (a.as_f64().unwrap() - b.as_f64().unwrap()).abs() < 1e-5,
+                        "{role}"
+                    );
+                }
+            } else {
+                assert_eq!(a, b, "{role} {name}");
+            }
+        }
+    }
+}

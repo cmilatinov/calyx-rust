@@ -115,13 +115,13 @@ fn the_fixture_folder_holds_three_models_sorted_by_name() {
 }
 
 #[test]
-fn a_run_writes_each_model_its_hull_and_the_used_roles_materials_on_both_maps() {
+fn a_run_writes_each_model_its_hull_and_the_used_roles_materials_on_all_three_maps() {
     let out = out_dir("layout");
     let layout = Layout::new(&out).unwrap();
     let report = generate(&layout, &fixture_models(), fake_blender).unwrap();
     assert_eq!(
         (report.models, report.outlines, report.materials),
-        (3, 1, 8)
+        (3, 1, 12)
     );
     let mut expected: BTreeSet<String> = [
         "README.md",
@@ -136,7 +136,7 @@ fn a_run_writes_each_model_its_hull_and_the_used_roles_materials_on_both_maps() 
     ]
     .map(String::from)
     .into();
-    for map in ["sunny", "sunbaked"] {
+    for map in ["sunny", "sunbaked", "moonlit"] {
         // Ink because the crate has a hull.
         for role in ["barriers", "crates", "rocks", "ink"] {
             expected.insert(format!("materials/{map}/{role}.cxmat"));
@@ -210,8 +210,8 @@ fn a_rerun_removes_what_it_no_longer_writes() {
     assert!(!files.contains("materials/sunny/ink.cxmat"));
     assert!(files.contains("materials/sunbaked/barriers.cxmat"));
     // Crate, its hull and rock: 2 files each; crates, rocks and ink
-    // materials on both maps: 2 files each.
-    assert_eq!(report.removed.len(), 3 * 2 + 3 * 2 * 2);
+    // materials on all three maps: 2 files each.
+    assert_eq!(report.removed.len(), 3 * 2 + 3 * 3 * 2);
 }
 
 #[test]
@@ -273,7 +273,7 @@ rotation = [0, 45, 0]
     let layout = Layout::new(&out).unwrap();
     let model = params::Model::parse("framed", text, Path::new("")).unwrap();
     let report = generate(&layout, std::slice::from_ref(&model), fake_blender).unwrap();
-    assert_eq!((report.models, report.materials), (1, 4));
+    assert_eq!((report.models, report.materials), (1, 6));
     let prefab = out.join("prefabs/sunny/framed.cxprefab");
     let first = std::fs::read_to_string(&prefab).unwrap();
     assert_eq!(

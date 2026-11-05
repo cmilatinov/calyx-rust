@@ -1,7 +1,7 @@
 //! Generates the tank game's low-poly clay models: one TOML parameter file
 //! per model ([`params`]) becomes an OBJ built by headless Blender
 //! ([`blender`]), an optional ink outline hull, and the palette materials
-//! of both maps ([`palette`]), all with stable ids ([`layout`]).
+//! of all three maps ([`palette`]), all with stable ids ([`layout`]).
 //!
 //! Sourced models (CC0 or CC-BY) come through the same path as an `import`
 //! kind: Blender reads the source, the generator restyles it in a palette

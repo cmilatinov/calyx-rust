@@ -1,0 +1,105 @@
+{
+  "data": {
+    "components": {
+      "29572cb8-97f3-5032-b3dc-aa4efaa102ea": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "29572cb8-97f3-5032-b3dc-aa4efaa102ea",
+          "name": "berries",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "c847b67f-f3a2-5c0a-a1cf-6dc4d2aeab97",
+          "mesh": "f5258508-24f4-5ddb-aea5-d1f6468f6ee2"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "582eb1aa-69c6-5062-ac8f-20e51a8d58ef": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "582eb1aa-69c6-5062-ac8f-20e51a8d58ef",
+          "name": "berry_bush",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "f0279a73-4444-51be-bb37-5744acd417c1": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "f0279a73-4444-51be-bb37-5744acd417c1",
+          "name": "leaves",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "86ff88f6-c6a8-5ee7-8eb4-c67f22ab72de",
+          "mesh": "2e405345-01d0-513b-89ff-d867eb650fa2"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "582eb1aa-69c6-5062-ac8f-20e51a8d58ef": [
+        "f0279a73-4444-51be-bb37-5744acd417c1",
+        "29572cb8-97f3-5032-b3dc-aa4efaa102ea"
+      ]
+    },
+    "roots": [
+      "582eb1aa-69c6-5062-ac8f-20e51a8d58ef"
+    ]
+  },
+  "root": "582eb1aa-69c6-5062-ac8f-20e51a8d58ef"
+}

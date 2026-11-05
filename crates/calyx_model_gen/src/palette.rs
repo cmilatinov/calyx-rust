@@ -1,4 +1,4 @@
-//! The tank game's palette roles for its two maps, as
+//! The tank game's palette roles for its three maps, as
 //! `docs/design/art/tank-game-direction.md` lists them, and the clay
 //! materials made from them.
 
@@ -12,16 +12,18 @@ pub const PBR_SHADER: &str = "869cbd32-a789-f19d-3e24-5207f558d1c2";
 pub enum Map {
     SunnyBattlefield,
     Sunbaked,
+    Moonlit,
 }
 
 impl Map {
-    pub const ALL: [Map; 2] = [Map::SunnyBattlefield, Map::Sunbaked];
+    pub const ALL: [Map; 3] = [Map::SunnyBattlefield, Map::Sunbaked, Map::Moonlit];
 
     /// The folder the map's materials go in.
     pub fn folder(self) -> &'static str {
         match self {
             Map::SunnyBattlefield => "sunny",
             Map::Sunbaked => "sunbaked",
+            Map::Moonlit => "moonlit",
         }
     }
 }
@@ -31,79 +33,85 @@ impl Map {
 pub struct Role {
     /// The name a parameter file gives it, and its material's file name.
     pub name: &'static str,
-    /// Its hex on Sunny Battlefield and on Sunbaked, as it should appear.
+    /// Its hex on Sunny Battlefield, Sunbaked and Moonlit, as it should appear.
     pub sunny: &'static str,
     pub sunbaked: &'static str,
+    pub moonlit: &'static str,
     pub roughness: f64,
-    /// Emission strength on Sunny Battlefield and on Sunbaked; the role's
+    /// Emission strength on Sunny Battlefield, Sunbaked and Moonlit; the role's
     /// colour is emitted. Zero for every role but the gameplay signals.
-    pub emission: (f64, f64),
+    pub emission: (f64, f64, f64),
 }
 
 const fn role(
     name: &'static str,
     sunny: &'static str,
     sunbaked: &'static str,
+    moonlit: &'static str,
     roughness: f64,
 ) -> Role {
     Role {
         name,
         sunny,
         sunbaked,
+        moonlit,
         roughness,
-        emission: (0.0, 0.0),
+        emission: (0.0, 0.0, 0.0),
     }
 }
 
 /// The direction's map palette roles.
 pub const ROLES: &[Role] = &[
-    role("ground", "#87BC6C", "#B9AD97", 1.0),
-    role("road", "#D0C292", "#B1A289", 1.0),
-    role("walls", "#D6B275", "#AAA59D", 0.95),
-    role("barriers", "#BFB9AE", "#C0BCB6", 0.95),
-    role("crates", "#A2855E", "#66635F", 0.95),
-    role("crate_frame", "#986128", "#79572E", 0.95),
-    role("crate_panel", "#C28B3C", "#B99863", 0.95),
-    role("crate_plank", "#B57B32", "#A78955", 0.95),
-    role("crate_brace", "#D9AB5B", "#D0B17A", 0.95),
-    role("metal", "#454948", "#454745", 0.9),
-    role("metal_caps", "#A4A5A0", "#AAA89D", 0.7),
-    role("flag_red", "#D95C38", "#C65A39", 0.95),
-    role("berries", "#D9402F", "#B94B35", 0.9),
-    role("sandbags", "#CBA965", "#B7A681", 0.95),
-    role("sandbag_seams", "#AA874C", "#98896B", 0.95),
-    role("hazard_yellow", "#F3C84B", "#E6B84C", 0.95),
-    role("hazard_black", "#303038", "#303030", 0.95),
-    role("grass", "#83AC38", "#9AAB61", 0.95),
-    role("rocks", "#B4B5AA", "#A29F96", 0.95),
-    role("tree_trunks", "#A2855E", "#8F7960", 0.95),
-    role("tree_canopies", "#83B942", "#A4B479", 0.95),
-    role("tree_canopies_dark", "#5F8E2C", "#7F8C57", 0.95),
-    role("tree_canopies_light", "#AACF58", "#C1C989", 0.95),
-    role("tracks", "#6C6C74", "#66635F", 0.9),
-    role("road_wheels", "#D4D2CD", "#C0BCB6", 0.9),
+    role("ground", "#87BC6C", "#B9AD97", "#44525B", 1.0),
+    role("road", "#D0C292", "#B1A289", "#657179", 1.0),
+    role("walls", "#D6B275", "#AAA59D", "#5E6F81", 0.95),
+    role("barriers", "#BFB9AE", "#C0BCB6", "#9FA7AF", 0.95),
+    role("crates", "#A2855E", "#66635F", "#6B8086", 0.95),
+    role("crate_frame", "#986128", "#79572E", "#465D65", 0.95),
+    role("crate_panel", "#C28B3C", "#B99863", "#6B8086", 0.95),
+    role("crate_plank", "#B57B32", "#A78955", "#5D747B", 0.95),
+    role("crate_brace", "#D9AB5B", "#D0B17A", "#8FA4A7", 0.95),
+    role("metal", "#454948", "#454745", "#3D4348", 0.9),
+    role("metal_caps", "#A4A5A0", "#AAA89D", "#A8B5BD", 0.7),
+    role("flag_red", "#D95C38", "#C65A39", "#CE604E", 0.95),
+    role("berries", "#D9402F", "#B94B35", "#A64F45", 0.9),
+    role("sandbags", "#CBA965", "#B7A681", "#718080", 0.95),
+    role("sandbag_seams", "#AA874C", "#98896B", "#54646A", 0.95),
+    role("hazard_yellow", "#F3C84B", "#E6B84C", "#CDA559", 0.95),
+    role("hazard_black", "#303038", "#303030", "#30373F", 0.95),
+    role("grass", "#83AC38", "#9AAB61", "#507165", 0.95),
+    role("rocks", "#B4B5AA", "#A29F96", "#848C96", 0.95),
+    role("tree_trunks", "#A2855E", "#8F7960", "#4C4541", 0.95),
+    role("tree_canopies", "#83B942", "#A4B479", "#3E6564", 0.95),
+    role("tree_canopies_dark", "#5F8E2C", "#7F8C57", "#2E4D4C", 0.95),
+    role("tree_canopies_light", "#AACF58", "#C1C989", "#62817B", 0.95),
+    role("tracks", "#6C6C74", "#66635F", "#3D4348", 0.9),
+    role("road_wheels", "#D4D2CD", "#C0BCB6", "#9FA7AF", 0.9),
     Role {
         name: "signals",
         sunny: "#FFB000",
         sunbaked: "#FFB547",
+        moonlit: "#FF9330",
         roughness: 0.4,
-        emission: (30.0, 40.0),
+        emission: (30.0, 40.0, 4.0),
     },
     Role {
         name: "pickup_yellow",
         sunny: "#FFE16A",
         sunbaked: "#FFDE68",
+        moonlit: "#FFCA70",
         roughness: 0.35,
-        emission: (4.0, 4.0),
+        emission: (4.0, 4.0, 1.2),
     },
     Role {
         name: "pickup_blue",
         sunny: "#62BBEE",
         sunbaked: "#65B8E8",
+        moonlit: "#70C5E8",
         roughness: 0.35,
-        emission: (4.0, 4.0),
+        emission: (4.0, 4.0, 1.2),
     },
-    role("ink", "#121212", "#121212", 1.0),
+    role("ink", "#121212", "#121212", "#121212", 1.0),
 ];
 
 /// The role outline hulls are drawn in.
@@ -119,6 +127,7 @@ impl Role {
         match map {
             Map::SunnyBattlefield => self.sunny,
             Map::Sunbaked => self.sunbaked,
+            Map::Moonlit => self.moonlit,
         }
     }
 
@@ -126,6 +135,7 @@ impl Role {
         match map {
             Map::SunnyBattlefield => self.emission.0,
             Map::Sunbaked => self.emission.1,
+            Map::Moonlit => self.emission.2,
         }
     }
 

@@ -1,4 +1,4 @@
-# Organic layered cloud canopy fused into one surface; tapered forked trunk and radial roots.
+# Asymmetric forked tree: unequal offset crown clusters, visible notches, leaning trunk and irregular roots.
 # Regenerate with calyx_model_gen; dimensions in metres.
 
 [[parts]]
@@ -8,7 +8,7 @@ role = "tree_trunks"
 radius = 0.3625
 height = 2.0625
 offset = [0, 0, 0]
-rotation = [0, 0, 0]
+rotation = [0, 0, -7]
 vertices = 12
 bevel = 0.03125
 segments = 3
@@ -18,7 +18,7 @@ top_radius = 0.14375000000000002
 name = "root_flare"
 kind = "blob"
 role = "tree_trunks"
-lobes = [{center = [0, 0.22499999999999998, 0], radius = 0.41250000000000003}, {center = [0.41250000000000003, 0.125, 0.0], radius = 0.275}, {center = [0.12746951017966585, 0.125, 0.39231081297175086], radius = 0.275}, {center = [-0.3337195101796658, 0.125, 0.24246141657064524], radius = 0.275}, {center = [-0.33371951017966583, 0.125, -0.24246141657064516], radius = 0.275}, {center = [0.12746951017966573, 0.125, -0.3923108129717509], radius = 0.275}]
+lobes = [{center = [0, 0.22499999999999998, 0], radius = 0.41250000000000003}, {center = [-0.5, 0.1375, 0.1], radius = 0.28750000000000003}, {center = [0.35000000000000003, 0.125, 0.3875], radius = 0.25}, {center = [0.1875, 0.125, -0.3875], radius = 0.28750000000000003}]
 subdivisions = 3
 fuse = 0.043750000000000004
 offset = [0, 0, 0]
@@ -27,51 +27,51 @@ offset = [0, 0, 0]
 name = "fork_0"
 kind = "cylinder"
 role = "tree_trunks"
-radius = 0.15
-height = 0.8999999999999999
-offset = [0, 1.0625, 0]
-rotation = [0, 0, -32]
+radius = 0.16875
+height = 1.1875
+offset = [-0.125, 1.0625, 0.0]
+rotation = [12, 0, 48]
 vertices = 12
 bevel = 0.01875
 segments = 3
-top_radius = 0.08125
+top_radius = 0.06875
 
 [[parts]]
 name = "fork_1"
 kind = "cylinder"
 role = "tree_trunks"
-radius = 0.15
-height = 0.8999999999999999
-offset = [0, 1.0625, 0]
-rotation = [0, 0, 29]
+radius = 0.125
+height = 0.9625
+offset = [-0.025, 1.3125, 0.15]
+rotation = [-8, 0, -55]
 vertices = 12
 bevel = 0.01875
 segments = 3
-top_radius = 0.08125
+top_radius = 0.06875
 
 [[parts]]
 name = "canopy_lower"
 kind = "blob"
 role = "tree_canopies_dark"
-lobes = [{center = [-0.8718891798090772, 1.8779749051346073, -0.018189807543130827], radius = 0.7429124211846242}, {center = [0.6899658965279077, 1.9602386521727613, 0.17314213254035082], radius = 0.8288434257435977}, {center = [0.05966158556372364, 1.8832892263535477, 0.6314190014305924], radius = 0.766396509805217}, {center = [-0.023650480910791985, 1.8284274938647296, -0.6749799242986896], radius = 0.8016140202756675}]
+lobes = [{center = [-1.075, 1.975, -0.22499999999999998], radius = 0.6875}, {center = [0.625, 1.8875, 0.475], radius = 0.7124999999999999}, {center = [-0.125, 1.875, -0.4375], radius = 0.525}]
 subdivisions = 3
-fuse = 0.06875
+fuse = 0.056249999999999994
 offset = [0, 0, 0]
 
 [[parts]]
 name = "canopy"
 kind = "blob"
 role = "tree_canopies"
-lobes = [{center = [-0.4884929890248556, 2.6084978520053483, 0.11507837174501909], radius = 0.7705698193298471}, {center = [0.4822162403923955, 2.6440463403619696, 0.06558157405377565], radius = 0.8079822972931954}, {center = [0.08551141905626986, 2.4755077378952377, -0.48147592034902104], radius = 0.7144229223473838}, {center = [0.0013395995348434477, 2.4516685261361175, 0.4953778803274004], radius = 0.6536210620993946}]
+lobes = [{center = [-1.1875, 2.55, -0.21250000000000002], radius = 0.675}, {center = [0.6, 2.625, 0.4625], radius = 0.8500000000000001}, {center = [0.0, 2.375, -0.5], radius = 0.5625}]
 subdivisions = 3
-fuse = 0.06875
+fuse = 0.056249999999999994
 offset = [0, 0, 0]
 
 [[parts]]
 name = "canopy_crown"
 kind = "blob"
 role = "tree_canopies_light"
-lobes = [{center = [-0.17721761812252074, 3.2423226255277626, 0.07083680217773443], radius = 0.5856176932492794}, {center = [0.3794958151183045, 3.1108550202528837, 0.16690551697878825], radius = 0.5990150420874308}, {center = [0.0018837844498691136, 3.0870919064697597, -0.29519031736675183], radius = 0.5454488391413582}]
+lobes = [{center = [-1.225, 3.075, -0.2], radius = 0.42500000000000004}, {center = [0.8250000000000001, 3.3125, 0.525], radius = 0.55}, {center = [0.1, 3.1624999999999996, 0.4625], radius = 0.44999999999999996}]
 subdivisions = 3
 fuse = 0.056249999999999994
 offset = [0, 0, 0]
