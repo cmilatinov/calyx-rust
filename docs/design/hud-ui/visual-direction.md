@@ -87,8 +87,9 @@ Use the existing match clock when present; otherwise the configurable HUD
 countdown defaults to five minutes and resets with a fresh play session.
 
 The scoreboard backdrop uses a temporary camera-local depth-of-field volume.
-It changes only that effect, preserves authored post-processing settings, and
-is removed when the scoreboard closes or its owning player is removed.
+It temporarily overrides depth of field and fades late-composited ink outlines
+to zero, so sharp silhouettes cannot redraw over the blur. Authored effects
+remain intact and return when the scoreboard closes or its owner is removed.
 
 ## Verification
 

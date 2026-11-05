@@ -8,8 +8,8 @@ use crate::game_state::ComponentGameState;
 use crate::tank::{ComponentHealth, ComponentTankController};
 use calyx_engine::component::{
     Component, ComponentDepthOfField, ComponentEventContext, ComponentHud, ComponentID,
-    ComponentLocalPostProcessVolume, ComponentRef, ComponentUpdate, LocalVolumeShape,
-    ReflectComponent, ReflectComponentHud, ReflectComponentUpdate,
+    ComponentLocalPostProcessVolume, ComponentOutline, ComponentRef, ComponentUpdate,
+    LocalVolumeShape, ReflectComponent, ReflectComponentHud, ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
@@ -121,7 +121,7 @@ impl ComponentUpdate for ComponentTankHud {
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
     }
 }
-/// A transient local volume changes only depth of field at the active camera;
+/// A transient local volume defocuses the backdrop and suppresses late ink;
 /// removing it restores the scene's existing post-processing without editing assets.
 fn update_scoreboard_blur(
     scene: &mut Scene,
@@ -156,6 +156,9 @@ fn update_scoreboard_blur(
                 ..Default::default()
             },
         );
+        // Ink is composited after DOF. Fade its styles out only in this local
+        // overlay volume so sharp silhouettes cannot redraw over the blur.
+        scene.add_component(object, ComponentOutline::default());
         scene.add_component(
             object,
             ComponentDepthOfField {
@@ -678,6 +681,20 @@ mod tests {
         let (mut scene, owner) = setup();
         let camera = scene.create(None, None);
         scene.add_component(camera, calyx_engine::component::ComponentCamera::default());
+        let world = scene.create(None, None);
+        scene.add_component(
+            world,
+            calyx_engine::component::ComponentGlobalPostProcessVolume::default(),
+        );
+        let authored = ComponentOutline {
+            styles: vec![calyx_engine::component::OutlineStyle {
+                opacity: 0.85,
+                ..Default::default()
+            }],
+            ..Default::default()
+        };
+        scene.add_component(world, authored.clone());
+        let mut settings = calyx_engine::render::postprocess::PostProcessSettings::default();
         let before = scene.objects().count();
         let blur = update_scoreboard_blur(&mut scene, owner, true, Default::default());
         let object = blur.game_object(&scene).unwrap();
@@ -688,11 +705,23 @@ mod tests {
                 .weight),
             Some(1.0)
         );
+        settings.resolve_into(&scene, &Vec3::zeros());
+        assert_eq!(
+            settings.get::<ComponentOutline>().unwrap().styles[0].opacity,
+            0.0
+        );
+        assert_eq!(
+            settings.get::<ComponentDepthOfField>().unwrap().max_blur,
+            30.0
+        );
         let reused = update_scoreboard_blur(&mut scene, owner, true, blur);
         assert_eq!(reused.game_object(&scene), Some(object));
         update_scoreboard_blur(&mut scene, owner, false, blur);
         scene.flush_deletes();
         assert_eq!(scene.objects().count(), before);
+        settings.resolve_into(&scene, &Vec3::zeros());
+        assert_eq!(settings.get::<ComponentOutline>(), Some(&authored));
+        assert!(settings.get::<ComponentDepthOfField>().is_none());
         let blur = update_scoreboard_blur(&mut scene, owner, true, Default::default());
         scene.delete(owner);
         scene.flush_deletes();
