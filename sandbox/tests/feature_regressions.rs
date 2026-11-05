@@ -384,8 +384,8 @@ fn drive_from(start: Vec3, yaw: f32, fps: usize, seconds: f32) -> Vec3 {
 #[test]
 fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
     // Facing 45 degrees into the arena's +X perimeter wall, whose face is at
-    // x = 13.4, in the lane between it and the cover.
-    let start = vec3(11.0, 0.0, 0.0);
+    // x = 28.4, in the lane between it and the cover.
+    let start = vec3(26.0, 0.0, 0.0);
     let yaw = std::f32::consts::FRAC_PI_4;
     let slow = drive_from(start, yaw, 30, 1.5);
     let fast = drive_from(start, yaw, 144, 1.5);
@@ -395,6 +395,88 @@ fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
         "30 fps: {slow:?}\n144 fps: {fast:?}"
     );
     assert!(fast.z - start.z > 2.0, "the tank should slide: {fast:?}");
+}
+
+#[test]
+fn arena_ground_covers_camera_corners_at_zoom_and_aim_limits() {
+    use calyx_engine::component::{ComponentCamera, ComponentCollider, ComponentMesh};
+    use nalgebra_glm::{vec2, vec4};
+    use sandbox::{arena::ComponentArena, tank_camera::ComponentTankCamera};
+
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let foundation = object_named(&scene, "Arena Foundation");
+    let world = scene.world_transform(foundation).matrix();
+    let (min, max) = scene
+        .read_component::<ComponentMesh, _, _>(foundation, |renderer| {
+            let mesh = renderer
+                .mesh
+                .get_ref(&assets.registries.lock_read())
+                .unwrap();
+            let mesh = mesh.read();
+            mesh.vertices.iter().fold(
+                (Vec3::repeat(f32::INFINITY), Vec3::repeat(f32::NEG_INFINITY)),
+                |(min, max), p| {
+                    let p = (world * vec4(p.x, p.y, p.z, 1.0)).xyz();
+                    (min.inf(&p), max.sup(&p))
+                },
+            )
+        })
+        .unwrap();
+    assert!(scene
+        .read_component::<ComponentCollider, _, _>(foundation, |_| ())
+        .is_none());
+    let arena = object_named(&scene, "Arena");
+    let center = scene.world_transform(arena).position;
+    let half = scene
+        .read_component::<ComponentArena, _, _>(arena, |a| {
+            vec3(
+                a.columns as f32 * a.cell_size,
+                0.0,
+                a.rows as f32 * a.cell_size,
+            ) * 0.5
+        })
+        .unwrap();
+    let camera = object_named(&scene, "Camera");
+    let rig = scene
+        .read_component::<ComponentTankCamera, _, _>(camera, Clone::clone)
+        .unwrap();
+    for aspect in [4.0 / 3.0, 16.0 / 9.0, 32.0 / 9.0] {
+        let viewport = vec2(900.0 * aspect, 900.0);
+        let lens = scene
+            .read_component::<ComponentCamera, _, _>(camera, |c| c.camera(aspect))
+            .unwrap();
+        for zoom in [rig.min_zoom, rig.max_zoom] {
+            for x in [-1.0, 1.0] {
+                for z in [-1.0, 1.0] {
+                    // Include the conservative square around the entire
+                    // aim-lead disk, even at the outer edges of the walls.
+                    let focus = center
+                        + vec3(
+                            x * (half.x + rig.aim_ahead_max),
+                            0.0,
+                            z * (half.z + rig.aim_ahead_max),
+                        );
+                    let transform = rig.camera_transform(focus, 0.0, zoom);
+                    for corner in [
+                        vec2(0.0, 0.0),
+                        vec2(viewport.x, 0.0),
+                        vec2(0.0, viewport.y),
+                        viewport,
+                    ] {
+                        let ray = lens.screen_ray(&transform, corner, viewport).unwrap();
+                        let distance = (max.y - ray.origin.y) / ray.direction.y;
+                        assert!(distance > 0.0 && distance < lens.far_plane);
+                        let hit = ray.origin + ray.direction * distance;
+                        assert!(
+                            hit.x >= min.x && hit.x <= max.x && hit.z >= min.z && hit.z <= max.z,
+                            "camera corner exposes sky at {hit:?}, aspect {aspect}, zoom {zoom}"
+                        );
+                    }
+                }
+            }
+        }
+    }
 }
 
 #[test]
@@ -413,8 +495,8 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
             .toi
     };
     // Probe every one-metre wall join from immediately inside the pen.
-    for x in -10..=10 {
-        for (z, direction) in [(-3.0, -1.0), (25.0, 1.0)] {
+    for x in -26..=26 {
+        for (z, direction) in [(-8.0, -1.0), (52.0, 1.0)] {
             let distance = hit_distance(vec3(x as f32, 0.8, z), vec3(0.0, 0.0, direction), 1.0);
             assert!(
                 (distance - 0.4).abs() < 0.005,
@@ -422,26 +504,42 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
             );
         }
     }
-    for z in 0..=22 {
+    for z in -5..=49 {
         for side in [-1.0, 1.0] {
             let distance =
-                hit_distance(vec3(side * 13.3, 0.8, z as f32), vec3(side, 0.0, 0.0), 1.0);
+                hit_distance(vec3(side * 28.3, 0.8, z as f32), vec3(side, 0.0, 0.0), 1.0);
             assert!((distance - 0.1).abs() < 0.005, "wall at z={z}: {distance}");
         }
     }
-    let distance = hit_distance(vec3(0.0, 0.8, 6.0), vec3(0.0, 0.0, 1.0), 6.0);
+    let distance = hit_distance(vec3(0.0, 0.8, 16.0), vec3(0.0, 0.0, 1.0), 6.0);
     assert!((distance - 3.8).abs() < 0.01, "centre barrier: {distance}");
     // The rotated sandbag stack is a thin 3/2/1 pile, not a full-depth
     // rectangular block. The middle bag blocks a shot, but air beside the
     // pile and beside its narrower top row must stay clear.
-    let distance = hit_distance(vec3(4.0, 0.65, 9.0), vec3(1.0, 0.0, 0.0), 2.0);
+    let sandbags = object_named(runner.scene(), "Arena Cover Right Sandbags");
+    let sandbag_pose = runner.scene().world_transform(sandbags);
+    let point = |p: Vec3| (sandbag_pose.matrix() * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz();
+    let direction = |d| sandbag_pose.rotation * d;
+    let distance = hit_distance(
+        point(vec3(0.0, 0.65, -1.0)),
+        direction(vec3(0.0, 0.0, 1.0)),
+        2.0,
+    );
     assert!(
         (distance - 0.815).abs() < 0.01,
         "middle sandbag: {distance}"
     );
     for (origin, direction, length) in [
-        (vec3(5.35, 0.6, 7.0), vec3(0.0, 0.0, 1.0), 4.0),
-        (vec3(4.0, 1.05, 8.35), vec3(1.0, 0.0, 0.0), 2.0),
+        (
+            point(vec3(2.0, 0.6, 0.35)),
+            direction(vec3(-1.0, 0.0, 0.0)),
+            4.0,
+        ),
+        (
+            point(vec3(0.65, 1.05, -1.0)),
+            direction(vec3(0.0, 0.0, 1.0)),
+            2.0,
+        ),
     ] {
         assert!(
             runner
@@ -511,10 +609,10 @@ fn authored_rock_shoulders_stop_shells_and_crowns_leave_air() {
 
 #[test]
 fn both_authored_flank_lanes_are_driveable() {
-    for x in [-9.0, 9.0] {
-        let final_position = drive_from(vec3(x, 0.0, 0.0), 0.0, 60, 3.0);
+    for x in [-20.0, 20.0] {
+        let final_position = drive_from(vec3(x, 0.0, 0.0), 0.0, 60, 6.0);
         assert!(
-            final_position.z > 16.0,
+            final_position.z > 37.0,
             "flank x={x} blocked at {final_position:?}"
         );
         assert!(

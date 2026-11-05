@@ -1,4 +1,4 @@
-//! Rebuild the authored arena kit without changing gameplay actors.
+//! Rebuild the arena kit and explicit gameplay placements, preserving actor ids.
 //! Run from the repository root: cargo run -p sandbox --example remake_arena.
 #![recursion_limit = "256"]
 
@@ -15,7 +15,7 @@ use calyx_engine::utils::{TypeUuid, Uuid};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, Vec3};
 use rapier3d::dynamics::RigidBodyType;
-use sandbox::arena::ComponentArena;
+use sandbox::{arena::ComponentArena, tank_camera::ComponentTankCamera};
 use serde_json::{json, Value};
 
 fn stable(name: &str) -> Uuid {
@@ -275,7 +275,40 @@ fn main() {
         .map(|object| scene.uuid(object))
         .collect();
     let arena_id = scene.uuid(arena);
-    scene.write_component::<ComponentArena, _>(arena, |arena| arena.generate_on_start = false);
+    scene.write_component::<ComponentArena, _>(arena, |arena| {
+        arena.generate_on_start = false;
+        arena.columns = 30;
+        arena.rows = 32;
+    });
+    let mut edited = std::collections::BTreeSet::from([arena_id]);
+    // Absolute placements make regeneration idempotent. Only these actor
+    // transforms change; model scales, ids and gameplay settings survive.
+    for (name, x, z) in [
+        ("Arena", 0.0, 22.0),
+        ("Target A", -6.0, 24.0),
+        ("Target B", 6.0, 32.0),
+        ("Sentry", 16.0, 32.0),
+        ("Campfire", -10.0, 6.0),
+    ] {
+        let object = scene.objects().find(|o| scene.name(*o) == name).unwrap();
+        let mut pose = scene.transform(object);
+        pose.position.x = x;
+        pose.position.z = z;
+        scene.set_transform(object, &pose.matrix());
+        edited.insert(scene.uuid(object));
+    }
+    let camera = scene
+        .objects()
+        .find(|o| scene.name(*o) == "Camera")
+        .unwrap();
+    let pose = scene
+        .write_component::<ComponentTankCamera, _>(camera, |rig| {
+            rig.zoom = 0.6;
+            rig.camera_transform(Vec3::zeros(), 0.0, rig.zoom)
+        })
+        .unwrap();
+    scene.set_transform(camera, &pose.matrix());
+    edited.insert(scene.uuid(camera));
     let children: Vec<_> = scene.children(arena).collect();
     for child in children {
         scene.delete(child);
@@ -295,15 +328,18 @@ fn main() {
         arena,
         "Arena Floor",
         vec3(0.0, -0.5, 0.0),
-        vec3(30.0, 1.0, 32.0),
+        vec3(60.0, 1.0, 64.0),
     );
     let foundation = author.object("Arena Foundation", arena, vec3(0.0, -0.6, 0.0));
+    // Continue the visible ground beyond the pen, including the camera's
+    // far zoom and aim lead at the walls. Its top stays below the tiles to
+    // avoid z-fighting; collision remains confined to the playfield above.
     author.scene.set_transform(
         foundation,
         &Transform::from_components(
             vec3(0.0, -0.6, 0.0),
             Default::default(),
-            vec3(30.0, 1.0, 32.0),
+            vec3(200.0, 1.0, 200.0),
         )
         .matrix(),
     );
@@ -318,17 +354,19 @@ fn main() {
         },
     );
     let ground_kind = |x: i32, z: i32| {
-        if (-3..3).contains(&x) && (-14..-8).contains(&z) {
+        if (-3..3).contains(&x) && (-26..-20).contains(&z) {
             "paving"
-        } else if (-1..2).contains(&x) && (3..9).contains(&z) {
+        } else if (-1..2).contains(&x) && (6..18).contains(&z) {
             if x == 0 {
                 "road_marked"
             } else {
                 "road"
             }
-        } else if ((-11..-8).contains(&x) || (8..11).contains(&x)) && (-12..12).contains(&z) {
+        } else if (((-22..-18).contains(&x) || (18..22).contains(&x)) && (-27..27).contains(&z))
+            || ((-22..22).contains(&x) && (-5..-2).contains(&z))
+        {
             "sand"
-        } else if (x <= -11 || x >= 11) && (z <= -9 || z >= 10) {
+        } else if (x <= -24 || x >= 24) && (z <= -18 || z >= 20) {
             "dirt"
         } else {
             "grass"
@@ -337,8 +375,8 @@ fn main() {
     // Uniform, untextured tile surfaces can share one scaled instance per
     // rectangle. Keep paving joints and road dashes on individual metre cells.
     let mut covered = std::collections::BTreeSet::new();
-    for x in -15..15 {
-        for z in -16..16 {
+    for x in -30..30 {
+        for z in -32..32 {
             if covered.contains(&(x, z)) {
                 continue;
             }
@@ -346,13 +384,13 @@ fn main() {
             let mut width = 1;
             let mut depth = 1;
             if kind != "paving" && kind != "road_marked" {
-                while x + width < 15
+                while x + width < 30
                     && ground_kind(x + width, z) == kind
                     && !covered.contains(&(x + width, z))
                 {
                     width += 1;
                 }
-                while z + depth < 16
+                while z + depth < 32
                     && (x..x + width).all(|column| {
                         ground_kind(column, z + depth) == kind
                             && !covered.contains(&(column, z + depth))
@@ -388,38 +426,51 @@ fn main() {
             );
         }
     }
-    assert_eq!(covered.len(), 30 * 32);
+    assert_eq!(covered.len(), 60 * 64);
 
     for (name, x, z, yaw) in [
-        ("SW", -14.0, -15.0, 0.0),
-        ("SE", 14.0, -15.0, -90.0),
-        ("NW", -14.0, 15.0, 90.0),
-        ("NE", 14.0, 15.0, 180.0),
+        ("SW", -29.0, -31.0, 0.0),
+        ("SE", 29.0, -31.0, -90.0),
+        ("NW", -29.0, 31.0, 90.0),
+        ("NE", 29.0, 31.0, 180.0),
     ] {
-        author.prop("wall_corner", &format!("Arena Wall {name}"), x, z, yaw);
+        author.kit(
+            "wall_corner",
+            &format!("Arena Wall {name}"),
+            vec3(x, 0.0, z),
+            yaw,
+        );
     }
-    for (side, z) in [("South", -15.0), ("North", 15.0)] {
-        for x in [-9, -5, -1, 3, 7] {
-            author.prop(
+    for (side, z) in [("South", -31.0), ("North", 31.0)] {
+        for x in (-24..=24).step_by(4) {
+            author.kit(
                 "wall_long",
                 &format!("Arena Wall {side} {x}"),
-                x as f32,
-                z,
+                vec3(x as f32, 0.0, z),
                 0.0,
             );
         }
-        author.prop("wall_short", &format!("Arena Wall {side} 10"), 10.0, z, 0.0);
     }
-    for (side, x) in [("West", -14.0), ("East", 14.0)] {
-        for z in [-10, -6, -2, 2, 6, 10] {
-            author.prop(
+    for (side, x) in [("West", -29.0), ("East", 29.0)] {
+        for z in (-26..=26).step_by(4) {
+            author.kit(
                 "wall_long",
                 &format!("Arena Wall {side} {z}"),
-                x,
-                z as f32,
+                vec3(x, 0.0, z as f32),
                 90.0,
             );
         }
+    }
+
+    // Straight continuous collision strips follow the modular silhouettes
+    // without internal coplanar seams that can catch a sliding tank.
+    for (name, center, size) in [
+        ("West", vec3(-29.0, 0.8, 0.0), vec3(1.2, 1.6, 63.2)),
+        ("East", vec3(29.0, 0.8, 0.0), vec3(1.2, 1.6, 63.2)),
+        ("South", vec3(0.0, 0.8, -31.0), vec3(59.2, 1.6, 1.2)),
+        ("North", vec3(0.0, 0.8, 31.0), vec3(59.2, 1.6, 1.2)),
+    ] {
+        author.collider(arena, &format!("Arena Wall {name} collision"), center, size);
     }
 
     // Three staggered clusters interrupt direct shots without sealing off
@@ -438,21 +489,39 @@ fn main() {
         ("rock_medium", "East Rock", 12.0, 0.0, -20.0),
         ("rock_small", "East Stone", 12.0, 2.0, 0.0),
     ] {
+        author.prop(model, &format!("Arena Cover {name}"), x * 2.0, z * 2.0, yaw);
+    }
+    // Companion cover makes clusters at the larger spacing, with clear
+    // four-metre sand lanes at X +/-20 and a clear spawn approach.
+    for (model, name, x, z, yaw) in [
+        ("barrier_hazard", "Spawn Left Barrier", -7.0, -14.5, 0.0),
+        ("crate_large", "Spawn Right Crate", 7.0, -14.0, 0.0),
+        ("crate_framed", "Spawn Left Supply", -9.0, -14.0, 0.0),
+        ("crate_framed", "Left Forward Crate", -14.0, -5.0, 0.0),
+        ("barrier_plain", "Centre Wing Barrier", -4.0, -3.0, 20.0),
+        ("crate_large", "Right Forward Crate", 12.0, -5.0, 0.0),
+        ("sandbag_stack", "Left Rear Sandbags", -13.0, 17.0, 0.0),
+        ("crate_framed", "Rear Supply", 3.0, 22.0, 0.0),
+        ("crate_large", "West Middle Crate", -25.0, 7.0, 0.0),
+        ("crate_framed", "East Middle Crate", 25.0, 8.0, 0.0),
+    ] {
         author.prop(model, &format!("Arena Cover {name}"), x, z, yaw);
     }
-    // Northeast x=4..12, z=7..14 (world z=18..25) stays clear for the
+    // Northeast x=8..24, z=14..28 (world z=36..50) stays clear for the
     // separately authored ramp/platform, south of the perimeter wall.
     for (model, name, x, z, yaw) in [
+        ("tree_small", "Spawn West Tree", -6.0, -9.0, 20.0),
+        ("tree_small", "Spawn East Tree", 6.0, -8.0, -20.0),
         ("tree", "Southwest Tree", -11.8, -12.5, 0.0),
         ("tree_small", "West Tree", -12.0, 5.0, 30.0),
         ("tree_large", "Northwest Tree", -11.0, 12.0, 0.0),
         ("tree", "Southeast Tree", 11.8, -12.5, 45.0),
         ("berry_bush", "Southwest Bush", -12.0, -8.0, 20.0),
         ("berry_bush", "Northwest Bush", -9.0, 13.0, 0.0),
-        ("flag", "Spawn Flag", -7.0, -13.0, 0.0),
-        ("lamp", "Spawn Lamp", 7.0, -13.0, 0.0),
+        ("flag", "Spawn Flag", -3.5, -10.5, 0.0),
+        ("lamp", "Spawn Lamp", 3.5, -10.5, 0.0),
     ] {
-        author.prop(model, &format!("Arena Prop {name}"), x, z, yaw);
+        author.prop(model, &format!("Arena Prop {name}"), x * 2.0, z * 2.0, yaw);
     }
     for (i, (x, z)) in [
         (-12.0, -13.0),
@@ -474,20 +543,20 @@ fn main() {
         author.prop(
             "grass_tuft",
             &format!("Arena Grass {i}"),
-            x,
-            z,
+            x * 2.0,
+            z * 2.0,
             (i * 37) as f32,
         );
     }
 
-    // Preserve the exact existing actors; only new kit instances receive
+    // Preserve actors outside the explicit placement/camera edits; kit instances receive
     // deterministic ids, so rerunning this authoring recipe is a no-op.
     let mut value = serde_json::to_value(SceneData::from(&author.scene)).unwrap();
     remap(&mut value, &author.remap);
     let mut data: SceneData = serde_json::from_value(value).unwrap();
     let mut preserved = Vec::new();
     for (id, components) in original.components {
-        if id != arena_id && !old_layout.contains(&id) {
+        if !edited.contains(&id) && !old_layout.contains(&id) {
             preserved.push((id, component_text(&original_text, id).to_string()));
             data.components.insert(id, components);
         }
