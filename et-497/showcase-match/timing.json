@@ -1,0 +1,63 @@
+{
+  "idle": {
+    "stage": "idle",
+    "frames": 120,
+    "wall_seconds": 7.9345756999682635,
+    "mean_frame_ms": 66.12146416640219,
+    "info": {
+      "assemblies_loaded": true,
+      "frame_index": 3736,
+      "has_simulation_scene": true,
+      "input_debug": {
+        "game_focused": true,
+        "game_rect_known": true,
+        "keys_down": [],
+        "pointer_pos": null
+      },
+      "is_simulating": false,
+      "object_count": 93,
+      "port": 28023,
+      "prefab": null,
+      "project_path": "./sandbox",
+      "scene_file": null,
+      "scene_name": null,
+      "version": "0.1.0"
+    },
+    "measurement": "Rendered debug editor wall time over 120 frames, includes client overhead; another user-owned release editor (PID 1644, started 18:52 local) was running throughout. These are contended observations, not a release benchmark or a valid comparison against the prior PR timings."
+  },
+  "one_shooter": {
+    "stage": "one_shooter",
+    "frames": 120,
+    "wall_seconds": 12.960565699962899,
+    "mean_frame_ms": 108.00471416635749,
+    "transient_objects": 6,
+    "measurement": "Rendered debug editor wall time over 120 frames, includes client overhead; another user-owned release editor (PID 1644, started 18:52 local) was running throughout. These are contended observations, not a release benchmark or a valid comparison against the prior PR timings."
+  },
+  "busy": {
+    "stage": "busy",
+    "frames": 120,
+    "wall_seconds": 24.476900000008754,
+    "mean_frame_ms": 203.97416666673962,
+    "transient_objects": 56,
+    "info": {
+      "assemblies_loaded": true,
+      "frame_index": 3929,
+      "has_simulation_scene": true,
+      "input_debug": {
+        "game_focused": true,
+        "game_rect_known": true,
+        "keys_down": [],
+        "pointer_pos": null
+      },
+      "is_simulating": false,
+      "object_count": 171,
+      "port": 28023,
+      "prefab": null,
+      "project_path": "./sandbox",
+      "scene_file": null,
+      "scene_name": null,
+      "version": "0.1.0"
+    },
+    "measurement": "Rendered debug editor wall time over 120 frames, includes client overhead; another user-owned release editor (PID 1644, started 18:52 local) was running throughout. These are contended observations, not a release benchmark or a valid comparison against the prior PR timings."
+  }
+}
