@@ -1,3 +1,6 @@
 # Environment maps are binary; keep line-ending conversion away from them.
 *.hdr binary
 *.exr binary
+
+# Match the editor's scene writer even when core.autocrlf is enabled.
+*.cxscene text eol=lf

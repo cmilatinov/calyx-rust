@@ -13,7 +13,7 @@
           60,
           255
         ],
-        "intensity": 2.2,
+        "intensity": 2.200000047683716,
         "radius": 6.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
@@ -44,6 +44,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "26352e5a-48ff-cdf9-d5e8-77f96412fd90",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -75,6 +76,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "92da47a7-b64d-58dd-4ab6-39b14bc7f015",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -106,6 +108,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "e7c5c1d0-0eac-4c3a-5b09-ac1f668326d2",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -206,13 +209,17 @@
         "visible": true
       },
       "72b2568a-2ea0-4f58-ae76-e3f655006f0f": {
+        "cast_shadows": false,
         "color": [
           255,
           236,
           214,
           255
         ],
-        "intensity": 2.5
+        "depth_bias": 1.0,
+        "intensity": 2.5,
+        "normal_bias": 1.0,
+        "shadow_distance": 50.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
@@ -306,6 +313,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "3d2fc75e-6981-ba06-8368-5a24a364c632",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
@@ -337,6 +345,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "4ae1a38c-4738-e151-2cff-c210967fc871",
         "mesh": "d19899a9-da22-448b-6b0c-4b35c4b289aa"
       },
@@ -392,7 +401,8 @@
         }
       },
       "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
-        "priority": 0
+        "priority": 0,
+        "profile": "00000000-0000-0000-0000-000000000000"
       }
     },
     "a3368759-58ca-4536-92ee-50cae9c9d7a3": {
@@ -483,7 +493,10 @@
         },
         "local_space": false,
         "rendering": {
+          "billboard": "CameraFacing",
           "blend_mode": "Alpha",
+          "intensity": 1.0,
+          "min_screen_size": 6.0,
           "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
         },
         "shape": {
@@ -635,7 +648,10 @@
         },
         "local_space": false,
         "rendering": {
+          "billboard": "CameraFacing",
           "blend_mode": "Alpha",
+          "intensity": 1.0,
+          "min_screen_size": 6.0,
           "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
         },
         "shape": {
@@ -706,6 +722,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "bda9cfca-f81a-d790-01fa-4391895458fa",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -737,6 +754,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "6ee258d4-36c6-ba6c-84e8-b80e595e777f",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -768,6 +786,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "4e34107e-31cd-53dd-92dc-3944cbe1cd8f",
         "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
       },
@@ -908,7 +927,10 @@
         },
         "local_space": false,
         "rendering": {
+          "billboard": "CameraFacing",
           "blend_mode": "Alpha",
+          "intensity": 1.0,
+          "min_screen_size": 6.0,
           "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
         },
         "shape": {
@@ -980,7 +1002,7 @@
           229,
           255
         ],
-        "intensity": 0.22,
+        "intensity": 0.2199999988079071,
         "radius": 6.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
@@ -1011,6 +1033,7 @@
         "visible": true
       },
       "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
         "material": "a8559065-33ca-64e6-dad7-0d20a13c7682",
         "mesh": "52c056b4-6dfb-1859-6023-23693f3ff263"
       },
