@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "bb138b99-adf8-5215-b009-82799ec3c06f",
+    "name": "generated/models/sentry__optic_lens",
+    "display_name": "sentry__optic_lens",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

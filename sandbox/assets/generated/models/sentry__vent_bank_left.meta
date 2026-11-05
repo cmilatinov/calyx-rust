@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "8558dd8d-62e2-525f-bde9-9a4e63a1c302",
+    "name": "generated/models/sentry__vent_bank_left",
+    "display_name": "sentry__vent_bank_left",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}
