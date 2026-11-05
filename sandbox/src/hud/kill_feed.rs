@@ -1,128 +1,67 @@
-//! The kill feed: the latest kills, newest at the top, fading as they age.
-
-use super::{hud_text, HudStyle};
-use crate::combat::ComponentKillFeed;
+//! Recent confirmed kills, with team colours captured at the time of the kill.
+use super::paint::{alpha, clipped_name, Painter, CYAN, LIGHT, MUTED, RED};
+use crate::combat::{combat_team, ComponentKillFeed};
 use calyx_engine::scene::{GameObject, Scene};
-use calyx_engine::ui::{
-    AlignItems, Border, CornerRadius, EdgeInsets, PointerEvents, StylePatch, UiArena, UiLength,
-    UiNodeHandle, Widget,
-};
 
-/// One kill feed line as the HUD draws it.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct KillFeedLine {
-    pub killer: Option<String>,
-    pub victim: String,
-    pub opacity: f32,
-}
-
-/// The lines of the kill feed on `game_object`, newest first; none when it
-/// has no feed.
-pub(crate) fn kill_feed_lines(scene: &Scene, game_object: GameObject) -> Vec<KillFeedLine> {
-    scene
-        .read_component::<ComponentKillFeed, _, _>(game_object, |feed| {
-            feed.entries()
-                .map(|entry| KillFeedLine {
-                    killer: entry.killer.clone(),
-                    victim: entry.victim.clone(),
-                    opacity: feed.opacity(entry),
-                })
-                .filter(|line| line.opacity > 0.0)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-const FONT_SIZE: f32 = 13.0;
-const PADDING_X: f32 = 10.0;
-const PADDING_Y: f32 = 5.0;
-const GAP: f32 = 5.0;
-
-/// A width that fits `text` at `font_size` in the HUD's proportional font.
-/// Layout cannot measure glyphs, and its own estimate of half the font size
-/// per character runs short of capitals, so the parts of a line would
-/// overlap.
-fn estimated_text_width(text: &str, font_size: f32) -> f32 {
-    text.chars()
-        .map(|character| {
-            if character.is_whitespace() {
-                0.3
-            } else if character.is_lowercase() {
-                0.56
-            } else {
-                0.7
+pub(super) fn paint_feed(p: &mut Painter, scene: &Scene, player: GameObject, x: f32, y: f32) {
+    let team = combat_team(scene, player);
+    let _ = scene.read_component::<ComponentKillFeed, _, _>(player, |feed| {
+        for (index, entry) in feed.entries().take(2).enumerate() {
+            let opacity = feed.opacity(entry);
+            let y = y + index as f32 * 59.0;
+            let start = p.commands.len();
+            p.panel(x, y, 475.0, 50.0, 9.0);
+            let color = |other| {
+                if team.is_some() && other == team {
+                    CYAN
+                } else {
+                    RED
+                }
+            };
+            let killer_color = entry.killer_team.map_or(CYAN, |t| color(Some(t)));
+            p.bevel(x + 3.0, y + 3.0, 5.0, 44.0, 2.0, killer_color);
+            p.bevel(x + 467.0, y + 3.0, 5.0, 44.0, 2.0, color(entry.victim_team));
+            p.text(
+                x + 18.0,
+                y + 10.0,
+                clipped_name(
+                    entry.killer.as_deref().unwrap_or("Environment"),
+                    180.0,
+                    23.0,
+                ),
+                23.0,
+                if entry.killer.is_some() {
+                    killer_color
+                } else {
+                    MUTED
+                },
+            );
+            p.tank(x + 208.0, y + 12.0, 1.5, LIGHT);
+            p.polygon(
+                &[
+                    (x + 266.0, y + 21.0),
+                    (x + 273.0, y + 25.0),
+                    (x + 266.0, y + 29.0),
+                ],
+                LIGHT,
+            );
+            p.text(
+                x + 288.0,
+                y + 10.0,
+                clipped_name(&entry.victim, 164.0, 23.0),
+                23.0,
+                color(entry.victim_team),
+            );
+            for command in &mut p.commands[start..] {
+                use calyx_engine::ui::PaintCommand::*;
+                match command {
+                    FillRect { color, .. }
+                    | FillPolygon { color, .. }
+                    | Text { color, .. }
+                    | Line { color, .. } => *color = alpha(*color, opacity),
+                    _ => {}
+                }
             }
-        })
-        .sum::<f32>()
-        * font_size
-}
-
-pub(super) struct KillFeedHud<'a> {
-    pub style: HudStyle,
-    pub lines: &'a [KillFeedLine],
-    pub width: f32,
-    pub margin: EdgeInsets,
-}
-
-impl Widget for KillFeedHud<'_> {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let style = self.style;
-        let rows: Vec<UiNodeHandle> = self
-            .lines
-            .iter()
-            .enumerate()
-            .map(|(index, line)| {
-                let fade = |color: calyx_engine::ui::UiColor| color.with_alpha(line.opacity);
-                let mut width = PADDING_X * 2.0;
-                let mut text = |ui: &mut UiArena, part: &str, value: &str, color| {
-                    let part_width = estimated_text_width(value, FONT_SIZE);
-                    width += part_width;
-                    hud_text(
-                        ui,
-                        format!("hud-kill-feed-{index}-{part}"),
-                        value,
-                        style.value_style(fade(color), FONT_SIZE),
-                    )
-                    .width(ui, UiLength::Px(part_width))
-                };
-                // "<killer> destroyed <victim>", or "<victim> was destroyed"
-                // when nobody gets the kill.
-                let parts = match &line.killer {
-                    Some(killer) => vec![
-                        text(ui, "killer", &killer.to_uppercase(), style.ammo),
-                        text(ui, "verb", "destroyed", style.muted),
-                        text(ui, "victim", &line.victim.to_uppercase(), style.text),
-                    ],
-                    None => vec![
-                        text(ui, "victim", &line.victim.to_uppercase(), style.text),
-                        text(ui, "verb", "was destroyed", style.muted),
-                    ],
-                };
-                width += GAP * (parts.len() - 1) as f32;
-                ui.row()
-                    .id(ui, format!("hud-kill-feed-{index}"))
-                    .style(
-                        ui,
-                        StylePatch::default()
-                            .background(fade(style.panel))
-                            .border(Border::solid(fade(style.outline), 2.0))
-                            .radius(CornerRadius::all(8.0))
-                            .padding(EdgeInsets::symmetric(PADDING_X, PADDING_Y))
-                            .gap(GAP)
-                            .pointer_events(PointerEvents::None),
-                    )
-                    .width(ui, UiLength::Px(width.min(self.width)))
-                    .height(ui, UiLength::Px(FONT_SIZE * 1.25 + PADDING_Y * 2.0))
-                    .children(ui, parts)
-            })
-            .collect();
-        ui.column()
-            .id(ui, "hud-kill-feed")
-            .gap(ui, 4.0)
-            .align_items(ui, AlignItems::End)
-            .width(ui, UiLength::Px(self.width))
-            .margin(ui, self.margin)
-            .pointer_events(ui, PointerEvents::None)
-            .children(ui, rows)
-    }
+        }
+    });
 }

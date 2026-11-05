@@ -1,230 +1,268 @@
-//! The scoreboard: kills and deaths of every combatant, shown while the
-//! scoreboard action is held.
-
-use super::{hud_text, HudStyle};
-use crate::combat::ComponentCombatStats;
+//! Team-grouped live combat statistics. Rendering never synthesizes rows.
+use super::paint::{clipped_name, Painter, BLACK, CYAN, LIGHT, MUTED, RED};
+use crate::combat::{combat_team, ComponentCombatStats};
 use calyx_engine::scene::{GameObject, Scene};
-use calyx_engine::ui::{
-    AlignItems, Border, CornerRadius, EdgeInsets, PointerEvents, StylePatch, UiArena, UiLength,
-    UiNodeHandle, Widget,
-};
+use calyx_engine::ui::UiColor;
 
-/// One scoreboard row.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct ScoreboardRow {
-    pub name: String,
-    pub kills: u32,
-    pub deaths: u32,
-    /// Whether the row is the HUD's own player.
-    pub is_player: bool,
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct ScoreboardRow {
+    name: String,
+    kills: u32,
+    deaths: u32,
+    assists: u32,
+    score: u32,
+    friendly: bool,
+    is_player: bool,
 }
-
-/// A row for every object with [`ComponentCombatStats`], most kills first,
-/// then fewest deaths, then by name.
-pub(crate) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<ScoreboardRow> {
-    let mut rows: Vec<ScoreboardRow> = scene
+pub(super) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<ScoreboardRow> {
+    let team = combat_team(scene, player);
+    let mut rows = scene
         .objects()
         .filter_map(|object| {
             scene.read_component::<ComponentCombatStats, _, _>(object, |stats| ScoreboardRow {
                 name: scene.name(object),
                 kills: stats.kills,
                 deaths: stats.deaths,
+                assists: stats.assists,
+                score: stats.score,
+                friendly: object == player
+                    || team
+                        .zip(combat_team(scene, object))
+                        .is_some_and(|(a, b)| a == b),
                 is_player: object == player,
             })
         })
-        .collect();
+        .collect::<Vec<_>>();
     rows.sort_by(|a, b| {
-        b.kills
-            .cmp(&a.kills)
+        b.friendly
+            .cmp(&a.friendly)
+            .then(b.score.cmp(&a.score))
+            .then(b.kills.cmp(&a.kills))
             .then(a.deaths.cmp(&b.deaths))
-            .then_with(|| a.name.cmp(&b.name))
+            .then(a.name.cmp(&b.name))
     });
     rows
 }
-
-const NUMBER_COLUMN_WIDTH: f32 = 56.0;
-const ROW_HEIGHT: f32 = 26.0;
-const PADDING: f32 = 14.0;
-const GAP: f32 = 6.0;
-const TITLE_FONT_SIZE: f32 = 16.0;
-
-/// Height of a scoreboard of `rows` rows: title, header and divider, then
-/// one line per row, or one for the empty note.
-pub(super) fn scoreboard_height(rows: usize) -> f32 {
-    let lines = rows.max(1);
-    PADDING * 2.0
-        + TITLE_FONT_SIZE * 1.25
-        + ROW_HEIGHT
-        + 1.0
-        + lines as f32 * ROW_HEIGHT
-        + (2 + lines) as f32 * GAP
+pub(super) fn page_count(rows: &[ScoreboardRow]) -> usize {
+    [true, false]
+        .iter()
+        .map(|side| {
+            rows.iter()
+                .filter(|row| row.friendly == *side)
+                .count()
+                .div_ceil(6)
+        })
+        .max()
+        .unwrap_or(1)
+        .max(1)
+}
+fn grouped(value: u32) -> String {
+    let text = value.to_string();
+    let mut result = String::new();
+    for (i, c) in text.chars().enumerate() {
+        if i > 0 && (text.len() - i).is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(c);
+    }
+    result
 }
 
-pub(super) struct ScoreboardHud<'a> {
-    pub style: HudStyle,
-    pub rows: &'a [ScoreboardRow],
-    pub width: f32,
-    pub margin: EdgeInsets,
-}
-
-impl ScoreboardHud<'_> {
-    fn row(
-        &self,
-        ui: &mut UiArena,
-        id: &str,
-        cells: [String; 3],
-        font_size: f32,
-        color: calyx_engine::ui::UiColor,
-        background: Option<calyx_engine::ui::UiColor>,
-    ) -> UiNodeHandle {
-        let style = self.style;
-        let [name, kills, deaths] = cells;
-        let name = hud_text(
-            ui,
-            format!("{id}-name"),
-            name,
-            style.value_style(color, font_size),
+pub(super) fn paint_scoreboard(
+    p: &mut Painter,
+    rows: &[ScoreboardRow],
+    width: f32,
+    height: f32,
+    page: usize,
+) {
+    p.fill(0.0, 0.0, width, height, UiColor::rgba(3, 8, 15, 172), 0.0);
+    let w = (width - 100.0).min(1330.0);
+    let x = (width - w) * 0.5;
+    let per_team = 6;
+    let pages = page_count(rows);
+    let page = page.min(pages - 1);
+    let visible = rows
+        .iter()
+        .filter(|row| row.friendly)
+        .skip(page * per_team)
+        .take(per_team)
+        .chain(
+            rows.iter()
+                .filter(|row| !row.friendly)
+                .skip(page * per_team)
+                .take(per_team),
         )
-        .flex_grow(ui, 1.0);
-        let number = |ui: &mut UiArena, column: &str, value: String| {
-            hud_text(
-                ui,
-                format!("{id}-{column}"),
-                value,
-                style.value_style(color, font_size),
-            )
-            .width(ui, UiLength::Px(NUMBER_COLUMN_WIDTH))
-        };
-        let kills = number(ui, "kills", kills);
-        let deaths = number(ui, "deaths", deaths);
-        let mut patch = StylePatch::default()
-            .padding(EdgeInsets::symmetric(8.0, 4.0))
-            .align_items(AlignItems::Center)
-            .radius(CornerRadius::all(5.0))
-            .pointer_events(PointerEvents::None);
-        if let Some(background) = background {
-            patch = patch.background(background);
-        }
-        ui.row()
-            .id(ui, id.to_string())
-            .style(ui, patch)
-            .width(ui, UiLength::Fill)
-            .height(ui, UiLength::Px(ROW_HEIGHT))
-            .children(ui, [name, kills, deaths])
+        .cloned()
+        .collect::<Vec<_>>();
+    let rows = &visible;
+    let count = [true, false]
+        .iter()
+        .map(|side| {
+            rows.iter()
+                .filter(|row| row.friendly == *side)
+                .count()
+                .max(1)
+        })
+        .sum::<usize>();
+    let row_h = ((height - 300.0) / count as f32).clamp(26.0, 60.0);
+    let groups = 2.0;
+    let h = 148.0 + count as f32 * row_h + groups * 14.0 + 22.0;
+    let y = ((height - h) * 0.5).max(70.0);
+    p.panel(x, y, w, h, 24.0);
+    p.bevel(x + w * 0.32, y - 35.0, w * 0.36, 80.0, 18.0, BLACK);
+    p.panel(x + w * 0.32, y - 35.0, w * 0.36, 80.0, 18.0);
+    p.line(
+        (x + w * 0.38, y - 33.0),
+        (x + w * 0.62, y - 33.0),
+        CYAN,
+        2.0,
+    );
+    p.bold_centered(x + w * 0.5, y - 31.0, "SCOREBOARD", 46.0, LIGHT);
+    let left = x + 24.0;
+    let inner = w - 48.0;
+    let columns = [
+        left + inner * 0.53,
+        left + inner * 0.65,
+        left + inner * 0.77,
+        left + inner * 0.91,
+    ];
+    p.text(left + 22.0, y + 70.0, "#", 25.0, LIGHT);
+    p.text(left + 88.0, y + 70.0, "PLAYER", 25.0, LIGHT);
+    p.tank(columns[0] - 25.0, y + 67.0, 1.5, LIGHT);
+    p.skull(columns[1] - 15.0, y + 63.0, 1.3, LIGHT);
+    p.assist(columns[2] - 22.0, y + 66.0, 1.4, LIGHT);
+    p.centered(columns[3], y + 70.0, "SCORE", 25.0, LIGHT);
+    if pages > 1 {
+        p.centered(
+            x + w * 0.5,
+            y + h - 26.0,
+            &format!("PAGE {}/{}  /  SCROLL", page + 1, pages),
+            14.0,
+            MUTED,
+        );
     }
-}
-
-impl Widget for ScoreboardHud<'_> {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let style = self.style;
-        let title = hud_text(
-            ui,
-            "hud-scoreboard-title",
-            "SCOREBOARD",
-            style.value_style(style.text, TITLE_FONT_SIZE),
+    let mut top = y + 115.0;
+    for friendly in [true, false] {
+        let team_rows = rows
+            .iter()
+            .filter(|row| row.friendly == friendly)
+            .collect::<Vec<_>>();
+        let color = if friendly { CYAN } else { RED };
+        let n = team_rows.len().max(1);
+        let group_h = n as f32 * row_h + 8.0;
+        p.bevel(left, top, inner, group_h, 9.0, color.with_alpha(0.68));
+        p.bevel(
+            left + 1.5,
+            top + 1.5,
+            inner - 3.0,
+            group_h - 3.0,
+            8.0,
+            UiColor::rgba(15, 24, 32, 255),
         );
-        let header = self.row(
-            ui,
-            "hud-scoreboard-header",
-            ["COMBATANT".into(), "KILLS".into(), "DEATHS".into()],
-            11.0,
-            style.muted,
-            None,
-        );
-        let divider = ui
-            .container()
-            .id(ui, "hud-scoreboard-divider")
-            .background(ui, style.outline)
-            .width(ui, UiLength::Fill)
-            .height(ui, UiLength::Px(1.0))
-            .pointer_events(ui, PointerEvents::None);
-        let mut children = vec![title, header, divider];
-        for (index, row) in self.rows.iter().enumerate() {
-            let (color, background) = if row.is_player {
-                (style.ammo, Some(style.bar_background))
-            } else {
-                (style.text, None)
-            };
-            children.push(self.row(
-                ui,
-                &format!("hud-scoreboard-row-{index}"),
-                [
-                    row.name.to_uppercase(),
-                    row.kills.to_string(),
-                    row.deaths.to_string(),
-                ],
-                14.0,
+        if team_rows.is_empty() {
+            p.text(
+                left + 88.0,
+                top + 10.0,
+                if page == 0 {
+                    "No combatants"
+                } else {
+                    "No more combatants"
+                },
+                18.0,
+                MUTED,
+            );
+        }
+        for (index, row) in team_rows.iter().enumerate() {
+            let ry = top + 4.0 + index as f32 * row_h;
+            let highlighted = page == 0 && index == 0;
+            p.fill(
+                left + 5.0,
+                ry,
+                inner - 10.0,
+                row_h,
+                if highlighted {
+                    if friendly {
+                        UiColor::rgba(37, 63, 77, 255)
+                    } else {
+                        UiColor::rgba(65, 36, 44, 255)
+                    }
+                } else if index % 2 == 0 {
+                    UiColor::rgba(24, 34, 44, 255)
+                } else {
+                    UiColor::rgba(19, 28, 37, 255)
+                },
+                0.0,
+            );
+            p.fill(left + 3.0, ry, 4.0, row_h, color, 0.0);
+            let size = (row_h * 0.5).min(29.0);
+            let text_y = ry + (row_h - size * 1.25) * 0.5;
+            p.text(
+                left + 24.0,
+                text_y,
+                (page * per_team + index + 1).to_string(),
+                size,
+                LIGHT,
+            );
+            p.tank(left + 72.0, ry + row_h * 0.27, 1.7, LIGHT);
+            p.text(
+                left + 145.0,
+                text_y,
+                clipped_name(&row.name, inner * 0.43 - 145.0, size),
+                size,
                 color,
-                background,
-            ));
+            );
+            if row.is_player {
+                p.circle(left + inner * 0.45, ry + row_h * 0.5, 3.0, LIGHT);
+            }
+            for (column, value) in
+                columns
+                    .iter()
+                    .zip([row.kills, row.deaths, row.assists, row.score])
+            {
+                p.centered(
+                    *column,
+                    text_y,
+                    &grouped(value),
+                    size,
+                    if highlighted { LIGHT } else { MUTED },
+                );
+            }
         }
-        if self.rows.is_empty() {
-            children.push(hud_text(
-                ui,
-                "hud-scoreboard-empty",
-                "NO COMBATANTS",
-                style.label_style(style.muted),
-            ));
-        }
-
-        ui.column()
-            .id(ui, "hud-scoreboard")
-            .style(
-                ui,
-                style
-                    .panel_style()
-                    .background(style.panel_strong)
-                    .border(Border::solid(style.outline, 2.0))
-                    .padding(EdgeInsets::all(PADDING))
-                    .gap(GAP),
-            )
-            .width(ui, UiLength::Px(self.width))
-            .height(ui, UiLength::Px(scoreboard_height(self.rows.len())))
-            .margin(ui, self.margin)
-            .children(ui, children)
+        top += group_h + 18.0;
     }
 }
-
 #[cfg(test)]
 mod tests {
-    use super::{scoreboard_rows, ScoreboardRow};
-    use crate::combat::ComponentCombatStats;
-    use calyx_engine::component::ComponentID;
-
+    use super::*;
     #[test]
-    fn scoreboard_rows_rank_combatants_by_kills_then_deaths() {
+    fn groups_sort_by_actual_score_then_kills_and_preserve_assists() {
         let mut scene = calyx_engine::test_support::test_scene();
-        let mut add = |name: &str, kills, deaths| {
-            let object = scene.create(
-                Some(ComponentID {
-                    name: name.to_string(),
+        let player = scene.create(None, None);
+        let friend = scene.create(None, None);
+        let enemy = scene.create(None, None);
+        for (object, team, score, kills, assists) in [
+            (player, 0, 100, 1, 0),
+            (friend, 0, 150, 1, 1),
+            (enemy, 1, 300, 3, 0),
+        ] {
+            scene.add_component(
+                object,
+                ComponentCombatStats {
+                    team,
+                    score,
+                    kills,
+                    assists,
                     ..Default::default()
-                }),
-                None,
+                },
             );
-            scene.add_component(object, ComponentCombatStats { kills, deaths });
-            object
-        };
-        let tank = add("Tank", 2, 1);
-        add("Sentry", 2, 0);
-        add("Rookie", 0, 3);
-        scene.create(None, None);
-
-        let rows = scoreboard_rows(&scene, tank);
-
-        let row = |name: &str, kills, deaths, is_player| ScoreboardRow {
-            name: name.to_string(),
-            kills,
-            deaths,
-            is_player,
-        };
+        }
+        let rows = scoreboard_rows(&scene, player);
         assert_eq!(
-            rows,
-            vec![
-                row("Sentry", 2, 0, false),
-                row("Tank", 2, 1, true),
-                row("Rookie", 0, 3, false),
-            ]
+            rows.iter()
+                .map(|r| (r.friendly, r.score, r.assists))
+                .collect::<Vec<_>>(),
+            vec![(true, 150, 1), (true, 100, 0), (false, 300, 0)]
         );
+        assert_eq!(grouped(12345), "12,345");
     }
 }

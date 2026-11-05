@@ -1052,6 +1052,166 @@ fn egui_clip_rects_are_intersected_for_nested_clips() {
 }
 
 #[test]
+fn polygon_backend_preserves_vertices_and_ignores_incomplete_polygons() {
+    let points = vec![
+        UiPoint::new(5.0, 5.0),
+        UiPoint::new(45.0, 5.0),
+        UiPoint::new(25.0, 15.0),
+    ];
+    let commands = vec![
+        PaintCommand::FillPolygon {
+            points: points.clone(),
+            color: UiColor::WHITE,
+        },
+        PaintCommand::FillPolygon {
+            points: points[..2].to_vec(),
+            color: UiColor::BLACK,
+        },
+    ];
+    let mut backend = RecordingBackend::<String>::default();
+    render_commands(
+        &mut backend,
+        viewport(50.0, 20.0),
+        1.0,
+        &commands,
+        str::to_owned,
+    );
+    assert_eq!(backend.ops.len(), 3);
+    assert_eq!(
+        backend.ops[1],
+        BackendOp::FillPolygon {
+            points,
+            color: UiColor::WHITE
+        }
+    );
+}
+
+#[test]
+fn egui_polygon_respects_transform_and_clip_and_restores_frame_state() {
+    let context = egui::Context::default();
+    let output = context.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let mut backend = EguiUiBackend::new(&painter);
+        let bounds = viewport(100.0, 100.0);
+        backend.push_clip(viewport(80.0, 90.0));
+        backend.push_clip(viewport(90.0, 70.0));
+        backend.push_transform(
+            bounds,
+            UiTransform {
+                scale: 2.0,
+                ..Default::default()
+            },
+        );
+        let points = [
+            UiPoint::new(40.0, 40.0),
+            UiPoint::new(60.0, 40.0),
+            UiPoint::new(50.0, 60.0),
+        ];
+        backend.fill_polygon(&points[..2], UiColor::WHITE);
+        backend.fill_polygon(&points, UiColor::WHITE);
+        backend.end_frame();
+        backend.fill_polygon(&points, UiColor::WHITE);
+    });
+    let polygons: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            if let egui::Shape::Path(path) = &shape.shape {
+                Some((shape.clip_rect, path))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(polygons.len(), 2);
+    assert_eq!(
+        polygons[0].0,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(80.0, 70.0))
+    );
+    assert_eq!(
+        polygons[0].1.points,
+        vec![
+            egui::pos2(30.0, 30.0),
+            egui::pos2(70.0, 30.0),
+            egui::pos2(50.0, 70.0)
+        ]
+    );
+    assert_eq!(polygons[1].1.points[0], egui::pos2(40.0, 40.0));
+    assert_ne!(polygons[0].0, polygons[1].0);
+}
+
+#[test]
+fn triangle_mesh_rejects_invalid_geometry_and_preserves_joined_edges() {
+    let points = vec![
+        UiPoint::new(40.0, 40.0),
+        UiPoint::new(60.0, 40.0),
+        UiPoint::new(60.0, 60.0),
+        UiPoint::new(40.0, 60.0),
+    ];
+    let indices = vec![0, 1, 2, 0, 2, 3];
+    let mut backend = RecordingBackend::<String>::default();
+    for invalid in [vec![], vec![0, 1], vec![0, 1, 4]] {
+        backend.fill_triangle_mesh(&points, &invalid, UiColor::WHITE);
+    }
+    backend.fill_triangle_mesh(&[UiPoint::new(f32::NAN, 0.0)], &[0, 0, 0], UiColor::WHITE);
+    assert!(backend.ops.is_empty());
+    render_commands(
+        &mut backend,
+        viewport(100.0, 100.0),
+        1.0,
+        &[PaintCommand::FillTriangleMesh {
+            points: points.clone(),
+            indices: indices.clone(),
+            color: UiColor::WHITE,
+        }],
+        str::to_owned,
+    );
+    assert_eq!(
+        backend.ops[1],
+        BackendOp::FillTriangleMesh {
+            points: points.clone(),
+            indices: indices.clone(),
+            color: UiColor::WHITE
+        }
+    );
+
+    let context = egui::Context::default();
+    let output = context.run(egui::RawInput::default(), |ctx| {
+        let painter = ctx.layer_painter(egui::LayerId::background());
+        let mut backend = EguiUiBackend::new(&painter);
+        backend.push_clip(viewport(80.0, 70.0));
+        backend.push_transform(
+            viewport(100.0, 100.0),
+            UiTransform {
+                scale: 2.0,
+                ..Default::default()
+            },
+        );
+        backend.fill_triangle_mesh(&points, &[0, 1, 4], UiColor::WHITE);
+        backend.fill_triangle_mesh(&points, &indices, UiColor::WHITE);
+    });
+    let meshes: Vec<_> = output
+        .shapes
+        .iter()
+        .filter_map(|shape| {
+            if let egui::Shape::Mesh(mesh) = &shape.shape {
+                Some((shape.clip_rect, mesh))
+            } else {
+                None
+            }
+        })
+        .collect();
+    assert_eq!(meshes.len(), 1);
+    assert_eq!(
+        meshes[0].0,
+        egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(80.0, 70.0))
+    );
+    assert_eq!(meshes[0].1.indices, indices);
+    assert_eq!(meshes[0].1.vertices.len(), 4);
+    assert_eq!(meshes[0].1.vertices[0].pos, egui::pos2(30.0, 30.0));
+}
+
+#[test]
 fn custom_widget_can_be_allocated_without_engine_enum_changes() {
     struct BadgeWidget;
 

@@ -145,7 +145,7 @@ impl ComponentGameState {
                 (self.start_match_requested && self.players_ready).then_some(GamePhase::Playing)
             }
             GamePhase::Playing => (self.finish_match_requested
-                || self.match_time_remaining <= f32::EPSILON)
+                || (self.match_duration > 0.0 && self.match_time_remaining <= f32::EPSILON))
                 .then_some(GamePhase::GameOver),
             GamePhase::GameOver => self.restart_match_requested.then_some(GamePhase::Lobby),
         }
@@ -254,5 +254,19 @@ mod tests {
         assert_eq!(state.tick(0.1), Some(GamePhase::MainMenu));
         assert_eq!(state.current_phase(), GamePhase::MainMenu);
         assert!(!state.return_to_menu_requested);
+    }
+    #[test]
+    fn zero_duration_selects_an_elapsed_match_without_automatic_finish() {
+        let mut state = ComponentGameState {
+            phase: GamePhase::Playing.as_u32(),
+            match_duration: 0.0,
+            match_time_remaining: 0.0,
+            ..Default::default()
+        };
+        assert_eq!(state.tick(2.0), None);
+        assert_eq!(state.current_phase(), GamePhase::Playing);
+        assert_eq!(state.phase_elapsed, 2.0);
+        state.finish_match_requested = true;
+        assert_eq!(state.tick(0.0), Some(GamePhase::GameOver));
     }
 }

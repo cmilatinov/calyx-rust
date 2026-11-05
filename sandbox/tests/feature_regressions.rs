@@ -241,7 +241,7 @@ fn sandbox_scene_draws_the_tank_hud() {
             _ => None,
         })
         .collect();
-    for expected in ["HULL INTEGRITY", "100/100", "6/6", "READY"] {
+    for expected in ["HULL", "100/100", "6/6", "READY", "N", "05:00"] {
         assert!(text.contains(&expected), "{expected} in {text:?}");
     }
 }

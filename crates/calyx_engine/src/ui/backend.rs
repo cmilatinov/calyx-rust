@@ -12,6 +12,10 @@ pub trait UiBackend {
     fn push_transform(&mut self, rect: UiRect, transform: UiTransform);
     fn pop_transform(&mut self);
     fn fill_rect(&mut self, rect: UiRect, color: UiColor, radius: CornerRadius);
+    /// Fill a convex polygon with perimeter-ordered vertices; ignore fewer than three.
+    fn fill_polygon(&mut self, points: &[UiPoint], color: UiColor);
+    /// Fill joined triangles without internal edge antialiasing. Ignore invalid meshes.
+    fn fill_triangle_mesh(&mut self, points: &[UiPoint], indices: &[u32], color: UiColor);
     fn stroke_rect(&mut self, rect: UiRect, border: Border, radius: CornerRadius);
     fn draw_text(&mut self, rect: UiRect, text: &str, color: UiColor, font_size: f32);
     fn draw_image(
@@ -42,6 +46,15 @@ pub enum BackendOp<T> {
         rect: UiRect,
         color: UiColor,
         radius: CornerRadius,
+    },
+    FillPolygon {
+        points: Vec<UiPoint>,
+        color: UiColor,
+    },
+    FillTriangleMesh {
+        points: Vec<UiPoint>,
+        indices: Vec<u32>,
+        color: UiColor,
     },
     StrokeRect {
         rect: UiRect,
@@ -107,6 +120,25 @@ impl<T: Clone> UiBackend for RecordingBackend<T> {
             color,
             radius,
         });
+    }
+
+    fn fill_polygon(&mut self, points: &[UiPoint], color: UiColor) {
+        if points.len() >= 3 {
+            self.ops.push(BackendOp::FillPolygon {
+                points: points.to_vec(),
+                color,
+            });
+        }
+    }
+
+    fn fill_triangle_mesh(&mut self, points: &[UiPoint], indices: &[u32], color: UiColor) {
+        if valid_triangle_mesh(points, indices) {
+            self.ops.push(BackendOp::FillTriangleMesh {
+                points: points.to_vec(),
+                indices: indices.to_vec(),
+                color,
+            });
+        }
     }
 
     fn stroke_rect(&mut self, rect: UiRect, border: Border, radius: CornerRadius) {
@@ -179,6 +211,12 @@ pub fn render_commands<B, F>(
                 color,
                 radius,
             } => backend.fill_rect(*rect, *color, *radius),
+            PaintCommand::FillPolygon { points, color } => backend.fill_polygon(points, *color),
+            PaintCommand::FillTriangleMesh {
+                points,
+                indices,
+                color,
+            } => backend.fill_triangle_mesh(points, indices, *color),
             PaintCommand::StrokeRect {
                 rect,
                 border,
@@ -262,6 +300,38 @@ impl UiBackend for EguiUiBackend<'_> {
             to_egui_radius(radius),
             to_egui_color(color),
         );
+    }
+
+    fn fill_polygon(&mut self, points: &[UiPoint], color: UiColor) {
+        if points.len() < 3 {
+            return;
+        }
+        let points = points
+            .iter()
+            .map(|point| {
+                let point = self.transform_point(*point);
+                egui::pos2(point.x, point.y)
+            })
+            .collect();
+        self.active_painter().add(egui::Shape::convex_polygon(
+            points,
+            to_egui_color(color),
+            egui::Stroke::NONE,
+        ));
+    }
+
+    fn fill_triangle_mesh(&mut self, points: &[UiPoint], indices: &[u32], color: UiColor) {
+        if !valid_triangle_mesh(points, indices) {
+            return;
+        }
+        let color = to_egui_color(color);
+        let mut mesh = egui::Mesh::default();
+        for point in points {
+            let point = self.transform_point(*point);
+            mesh.colored_vertex(egui::pos2(point.x, point.y), color);
+        }
+        mesh.indices.extend_from_slice(indices);
+        self.active_painter().add(egui::Shape::mesh(mesh));
     }
 
     fn stroke_rect(&mut self, rect: UiRect, border: Border, radius: CornerRadius) {
@@ -402,6 +472,15 @@ impl EguiUiBackend<'_> {
             .extend_from_slice(&[base, base + 1, base + 2, base, base + 2, base + 3]);
         self.active_painter().add(egui::Shape::mesh(mesh));
     }
+}
+
+fn valid_triangle_mesh(points: &[UiPoint], indices: &[u32]) -> bool {
+    !indices.is_empty()
+        && indices.len().is_multiple_of(3)
+        && indices.iter().all(|&index| (index as usize) < points.len())
+        && points
+            .iter()
+            .all(|point| point.x.is_finite() && point.y.is_finite())
 }
 
 fn project_fake_3d(point: UiPoint, rect: UiRect, transform: UiTransform) -> UiPoint {

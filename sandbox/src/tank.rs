@@ -1,10 +1,10 @@
-use crate::combat::{record_kill, KillEvent};
+use crate::combat::{record_damage, record_kill, ComponentCombatStats, KillEvent};
 use crate::spawn::ComponentRespawnState;
 use crate::tank_camera::{cursor_ground_point, update_tank_camera};
 use calyx_engine::component::{
     ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentRef,
-    ComponentRigidBody, ComponentTransform, ComponentUpdate, ReflectComponent,
-    ReflectComponentUpdate,
+    ComponentRigidBody, ComponentStart, ComponentTransform, ComponentUpdate, ReflectComponent,
+    ReflectComponentStart, ReflectComponentUpdate,
 };
 use calyx_engine::core::TimeType;
 use calyx_engine::input::Input;
@@ -156,7 +156,7 @@ impl ComponentUpdate for ComponentProjectile {
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f2c31eb5-c999-4125-9cb0-a72a238eca2e"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentStart)]
 #[reflect_attr(name = "Projectile Target")]
 #[serde(default)]
 pub struct ComponentProjectileTarget {
@@ -174,6 +174,23 @@ impl Default for ComponentProjectileTarget {
 }
 
 impl Component for ComponentProjectileTarget {}
+impl ComponentStart for ComponentProjectileTarget {
+    fn start(
+        _this: ComponentRef<Self>,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+    ) {
+        // Every damageable combatant participates, including authored training
+        // targets. Preserve explicit team/scoring settings on existing stats.
+        if scene
+            .read_component::<ComponentCombatStats, _, _>(game_object, |_| ())
+            .is_none()
+        {
+            scene.add_component(game_object, ComponentCombatStats::default());
+        }
+    }
+}
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8f0175f4-1a76-4c43-8932-6462f9005ab4"]
@@ -202,7 +219,7 @@ impl Component for ComponentHealth {}
 
 impl ComponentHealth {
     fn apply_damage(&mut self, amount: f32) -> bool {
-        if self.dead || amount <= 0.0 {
+        if self.dead || !amount.is_finite() || amount <= 0.0 {
             return self.dead;
         }
 
@@ -867,14 +884,20 @@ fn apply_projectile_damage(
     let mut died = false;
     let mut killed = false;
     let mut should_destroy = false;
+    let mut removed = 0.0;
+    let mut max_health = 0.0;
     let damaged_health = scene
         .write_component::<ComponentHealth, _>(target, |health| {
             let was_dead = health.dead;
+            let previous = health.current_health;
             died = health.apply_damage(damage);
+            removed = (previous - health.current_health).max(0.0);
+            max_health = health.max_health;
             killed = died && !was_dead;
             should_destroy = died && health.destroy_on_death;
         })
         .is_some();
+    record_damage(scene, target, shooter, removed, max_health);
     if killed {
         let event = KillEvent::new(scene, shooter, target);
         record_kill(scene, &event);
@@ -1992,5 +2015,57 @@ mod tests {
         assert_eq!(health.current_health, health.max_health);
         assert!(!state.death_requested);
         assert_eq!(state.respawn_remaining, 1.0);
+    }
+    #[test]
+    fn confirmed_damage_feedback_rejects_invalid_dead_and_immune_hits_and_clamps_overkill() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let shooter = scene.create(None, None);
+        let victim = scene.create(None, None);
+        scene.add_component(shooter, ComponentCombatStats::default());
+        scene.add_component(victim, ComponentHealth::default());
+        for amount in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+            super::apply_projectile_damage(&mut scene, victim, amount, Some(shooter));
+        }
+        assert_eq!(
+            scene.read_component::<ComponentHealth, _, _>(victim, |health| health.current_health),
+            Some(100.0)
+        );
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats
+                .feedback
+                .len()),
+            Some(0)
+        );
+        scene.add_component(
+            victim,
+            ComponentRespawnState {
+                invulnerability_remaining: 1.0,
+                ..Default::default()
+            },
+        );
+        super::apply_projectile_damage(&mut scene, victim, 35.0, Some(shooter));
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats
+                .feedback
+                .len()),
+            Some(0)
+        );
+        scene.write_component::<ComponentRespawnState, _>(victim, |state| {
+            state.invulnerability_remaining = 0.0
+        });
+        super::apply_projectile_damage(&mut scene, victim, 150.0, Some(shooter));
+        super::apply_projectile_damage(&mut scene, victim, 150.0, Some(shooter));
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats
+                .feedback
+                .iter()
+                .map(|hit| hit.amount)
+                .collect::<Vec<_>>()),
+            Some(vec![100.0])
+        );
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats.kills),
+            Some(1)
+        );
     }
 }

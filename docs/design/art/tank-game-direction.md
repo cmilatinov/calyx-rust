@@ -1,7 +1,8 @@
 # Tank Game Visual Direction
 
-The style guide for the sandbox tank game. Every visual change to the tanks,
-the arena, effects and the HUD follows it. The look-dev scene
+The style guide for the sandbox tank game's tanks, arena and effects. The HUD
+follows its [visual direction and concepts](../hud-ui/visual-direction.md).
+The look-dev scene
 `sandbox/assets/lookdev/tank_direction.cxscene` shows it: one group per map
 palette, each with its rig (sun, sky, post-process volume), a Far camera, a
 showcase corner (palette swatches, sample materials, the four player tanks)

@@ -1,31 +1,32 @@
 mod kill_feed;
 mod minimap;
+mod paint;
 mod scoreboard;
 
+use crate::combat::{combat_team, ComponentCombatStats};
+use crate::game_state::ComponentGameState;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentTankController};
 use calyx_engine::component::{
-    Component, ComponentEventContext, ComponentHud, ComponentRef, ComponentUpdate,
+    Component, ComponentDepthOfField, ComponentEventContext, ComponentHud, ComponentID,
+    ComponentLocalPostProcessVolume, ComponentRef, ComponentUpdate, LocalVolumeShape,
     ReflectComponent, ReflectComponentHud, ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
+use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
-use calyx_engine::scene::{GameObject, Scene};
+use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
 use calyx_engine::ui::{
-    Border, CornerRadius, EdgeInsets, JustifyContent, PointerEvents, StylePatch, UiArena, UiColor,
-    UiLength, UiNodeHandle, UiRect, UiSize, Widget,
+    PaintCommand, PointerEvents, UiArena, UiColor, UiLength, UiNodeHandle, UiRect,
 };
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use kill_feed::{kill_feed_lines, KillFeedHud, KillFeedLine};
-use minimap::{minimap_state, MinimapHud, MinimapState};
-use scoreboard::{scoreboard_height, scoreboard_rows, ScoreboardHud, ScoreboardRow};
+use nalgebra_glm::{vec2, vec3, vec4, Mat4, Vec3};
+use paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED, STEEL};
 use serde::{Deserialize, Serialize};
 
-/// Draws the HUD of the tank on the same game object: health, weapon, a
-/// minimap, the kill feed of a [`ComponentKillFeed`](crate::combat::ComponentKillFeed)
-/// on the same object, and, while the `scoreboard` action is held, the
-/// scoreboard.
+/// Concept-driven presentation over real scene combat state. No input is
+/// captured by the HUD; the scoreboard follows the existing held action.
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "b7f3a8d2-5c41-4e8b-9a6f-0d2e7c1b4f93"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentHud)]
@@ -33,71 +34,482 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct ComponentTankHud {
     pub screen_margin: f32,
-    /// Whether the scoreboard action was held on the last update.
+    /// Standalone scenes count down this duration; zero selects elapsed time.
+    /// A scene Game State component supplies the authoritative clock instead.
+    pub timer_duration: f32,
+    pub vision_range: f32,
+    pub low_damage_ratio: f32,
+    pub high_damage_ratio: f32,
     #[serde(skip)]
     #[reflect_skip]
     pub scoreboard_open: bool,
+    #[serde(skip)]
+    #[reflect_skip]
+    elapsed: f32,
+    #[serde(skip)]
+    #[reflect_skip]
+    scoreboard_page: usize,
+    #[serde(skip)]
+    #[reflect_skip]
+    scoreboard_blur: GameObjectRef,
 }
-
 impl Default for ComponentTankHud {
     fn default() -> Self {
         Self {
-            screen_margin: HudStyle::default().screen_margin,
+            screen_margin: 34.0,
+            timer_duration: 300.0,
+            vision_range: 15.0,
+            low_damage_ratio: 0.15,
+            high_damage_ratio: 0.5,
             scoreboard_open: false,
+            elapsed: 0.0,
+            scoreboard_page: 0,
+            scoreboard_blur: Default::default(),
         }
     }
 }
-
 impl Component for ComponentTankHud {}
-
+impl ComponentTankHud {
+    fn advance(&mut self, dt: f32) {
+        if dt.is_finite() {
+            self.elapsed += dt.max(0.0);
+        }
+    }
+    fn time(&self, scene: &Scene) -> f32 {
+        scene
+            .objects()
+            .find_map(|object| {
+                scene.read_component::<ComponentGameState, _, _>(object, |state| {
+                    if state.match_duration > 0.0 {
+                        state.match_time_remaining.max(0.0)
+                    } else {
+                        state.phase_elapsed.max(0.0).floor()
+                    }
+                })
+            })
+            .unwrap_or_else(|| {
+                if self.timer_duration > 0.0 {
+                    (self.timer_duration - self.elapsed).max(0.0)
+                } else {
+                    self.elapsed.floor()
+                }
+            })
+    }
+}
 impl ComponentUpdate for ComponentTankHud {
     fn update(
         this: ComponentRef<Self>,
         ComponentEventContext { scene, .. }: ComponentEventContext,
-        _resources: &mut ResourceMap,
+        resources: &mut ResourceMap,
         input: &Input,
     ) {
         let open = input.action("scoreboard").pressed();
+        let pages = scoreboard::page_count(&scoreboard::scoreboard_rows(scene, this.game_object()));
         let _ = this.write(scene, |hud| {
+            if !open {
+                hud.scoreboard_page = 0;
+            } else if input.scroll_delta().y < 0.0 {
+                hud.scoreboard_page = hud.scoreboard_page.saturating_add(1);
+            } else if input.scroll_delta().y > 0.0 {
+                hud.scoreboard_page = hud.scoreboard_page.saturating_sub(1);
+            }
+            hud.scoreboard_page = hud.scoreboard_page.min(pages - 1);
             hud.scoreboard_open = open;
+            hud.advance(resources.time().delta_time());
         });
+        let previous = this
+            .read(scene, |hud| hud.scoreboard_blur)
+            .unwrap_or_default();
+        let blur = update_scoreboard_blur(scene, this.game_object(), open, previous);
+        let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
+        // The aim object remains the world-space source. Its legacy mesh would
+        // otherwise overlap the projected ground ring drawn by this HUD.
+        if let Some(marker) = scene
+            .read_component::<ComponentTankController, _, _>(this.game_object(), |controller| {
+                controller.crosshair
+            })
+            .and_then(|marker| marker.game_object(scene))
+        {
+            let _ = scene.write_component::<ComponentID, _>(marker, |id| id.visible = false);
+        }
     }
 }
-
+/// A transient local volume changes only depth of field at the active camera;
+/// removing it restores the scene's existing post-processing without editing assets.
+fn update_scoreboard_blur(
+    scene: &mut Scene,
+    owner: GameObject,
+    open: bool,
+    previous: GameObjectRef,
+) -> GameObjectRef {
+    let camera_position = scene
+        .main_camera()
+        .map(|(camera, _)| scene.world_transform(camera).position);
+    if !open || camera_position.is_none() {
+        if let Some(object) = previous.game_object(scene) {
+            scene.delete(object);
+        }
+        return Default::default();
+    }
+    let object = previous.game_object(scene).unwrap_or_else(|| {
+        let object = scene.create(
+            Some(ComponentID {
+                name: "Scoreboard Backdrop".to_string(),
+                ..Default::default()
+            }),
+            Some(owner),
+        );
+        scene.add_component(
+            object,
+            ComponentLocalPostProcessVolume {
+                shape: LocalVolumeShape::Sphere { radius: 0.25 },
+                blend_distance: 0.0,
+                weight: 1.0,
+                priority: i32::MAX,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            object,
+            ComponentDepthOfField {
+                focus_distance: 0.0,
+                focus_range: 0.01,
+                max_blur: 16.0,
+            },
+        );
+        object
+    });
+    scene.set_world_transform(
+        object,
+        Transform::from_xyz(
+            camera_position.unwrap().x,
+            camera_position.unwrap().y,
+            camera_position.unwrap().z,
+        )
+        .matrix(),
+    );
+    GameObjectRef::new(scene.uuid(object))
+}
 impl ComponentHud for ComponentTankHud {
     fn build_hud(
         hud: &Self,
         scene: &Scene,
-        game_object: GameObject,
+        player: GameObject,
         ui: &mut UiArena,
         viewport: UiRect,
     ) -> Option<UiNodeHandle> {
-        let state = tank_hud_state(scene, game_object)?;
+        let state = tank_hud_state(scene, player)?;
+        let mut p = Painter::new(viewport);
+        let width = viewport.width() / p.scale;
+        let height = viewport.height() / p.scale;
+        let margin = hud.screen_margin.max(12.0).min(width * 0.1);
+        let map = minimap::minimap_state(scene, player);
+        if !hud.scoreboard_open {
+            paint_world(&mut p, scene, player, hud, &map, width, height);
+            kill_feed::paint_feed(&mut p, scene, player, margin, margin);
+            minimap::paint_map(
+                &mut p,
+                &map,
+                margin + 221.0,
+                margin + 381.0,
+                215.0,
+                hud.vision_range,
+            );
+            p.panel(width - margin - 260.0, margin, 260.0, 90.0, 18.0);
+            p.bold_centered(
+                width - margin - 130.0,
+                margin + 12.0,
+                &format_time(hud.time(scene)),
+                52.0,
+                LIGHT,
+            );
+            // Compact retained instrumentation complements the reference's world HP.
+            p.panel(margin, height - margin - 73.0, 222.0, 73.0, 12.0);
+            p.text(margin + 15.0, height - margin - 67.0, "HULL", 14.0, MUTED);
+            p.text(
+                margin + 91.0,
+                height - margin - 69.0,
+                format!(
+                    "{:03.0}/{:03.0}",
+                    state.health.max(0.0),
+                    state.max_health.max(0.0)
+                ),
+                20.0,
+                LIGHT,
+            );
+            meter(
+                &mut p,
+                margin + 15.0,
+                height - margin - 28.0,
+                192.0,
+                12.0,
+                health_ratio(state.health, state.max_health),
+                CYAN,
+            );
+            let ax = width - margin - 260.0;
+            let ay = height - margin - 93.0;
+            p.panel(ax, ay, 260.0, 93.0, 12.0);
+            p.bold_text(ax + 16.0, ay + 9.0, "CANNON", 15.0, MUTED);
+            p.text(
+                ax + 171.0,
+                ay + 3.0,
+                format!("{}/{}", state.ammo, state.max_ammo),
+                29.0,
+                LIGHT,
+            );
+            p.text(
+                ax + 16.0,
+                ay + 42.0,
+                weapon_status_label(
+                    state.max_ammo,
+                    state.reload_remaining,
+                    state.fire_cooldown_remaining,
+                    state.gameplay_locked,
+                    state.respawn_remaining,
+                ),
+                16.0,
+                if state.gameplay_locked { RED } else { LIGHT },
+            );
+            let reload_duration = scene
+                .read_component::<ComponentTankController, _, _>(player, |controller| {
+                    controller.reload_duration
+                })
+                .unwrap_or(1.0);
+            let ratio = if state.reload_remaining > 0.0 {
+                1.0 - state.reload_remaining / reload_duration.max(f32::EPSILON)
+            } else {
+                state.ammo as f32 / state.max_ammo.max(1) as f32
+            };
+            meter(&mut p, ax + 16.0, ay + 72.0, 228.0, 9.0, ratio, CYAN);
+        }
+        if hud.scoreboard_open {
+            scoreboard::paint_scoreboard(
+                &mut p,
+                &scoreboard::scoreboard_rows(scene, player),
+                width,
+                height,
+                hud.scoreboard_page,
+            );
+        }
+        p.commands.push(PaintCommand::PopClip);
         Some(
-            SandboxHud {
-                viewport,
-                style: HudStyle {
-                    screen_margin: hud.screen_margin,
-                    ..Default::default()
-                },
-                health: state.health,
-                max_health: state.max_health,
-                weapon_name: "Cannon",
-                ammo_loaded: state.ammo,
-                ammo_capacity: state.max_ammo,
-                reload_remaining: state.reload_remaining,
-                fire_cooldown_remaining: state.fire_cooldown_remaining,
-                gameplay_locked: state.gameplay_locked,
-                respawn_remaining: state.respawn_remaining,
-                minimap: minimap_state(scene, game_object),
-                kill_feed: kill_feed_lines(scene, game_object),
-                scoreboard: hud
-                    .scoreboard_open
-                    .then(|| scoreboard_rows(scene, game_object)),
-            }
-            .build(ui),
+            ui.custom_paint(p.commands)
+                .id(ui, "sandbox-ui")
+                .width(ui, UiLength::Px(viewport.width()))
+                .height(ui, UiLength::Px(viewport.height()))
+                .pointer_events(ui, PointerEvents::None),
         )
     }
+}
+fn format_time(seconds: f32) -> String {
+    let seconds = seconds.max(0.0).ceil() as u32;
+    format!("{:02}:{:02}", seconds / 60, seconds % 60)
+}
+fn health_ratio(health: f32, max: f32) -> f32 {
+    if max > 0.0 {
+        (health / max).clamp(0.0, 1.0)
+    } else {
+        0.0
+    }
+}
+fn meter(p: &mut Painter, x: f32, y: f32, w: f32, h: f32, ratio: f32, color: UiColor) {
+    p.fill(x - 2.0, y - 2.0, w + 4.0, h + 4.0, BLACK, h * 0.5);
+    p.fill(x, y, w, h, STEEL.with_alpha(0.5), h * 0.5);
+    let fill = w * ratio.clamp(0.0, 1.0);
+    if fill > 0.0 {
+        p.fill(x, y, fill, h, color, h * 0.5);
+    }
+}
+
+struct Projection {
+    matrix: Mat4,
+    width: f32,
+    height: f32,
+}
+impl Projection {
+    fn scene(scene: &Scene, width: f32, height: f32) -> Option<Self> {
+        let (object, camera) = scene.main_camera()?;
+        Some(Self {
+            matrix: camera.camera(width / height).projection
+                * scene.world_transform(object).inverse_matrix(),
+            width,
+            height,
+        })
+    }
+    fn point(&self, position: Vec3) -> Option<(f32, f32)> {
+        let clip = self.matrix * vec4(position.x, position.y, position.z, 1.0);
+        if clip.w <= 0.0 {
+            return None;
+        }
+        let n = clip.xyz() / clip.w;
+        if !n.iter().all(|v| v.is_finite()) || n.z < 0.0 || n.z > 1.0 {
+            return None;
+        }
+        Some((
+            (n.x + 1.0) * 0.5 * self.width,
+            (1.0 - n.y) * 0.5 * self.height,
+        ))
+    }
+}
+#[derive(Clone, Copy, Debug, PartialEq)]
+enum DamageTier {
+    Low,
+    Normal,
+    High,
+}
+fn damage_tier(amount: f32, max: f32, low: f32, high: f32) -> DamageTier {
+    let ratio = amount / max.max(f32::EPSILON);
+    if ratio >= high.max(low).max(0.0) {
+        DamageTier::High
+    } else if ratio < low.max(0.0) {
+        DamageTier::Low
+    } else {
+        DamageTier::Normal
+    }
+}
+fn paint_world(
+    p: &mut Painter,
+    scene: &Scene,
+    player: GameObject,
+    hud: &ComponentTankHud,
+    map: &minimap::MinimapState,
+    width: f32,
+    height: f32,
+) {
+    let Some(projection) = Projection::scene(scene, width, height) else {
+        return;
+    };
+    let player_team = combat_team(scene, player);
+    for object in scene.objects() {
+        if !scene.is_visible_in_hierarchy(object) {
+            continue;
+        }
+        let Some(health) = scene
+            .read_component::<ComponentHealth, _, _>(object, |health| *health)
+            .filter(|health| !health.dead && health.max_health > 0.0)
+        else {
+            continue;
+        };
+        let position = scene.world_transform(object).position;
+        let friendly = object == player
+            || player_team
+                .zip(combat_team(scene, object))
+                .is_some_and(|(a, b)| a == b);
+        if !friendly && !map.visible(vec2(position.x, position.z), hud.vision_range) {
+            continue;
+        }
+        let Some((x, y)) = projection.point(position + vec3(0.0, 2.4, 0.0)) else {
+            continue;
+        };
+        p.fill(x - 120.0, y - 5.0, 240.0, 30.0, BLACK, 15.0);
+        p.fill(x - 117.0, y - 2.0, 234.0, 24.0, STEEL, 12.0);
+        meter(
+            p,
+            x - 113.0,
+            y + 2.0,
+            226.0,
+            16.0,
+            health_ratio(health.current_health, health.max_health),
+            if friendly { CYAN } else { RED },
+        );
+        if !friendly {
+            p.polygon(
+                &[(x - 7.0, y + 30.0), (x + 7.0, y + 30.0), (x, y + 40.0)],
+                RED,
+            );
+        }
+    }
+    let aim = scene
+        .read_component::<ComponentTankController, _, _>(player, |controller| controller.crosshair)
+        .and_then(|marker| marker.game_object(scene))
+        .map(|marker| scene.world_transform(marker).position);
+    if let Some(aim) = aim {
+        let origin = vec3(aim.x, aim.y + 0.035, aim.z);
+        for i in 0..80 {
+            let a = i as f32 * std::f32::consts::TAU / 80.0;
+            let b = (i + 1) as f32 * std::f32::consts::TAU / 80.0;
+            if let (Some(a), Some(b)) = (
+                projection.point(origin + vec3(a.cos() * 0.85, 0.0, a.sin() * 0.85)),
+                projection.point(origin + vec3(b.cos() * 0.85, 0.0, b.sin() * 0.85)),
+            ) {
+                p.line(a, b, BLACK.with_alpha(0.65), 5.0);
+                p.line(a, b, LIGHT, 2.2);
+            }
+        }
+        for direction in [
+            vec3(1.0, 0.0, 0.0),
+            vec3(-1.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 1.0),
+            vec3(0.0, 0.0, -1.0),
+        ] {
+            if let (Some(a), Some(b)) = (
+                projection.point(origin + direction * 1.05),
+                projection.point(origin + direction * 1.45),
+            ) {
+                p.line(a, b, BLACK.with_alpha(0.65), 6.0);
+                p.line(a, b, LIGHT, 3.0);
+            }
+        }
+        if let Some((x, y)) = projection.point(origin) {
+            p.circle(x, y, 2.0, LIGHT);
+        }
+    }
+    let _ = scene.read_component::<ComponentCombatStats, _, _>(player, |stats| {
+        for (index, hit) in stats.feedback.iter().enumerate() {
+            if hit.age >= 0.9 {
+                continue;
+            }
+            let Some((mut x, mut y)) = projection.point(hit.position + vec3(0.0, 2.0, 0.0)) else {
+                continue;
+            };
+            x += ((index % 3) as f32 - 1.0) * 20.0;
+            y -= 28.0 + hit.age * 70.0;
+            let tier = damage_tier(
+                hit.amount,
+                hit.max_health,
+                hud.low_damage_ratio,
+                hud.high_damage_ratio,
+            );
+            let (size, color) = match tier {
+                DamageTier::High => (43.0, RED),
+                DamageTier::Normal => (32.0, LIGHT),
+                DamageTier::Low => (25.0, MUTED),
+            };
+            let number = if hit.amount < 1.0 {
+                format!("-{:.1}", hit.amount)
+            } else {
+                format!("-{:.0}", hit.amount)
+            };
+            let text = if tier == DamageTier::High {
+                format!("{number}!")
+            } else {
+                number
+            };
+            let opacity = ((0.9 - hit.age) / 0.3).clamp(0.0, 1.0);
+            for (dx, dy) in [(-1.5, 0.0), (1.5, 0.0), (0.0, -1.5), (0.0, 1.5)] {
+                p.centered(x + dx, y + dy, &text, size, BLACK.with_alpha(opacity));
+            }
+            p.centered(x, y, &text, size, color.with_alpha(opacity));
+        }
+        if let Some(hit) = stats
+            .feedback
+            .iter()
+            .filter(|hit| hit.age < 0.16)
+            .min_by(|a, b| a.age.total_cmp(&b.age))
+        {
+            let (x, y) = aim
+                .and_then(|aim| projection.point(aim))
+                .unwrap_or((width * 0.5, height * 0.5));
+            for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                p.line(
+                    (x + dx * 9.0, y + dy * 9.0),
+                    (x + dx * 19.0, y + dy * 19.0),
+                    LIGHT.with_alpha(1.0 - hit.age / 0.16),
+                    3.0,
+                );
+            }
+        }
+    });
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -134,342 +546,6 @@ fn tank_hud_state(scene: &Scene, game_object: GameObject) -> Option<TankHudState
     })
 }
 
-/// Opaque clay surfaces keep ink and labels legible over all three map palettes.
-/// HUD colours are display-space sRGB, unlike linear scene material colours.
-#[derive(Clone, Copy)]
-struct HudStyle {
-    screen_margin: f32,
-    panel: UiColor,
-    panel_strong: UiColor,
-    outline: UiColor,
-    text: UiColor,
-    muted: UiColor,
-    health: UiColor,
-    ammo: UiColor,
-    bar_background: UiColor,
-}
-
-impl Default for HudStyle {
-    fn default() -> Self {
-        Self {
-            screen_margin: 28.0,
-            panel: UiColor::rgba(240, 230, 210, 255),
-            panel_strong: UiColor::rgba(252, 249, 243, 255),
-            outline: UiColor::rgba(18, 18, 18, 255),
-            text: UiColor::rgba(36, 54, 71, 255),
-            muted: UiColor::rgba(102, 99, 95, 255),
-            health: UiColor::rgba(95, 142, 44, 255),
-            ammo: UiColor::rgba(110, 76, 38, 255),
-            bar_background: UiColor::rgba(232, 221, 201, 255),
-        }
-    }
-}
-
-impl HudStyle {
-    fn margin(self, viewport: UiRect) -> f32 {
-        self.screen_margin.min(viewport.width() * 0.04).max(18.0)
-    }
-
-    fn panel_style(self) -> StylePatch {
-        StylePatch::default()
-            .background(self.panel)
-            .border(Border::solid(self.outline, 2.0))
-            .radius(CornerRadius::all(10.0))
-            .padding(EdgeInsets::all(10.0))
-            .gap(7.0)
-            .pointer_events(PointerEvents::None)
-    }
-
-    fn label_style(self, color: UiColor) -> StylePatch {
-        StylePatch::default()
-            .text_color(color)
-            .font_size(11.0)
-            .pointer_events(PointerEvents::None)
-    }
-
-    fn value_style(self, color: UiColor, size: f32) -> StylePatch {
-        StylePatch::default()
-            .text_color(color)
-            .font_size(size)
-            .pointer_events(PointerEvents::None)
-    }
-}
-
-struct SandboxHud<'a> {
-    viewport: UiRect,
-    style: HudStyle,
-    health: f32,
-    max_health: f32,
-    weapon_name: &'a str,
-    ammo_loaded: u32,
-    ammo_capacity: u32,
-    reload_remaining: f32,
-    fire_cooldown_remaining: f32,
-    gameplay_locked: bool,
-    respawn_remaining: Option<f32>,
-    minimap: MinimapState,
-    kill_feed: Vec<KillFeedLine>,
-    /// The scoreboard's rows while it is open.
-    scoreboard: Option<Vec<ScoreboardRow>>,
-}
-
-impl Widget for SandboxHud<'_> {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let margin = self.style.margin(self.viewport);
-        let health_size = UiSize::new((self.viewport.width() * 0.28).clamp(250.0, 340.0), 76.0);
-        let ammo_size = UiSize::new((self.viewport.width() * 0.22).clamp(220.0, 300.0), 114.0);
-
-        let health = HealthHud {
-            id: "hud-health",
-            style: self.style,
-            current: self.health,
-            max: self.max_health,
-            size: health_size,
-            margin: EdgeInsets {
-                top: self.viewport.height() - health_size.height - margin,
-                right: 0.0,
-                bottom: 0.0,
-                left: margin,
-            },
-        }
-        .build(ui);
-        let ammo = AmmoHud {
-            id: "hud-ammo",
-            style: self.style,
-            weapon_name: self.weapon_name,
-            loaded: self.ammo_loaded,
-            capacity: self.ammo_capacity,
-            reload_remaining: self.reload_remaining,
-            fire_cooldown_remaining: self.fire_cooldown_remaining,
-            gameplay_locked: self.gameplay_locked,
-            respawn_remaining: self.respawn_remaining,
-            size: ammo_size,
-            margin: EdgeInsets {
-                top: self.viewport.height() - ammo_size.height - margin,
-                right: 0.0,
-                bottom: 0.0,
-                left: (self.viewport.width() - ammo_size.width - margin).max(margin),
-            },
-        }
-        .build(ui);
-
-        let minimap_side = (self.viewport.width() * 0.17).clamp(170.0, 230.0);
-        let minimap = MinimapHud {
-            style: self.style,
-            state: self.minimap.clone(),
-            // The label sits over a square map.
-            size: UiSize::new(minimap_side, minimap_side + 24.0),
-            margin: EdgeInsets {
-                top: margin,
-                right: 0.0,
-                bottom: 0.0,
-                left: margin,
-            },
-        }
-        .build(ui);
-
-        let kill_feed_width = (self.viewport.width() * 0.26).clamp(240.0, 340.0);
-        let kill_feed = KillFeedHud {
-            style: self.style,
-            lines: &self.kill_feed,
-            width: kill_feed_width,
-            margin: EdgeInsets {
-                top: margin,
-                right: 0.0,
-                bottom: 0.0,
-                left: (self.viewport.width() - kill_feed_width - margin).max(margin),
-            },
-        }
-        .build(ui);
-
-        let mut layers = vec![health, ammo, minimap, kill_feed];
-        if let Some(rows) = &self.scoreboard {
-            let width = (self.viewport.width() * 0.4).clamp(320.0, 460.0);
-            let height = scoreboard_height(rows.len());
-            let scoreboard = ScoreboardHud {
-                style: self.style,
-                rows,
-                width,
-                margin: EdgeInsets {
-                    top: ((self.viewport.height() - height) * 0.35).max(margin),
-                    right: 0.0,
-                    bottom: 0.0,
-                    left: ((self.viewport.width() - width) * 0.5).max(margin),
-                },
-            };
-            layers.push(scoreboard.build(ui));
-        }
-
-        ui.stack()
-            .id(ui, "sandbox-ui")
-            .width(ui, UiLength::Px(self.viewport.width()))
-            .height(ui, UiLength::Px(self.viewport.height()))
-            .pointer_events(ui, PointerEvents::None)
-            .children(ui, layers)
-    }
-}
-
-struct HealthHud {
-    id: &'static str,
-    style: HudStyle,
-    current: f32,
-    max: f32,
-    size: UiSize,
-    margin: EdgeInsets,
-}
-
-impl Widget for HealthHud {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let ratio = if self.max > 0.0 {
-            self.current / self.max
-        } else {
-            0.0
-        }
-        .clamp(0.0, 1.0);
-        let label = hud_text(
-            ui,
-            "hud-health-label",
-            "HULL INTEGRITY",
-            self.style.label_style(self.style.muted),
-        );
-        let value = hud_text(
-            ui,
-            "hud-health-value",
-            format!(
-                "{:03}/{:03}",
-                self.current.max(0.0) as u32,
-                self.max.max(0.0) as u32
-            ),
-            self.style.value_style(self.style.text, 16.0),
-        );
-        let header = ui
-            .row()
-            .id(ui, "hud-health-header")
-            .height(ui, UiLength::Px(20.0))
-            .justify_content(ui, JustifyContent::SpaceBetween)
-            .pointer_events(ui, PointerEvents::None)
-            .child(ui, label)
-            .child(ui, value);
-        let meter = progress_meter(
-            ui,
-            "hud-health-meter",
-            ratio,
-            self.style.health,
-            self.style.bar_background,
-            self.style.outline,
-        );
-
-        ui.column()
-            .id(ui, self.id)
-            .style(ui, self.style.panel_style())
-            .width(ui, UiLength::Px(self.size.width))
-            .height(ui, UiLength::Px(self.size.height))
-            .margin(ui, self.margin)
-            .child(ui, header)
-            .child(ui, meter)
-    }
-}
-
-struct AmmoHud<'a> {
-    id: &'static str,
-    style: HudStyle,
-    weapon_name: &'a str,
-    loaded: u32,
-    capacity: u32,
-    reload_remaining: f32,
-    fire_cooldown_remaining: f32,
-    gameplay_locked: bool,
-    respawn_remaining: Option<f32>,
-    size: UiSize,
-    margin: EdgeInsets,
-}
-
-impl Widget for AmmoHud<'_> {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let label = hud_text(
-            ui,
-            "hud-ammo-label",
-            self.weapon_name.to_uppercase(),
-            self.style.label_style(self.style.muted),
-        );
-        let ammo = hud_text(
-            ui,
-            "hud-ammo-value",
-            format!("{}/{}", self.loaded, self.capacity),
-            self.style.value_style(self.style.ammo, 24.0),
-        );
-        let reload = hud_text(
-            ui,
-            "hud-ammo-reload",
-            weapon_status_label(
-                self.capacity,
-                self.reload_remaining,
-                self.fire_cooldown_remaining,
-                self.gameplay_locked,
-                self.respawn_remaining,
-            ),
-            self.style.label_style(self.style.text),
-        );
-        let loaded_ratio = if self.capacity > 0 {
-            self.loaded as f32 / self.capacity as f32
-        } else {
-            0.0
-        };
-        let meter = progress_meter(
-            ui,
-            "hud-ammo-meter",
-            loaded_ratio,
-            self.style.ammo,
-            self.style.bar_background,
-            self.style.outline,
-        );
-
-        ui.column()
-            .id(ui, self.id)
-            .style(
-                ui,
-                self.style.panel_style().background(self.style.panel_strong),
-            )
-            .width(ui, UiLength::Px(self.size.width))
-            .height(ui, UiLength::Px(self.size.height))
-            .margin(ui, self.margin)
-            .child(ui, label)
-            .child(ui, ammo)
-            .child(ui, reload)
-            .child(ui, meter)
-    }
-}
-
-fn hud_text(
-    ui: &mut UiArena,
-    id: impl Into<String>,
-    value: impl Into<String>,
-    style: StylePatch,
-) -> UiNodeHandle {
-    ui.text(value)
-        .id(ui, id.into())
-        .style(ui, style)
-        .pointer_events(ui, PointerEvents::None)
-}
-
-fn progress_meter(
-    ui: &mut UiArena,
-    id: impl Into<String>,
-    value: f32,
-    fill: UiColor,
-    background: UiColor,
-    outline: UiColor,
-) -> UiNodeHandle {
-    ui.progress_bar(value, fill)
-        .id(ui, id.into())
-        .background(ui, background)
-        .border(ui, Border::solid(outline, 1.0))
-        .radius(ui, CornerRadius::all(5.0))
-        .width(ui, UiLength::Fill)
-        .height(ui, UiLength::Px(12.0))
-        .pointer_events(ui, PointerEvents::None)
-}
-
 fn weapon_status_label(
     capacity: u32,
     reload_remaining: f32,
@@ -494,18 +570,21 @@ fn weapon_status_label(
 
 #[cfg(test)]
 mod tests {
-    use super::{tank_hud_state, weapon_status_label, ComponentTankHud, TankHudState};
-    use crate::combat::{record_kill, ComponentCombatStats, ComponentKillFeed, KillEvent};
-    use crate::spawn::ComponentRespawnState;
-    use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
-    use calyx_engine::component::ComponentID;
-    use calyx_engine::math::Transform;
-    use calyx_engine::scene::{Scene, SceneHud};
-    use calyx_engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
-
-    fn tank_scene(respawn: ComponentRespawnState) -> (Scene, calyx_engine::scene::GameObject) {
+    use super::*;
+    use calyx_engine::scene::SceneHud;
+    use calyx_engine::ui::{UiInput, UiPoint, UiSize};
+    fn setup() -> (Scene, GameObject) {
         let mut scene = calyx_engine::test_support::test_scene();
         let tank = scene.create(None, None);
+        scene.add_component(
+            tank,
+            ComponentTankController {
+                ammo: 2,
+                max_ammo: 6,
+                reload_remaining: 0.8,
+                ..Default::default()
+            },
+        );
         scene.add_component(
             tank,
             ComponentHealth {
@@ -514,295 +593,155 @@ mod tests {
                 ..Default::default()
             },
         );
-        scene.add_component(
-            tank,
-            ComponentTankController {
-                ammo: 2,
-                max_ammo: 6,
-                reload_remaining: 0.8,
-                fire_cooldown_remaining: 0.2,
-                ..Default::default()
-            },
-        );
-        scene.add_component(tank, respawn);
+        scene.add_component(tank, ComponentTankHud::default());
         (scene, tank)
     }
-
-    fn painted_text(scene: &Scene) -> Vec<String> {
-        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+    fn commands(scene: &Scene, width: f32, height: f32) -> Vec<PaintCommand> {
         SceneHud::default()
-            .frame(scene, viewport, UiInput::default())
-            .map(|frame| frame.paint_commands)
-            .unwrap_or_default()
-            .into_iter()
-            .filter_map(|command| match command {
-                PaintCommand::Text { text, .. } => Some(text),
-                _ => None,
-            })
-            .collect()
+            .frame(
+                scene,
+                UiRect::from_min_size(UiPoint::new(30.0, 50.0), UiSize::new(width, height)),
+                UiInput::default(),
+            )
+            .unwrap()
+            .paint_commands
     }
-
     #[test]
-    fn tank_hud_state_reads_live_health_and_ammo() {
-        let (scene, tank) = tank_scene(ComponentRespawnState {
-            alive: false,
-            respawn_remaining: 1.5,
-            ..Default::default()
-        });
-
-        assert_eq!(
-            tank_hud_state(&scene, tank),
-            Some(TankHudState {
-                health: 42.0,
-                max_health: 90.0,
-                ammo: 2,
-                max_ammo: 6,
-                reload_remaining: 0.8,
-                fire_cooldown_remaining: 0.2,
-                gameplay_locked: true,
-                respawn_remaining: Some(1.5),
-            })
-        );
-    }
-
-    #[test]
-    fn weapon_status_label_reports_gameplay_locks_and_cooldowns() {
-        assert_eq!(weapon_status_label(6, 0.0, 0.0, false, None), "READY");
-        assert_eq!(
-            weapon_status_label(6, 1.25, 0.2, false, None),
-            "RELOADING 1.2s"
-        );
-        assert_eq!(
-            weapon_status_label(6, 0.0, 0.35, false, None),
-            "COOLDOWN 0.3s"
-        );
-        assert_eq!(
-            weapon_status_label(6, 1.25, 0.35, true, None),
-            "SYSTEM LOCKED"
-        );
-        assert_eq!(
-            weapon_status_label(6, 0.0, 0.0, true, Some(2.04)),
-            "RESPAWN IN 2.0s"
-        );
-        assert_eq!(weapon_status_label(0, 0.0, 0.0, false, None), "DISABLED");
-    }
-
-    #[test]
-    fn tank_hud_component_paints_health_ammo_and_reload() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
-        scene.add_component(tank, ComponentTankHud::default());
-
-        let text = painted_text(&scene);
-
-        for expected in [
-            "HULL INTEGRITY",
-            "042/090",
-            "CANNON",
-            "2/6",
-            "RELOADING 0.8s",
-        ] {
-            assert!(text.iter().any(|t| t == expected), "{expected} in {text:?}");
-        }
-    }
-
-    #[test]
-    fn hud_panels_fit_their_text_without_shrinking_it() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
-        scene.add_component(tank, ComponentTankHud::default());
-        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
-        let frame = SceneHud::default()
-            .frame(&scene, viewport, UiInput::default())
-            .expect("the tank should draw a HUD");
-
-        for command in &frame.paint_commands {
-            if let PaintCommand::Text {
-                rect,
-                text,
-                font_size,
-                ..
-            } = command
-            {
-                // egui paints a line of text this tall whatever its rect, so a
-                // shorter rect overlaps the next row.
-                let height = rect.max.y - rect.min.y;
-                assert!(
-                    height >= font_size * 1.25 - 1e-3,
-                    "{text} is {height} tall at font size {font_size}"
-                );
+    fn live_health_ammo_reload_and_timer_are_painted_at_both_viewport_sizes() {
+        let (scene, _) = setup();
+        for (width, height) in [(1672.0, 941.0), (960.0, 540.0)] {
+            let commands = commands(&scene, width, height);
+            let text = commands
+                .iter()
+                .filter_map(|c| {
+                    if let PaintCommand::Text { text, .. } = c {
+                        Some(text.as_str())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>();
+            for expected in [
+                "HULL",
+                "042/090",
+                "CANNON",
+                "2/6",
+                "RELOADING 0.8s",
+                "05:00",
+                "N",
+            ] {
+                assert!(text.contains(&expected), "{expected} in {text:?}");
+            }
+            for command in commands {
+                if let PaintCommand::Text {
+                    rect, font_size, ..
+                } = command
+                {
+                    assert!(rect.height() >= font_size * 1.25);
+                }
             }
         }
     }
-
     #[test]
-    fn tank_hud_component_counts_down_to_respawn() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState {
-            alive: false,
-            respawn_remaining: 2.5,
-            ..Default::default()
-        });
-        scene.add_component(tank, ComponentTankHud::default());
-
-        assert!(painted_text(&scene).contains(&"RESPAWN IN 2.5s".to_string()));
-    }
-
-    #[test]
-    fn tank_hud_paints_the_kill_feed_newest_first() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
-        scene.add_component(tank, ComponentTankHud::default());
-        scene.add_component(tank, ComponentKillFeed::default());
-        for victim in ["Target A", "Target B"] {
-            let target = scene.create(
-                Some(ComponentID {
-                    name: victim.to_string(),
-                    ..Default::default()
-                }),
-                None,
-            );
-            let event = KillEvent::new(&scene, Some(tank), target);
-            record_kill(&mut scene, &event);
-        }
-
-        let text = painted_text(&scene);
-        let victims: Vec<&String> = text
-            .iter()
-            .filter(|text| text.starts_with("TARGET"))
-            .collect();
-        assert_eq!(victims, vec!["TARGET B", "TARGET A"]);
-        assert_eq!(
-            text.iter().filter(|text| *text == "destroyed").count(),
-            2,
-            "{text:?}"
-        );
-    }
-
-    #[test]
-    fn tank_hud_shows_the_scoreboard_only_while_open() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
-        scene.add_component(tank, ComponentTankHud::default());
+    fn timer_uses_simulation_delta_resets_with_scene_and_reads_match_state() {
+        let (scene, _) = setup();
+        let mut hud = ComponentTankHud::default();
+        hud.advance(1.2);
+        assert_eq!(format_time(hud.time(&scene)), "04:59");
+        hud.advance(0.0);
+        assert!((hud.time(&scene) - 298.8).abs() < 0.001);
+        hud.advance(-1.0);
+        hud.advance(f32::NAN);
+        assert!((hud.time(&scene) - 298.8).abs() < 0.001);
+        let restored: ComponentTankHud =
+            serde_json::from_value(serde_json::to_value(hud).unwrap()).unwrap();
+        assert_eq!(restored.elapsed, 0.0);
+        hud.timer_duration = 0.0;
+        assert_eq!(format_time(hud.time(&scene)), "00:01");
+        let mut scene = scene;
+        let state = scene.create(None, None);
         scene.add_component(
-            tank,
-            ComponentCombatStats {
-                kills: 3,
-                deaths: 1,
+            state,
+            ComponentGameState {
+                match_time_remaining: 123.0,
+                ..Default::default()
             },
         );
-
-        assert!(!painted_text(&scene).contains(&"SCOREBOARD".to_string()));
-
-        let _ = scene.write_component::<ComponentTankHud, _>(tank, |hud| {
-            hud.scoreboard_open = true;
+        assert_eq!(format_time(hud.time(&scene)), "02:03");
+        scene.write_component::<ComponentGameState, _>(state, |state| {
+            state.match_duration = 0.0;
+            state.phase_elapsed = 42.0;
         });
-        let text = painted_text(&scene);
-        for expected in ["SCOREBOARD", "KILLS", "DEATHS", "3", "1"] {
-            assert!(text.iter().any(|t| t == expected), "{expected} in {text:?}");
+        assert_eq!(format_time(hud.time(&scene)), "00:42");
+    }
+    #[test]
+    fn damage_tiers_are_removed_health_ratios_and_weapon_locks_remain_truthful() {
+        assert_eq!(damage_tier(10.0, 100.0, 0.15, 0.5), DamageTier::Low);
+        assert_eq!(damage_tier(35.0, 100.0, 0.15, 0.5), DamageTier::Normal);
+        assert_eq!(damage_tier(60.0, 100.0, 0.15, 0.5), DamageTier::High);
+        assert_eq!(weapon_status_label(6, 0.0, 0.0, false, None), "READY");
+        assert_eq!(
+            weapon_status_label(6, 0.0, 0.3, false, None),
+            "COOLDOWN 0.3s"
+        );
+        assert_eq!(
+            weapon_status_label(6, 0.0, 0.0, true, Some(2.5)),
+            "RESPAWN IN 2.5s"
+        );
+    }
+    #[test]
+    fn scoreboard_is_held_and_bounded_with_many_real_rows() {
+        let (mut scene, tank) = setup();
+        for i in 0..80 {
+            let actor = scene.create(None, None);
+            scene.add_component(
+                actor,
+                ComponentCombatStats {
+                    team: i % 2,
+                    ..Default::default()
+                },
+            );
+        }
+        assert!(!commands(&scene, 960.0, 540.0)
+            .iter()
+            .any(|c| matches!(c,PaintCommand::Text{text,..}if text=="SCOREBOARD")));
+        scene.write_component::<ComponentTankHud, _>(tank, |hud| hud.scoreboard_open = true);
+        let commands = commands(&scene, 960.0, 540.0);
+        assert!(commands
+            .iter()
+            .any(|c| matches!(c,PaintCommand::Text{text,..}if text=="SCOREBOARD")));
+        assert!(commands
+            .iter()
+            .any(|c| matches!(c,PaintCommand::Text{text,..}if text.starts_with("PAGE 1/"))));
+        for command in commands {
+            if let PaintCommand::Text { rect, .. } = command {
+                assert!(rect.max.y <= 590.0, "text overflow {rect:?}");
+            }
         }
     }
-
     #[test]
-    fn tank_hud_draws_the_minimap() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
-        scene.add_component(tank, ComponentTankHud::default());
-        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
-        let frame = SceneHud::default()
-            .frame(&scene, viewport, UiInput::default())
-            .expect("the tank should draw a HUD");
-
-        assert!(frame.paint_commands.iter().any(
-            |command| matches!(command, PaintCommand::Text { text, .. } if text == "TACTICAL MAP")
-        ));
-        assert!(
-            frame
-                .paint_commands
-                .iter()
-                .any(|command| matches!(command, PaintCommand::Line { .. })),
-            "the player's heading is drawn"
+    fn scoreboard_blur_is_local_reused_and_removed_without_touching_world_effects() {
+        let (mut scene, owner) = setup();
+        let camera = scene.create(None, None);
+        scene.add_component(camera, calyx_engine::component::ComponentCamera::default());
+        let before = scene.objects().count();
+        let blur = update_scoreboard_blur(&mut scene, owner, true, Default::default());
+        let object = blur.game_object(&scene).unwrap();
+        assert_eq!(scene.parent(object), Some(owner));
+        assert_eq!(scene.objects().count(), before + 1);
+        assert_eq!(
+            scene.read_component::<ComponentLocalPostProcessVolume, _, _>(object, |volume| volume
+                .weight),
+            Some(1.0)
         );
-    }
-
-    #[test]
-    fn tank_hud_clips_the_minimap_to_its_panel() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
-        scene.add_component(tank, ComponentTankHud::default());
-        // No arena, so the map shows 25 m around the tank: this target is
-        // far off the map.
-        let target = scene.create(None, None);
-        scene.set_world_transform(target, Transform::from_xyz(1000.0, 0.0, 0.0).matrix());
-        scene.add_component(target, ComponentProjectileTarget::default());
-        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
-        let commands = SceneHud::default()
-            .frame(&scene, viewport, UiInput::default())
-            .expect("the tank should draw a HUD")
-            .paint_commands;
-
-        let label = commands
-            .iter()
-            .position(|command| {
-                matches!(command, PaintCommand::Text { text, .. } if text == "TACTICAL MAP")
-            })
-            .expect("the minimap is drawn");
-        let (start, clip) = commands
-            .iter()
-            .enumerate()
-            .skip(label)
-            .find_map(|(index, command)| match command {
-                PaintCommand::PushClip(rect) => Some((index, *rect)),
-                _ => None,
-            })
-            .expect("the map clips what it paints");
-        let end = start
-            + commands[start..]
-                .iter()
-                .position(|command| matches!(command, PaintCommand::PopClip))
-                .expect("the map's clip ends");
-        let outside = |rect: &UiRect| {
-            rect.max.x < clip.min.x
-                || rect.min.x > clip.max.x
-                || rect.max.y < clip.min.y
-                || rect.min.y > clip.max.y
-        };
-        let off_map: Vec<usize> = commands
-            .iter()
-            .enumerate()
-            .skip(label)
-            .filter(|(_, command)| {
-                matches!(command, PaintCommand::FillRect { rect, .. } if outside(rect))
-            })
-            .map(|(index, _)| index)
-            .collect();
-        assert!(!off_map.is_empty(), "the far target is painted off the map");
-        assert!(
-            off_map.iter().all(|index| (start..end).contains(index)),
-            "off-map blips at {off_map:?} paint outside the clip {start}..{end}"
-        );
-    }
-
-    #[test]
-    fn hull_meter_keeps_a_readable_thickness() {
-        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
-        scene.add_component(tank, ComponentTankHud::default());
-        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
-        let frame = SceneHud::default()
-            .frame(&scene, viewport, UiInput::default())
-            .expect("the tank draws its HUD");
-        let health = super::HudStyle::default().health;
-        let fill = frame
-            .paint_commands
-            .iter()
-            .find_map(|command| match command {
-                PaintCommand::FillRect { rect, color, .. } if *color == health => Some(rect),
-                _ => None,
-            })
-            .expect("the hull meter draws its fill");
-        assert!(
-            fill.height() >= 8.0,
-            "the header must not squeeze the meter into a hairline: {fill:?}"
-        );
-    }
-
-    #[test]
-    fn tank_without_hud_component_paints_nothing() {
-        let (scene, _) = tank_scene(ComponentRespawnState::default());
-
-        assert!(painted_text(&scene).is_empty());
+        let reused = update_scoreboard_blur(&mut scene, owner, true, blur);
+        assert_eq!(reused.game_object(&scene), Some(object));
+        update_scoreboard_blur(&mut scene, owner, false, blur);
+        scene.flush_deletes();
+        assert_eq!(scene.objects().count(), before);
+        let blur = update_scoreboard_blur(&mut scene, owner, true, Default::default());
+        scene.delete(owner);
+        scene.flush_deletes();
+        assert!(blur.game_object(&scene).is_none());
     }
 }

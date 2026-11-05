@@ -788,7 +788,11 @@
         "max_health": 100.0
       },
       "b7f3a8d2-5c41-4e8b-9a6f-0d2e7c1b4f93": {
-        "screen_margin": 28.0
+        "high_damage_ratio": 0.5,
+        "low_damage_ratio": 0.15000000596046448,
+        "screen_margin": 28.0,
+        "timer_duration": 300.0,
+        "vision_range": 15.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
         "transform": {
@@ -815,8 +819,14 @@
         "hit_radius": 1.25
       },
       "f651c577-ddb4-40b5-8d7a-ac2b5ad663f0": {
+        "assist_score": 50,
+        "assist_window": 10.0,
+        "assists": 0,
         "deaths": 0,
-        "kills": 0
+        "kill_score": 100,
+        "kills": 0,
+        "score": 0,
+        "team": 4294967295
       }
     },
     "a33bc813-1f8f-475d-967d-d9a309dad8bd": {
@@ -1175,8 +1185,14 @@
         }
       },
       "f651c577-ddb4-40b5-8d7a-ac2b5ad663f0": {
+        "assist_score": 50,
+        "assist_window": 10.0,
+        "assists": 0,
         "deaths": 0,
-        "kills": 0
+        "kill_score": 100,
+        "kills": 0,
+        "score": 0,
+        "team": 4294967295
       }
     },
     "f80c0819-9a7f-5a24-9a56-64f32933b336": {

@@ -18,6 +18,18 @@ pub enum PaintCommand {
         color: UiColor,
         radius: CornerRadius,
     },
+    /// A convex polygon with perimeter-ordered vertices. Fewer than three are ignored.
+    FillPolygon {
+        points: Vec<UiPoint>,
+        color: UiColor,
+    },
+    /// Joined triangles without antialiasing on internal edges. Invalid indices
+    /// or an index count that is not a multiple of three discard the mesh.
+    FillTriangleMesh {
+        points: Vec<UiPoint>,
+        indices: Vec<u32>,
+        color: UiColor,
+    },
     StrokeRect {
         rect: UiRect,
         border: Border,
