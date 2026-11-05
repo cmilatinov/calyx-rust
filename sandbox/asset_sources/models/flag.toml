@@ -1,0 +1,38 @@
+# Red flag and pole on a weighted circular base.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "base"
+kind = "cylinder"
+role = "metal"
+radius = 0.28
+height = 0.12
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+vertices = 12
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "pole"
+kind = "cylinder"
+role = "metal"
+radius = 0.045
+height = 2.2
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+vertices = 12
+bevel = 0.01
+segments = 3
+top_radius = 0.035
+
+[[parts]]
+name = "flag"
+kind = "prism"
+role = "flag_red"
+points = [[0, 0], [0.8, 0.06], [0.7, -0.25], [0.82, -0.55], [0, -0.5]]
+height = 0.04
+offset = [0.035, 2.05, 0]
+rotation = [90, 0, 0]
+bevel = 0.012
+segments = 3

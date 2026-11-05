@@ -115,11 +115,15 @@ fn expected_extent(shape: &Shape) -> Option<[(f64, f64); 3]> {
         }
         Shape::Cylinder {
             radius,
+            top_radius,
             height,
             vertices,
             flare,
             ..
         } => {
+            if top_radius.is_some() {
+                return None;
+            }
             let r = flare.map_or(*radius, |f| f.radius.max(*radius));
             let low = 2.0 * r * (std::f64::consts::PI / *vertices as f64).cos();
             let height = flare.map_or(*height, |f| f.height.max(*height));

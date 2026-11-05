@@ -1,0 +1,630 @@
+# Slatted timber crate with diagonal braces, inset plank seams and metal top corners.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "panels"
+kind = "box"
+role = "crate_panel"
+size = [1.5299999999999998, 1.5299999999999998, 1.5299999999999998]
+offset = [0.0, 0.06, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.045
+segments = 3
+
+[[parts]]
+name = "top_plank_0"
+kind = "box"
+role = "crate_panel"
+size = [0.305625, 0.065, 1.2705]
+offset = [-0.476437, 1.5425, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "front_plank_0"
+kind = "box"
+role = "crate_panel"
+size = [0.305625, 1.2705, 0.06]
+offset = [-0.476437, 0.18975, -0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "back_plank_0"
+kind = "box"
+role = "crate_panel"
+size = [0.305625, 1.2705, 0.06]
+offset = [-0.476437, 0.18975, 0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "left_plank_0"
+kind = "box"
+role = "crate_panel"
+size = [0.06, 1.2705, 0.305625]
+offset = [-0.78, 0.18975, -0.476437]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "right_plank_0"
+kind = "box"
+role = "crate_panel"
+size = [0.06, 1.2705, 0.305625]
+offset = [0.78, 0.18975, -0.476437]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "top_plank_1"
+kind = "box"
+role = "crate_plank"
+size = [0.305625, 0.065, 1.2705]
+offset = [-0.158813, 1.5425, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "front_plank_1"
+kind = "box"
+role = "crate_plank"
+size = [0.305625, 1.2705, 0.06]
+offset = [-0.158813, 0.18975, -0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "back_plank_1"
+kind = "box"
+role = "crate_plank"
+size = [0.305625, 1.2705, 0.06]
+offset = [-0.158813, 0.18975, 0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "left_plank_1"
+kind = "box"
+role = "crate_plank"
+size = [0.06, 1.2705, 0.305625]
+offset = [-0.78, 0.18975, -0.158813]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "right_plank_1"
+kind = "box"
+role = "crate_plank"
+size = [0.06, 1.2705, 0.305625]
+offset = [0.78, 0.18975, -0.158813]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "top_plank_2"
+kind = "box"
+role = "crate_panel"
+size = [0.305625, 0.065, 1.2705]
+offset = [0.158813, 1.5425, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "front_plank_2"
+kind = "box"
+role = "crate_panel"
+size = [0.305625, 1.2705, 0.06]
+offset = [0.158813, 0.18975, -0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "back_plank_2"
+kind = "box"
+role = "crate_panel"
+size = [0.305625, 1.2705, 0.06]
+offset = [0.158813, 0.18975, 0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "left_plank_2"
+kind = "box"
+role = "crate_panel"
+size = [0.06, 1.2705, 0.305625]
+offset = [-0.78, 0.18975, 0.158813]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "right_plank_2"
+kind = "box"
+role = "crate_panel"
+size = [0.06, 1.2705, 0.305625]
+offset = [0.78, 0.18975, 0.158813]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "top_plank_3"
+kind = "box"
+role = "crate_plank"
+size = [0.305625, 0.065, 1.2705]
+offset = [0.476437, 1.5425, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "front_plank_3"
+kind = "box"
+role = "crate_plank"
+size = [0.305625, 1.2705, 0.06]
+offset = [0.476437, 0.18975, -0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "back_plank_3"
+kind = "box"
+role = "crate_plank"
+size = [0.305625, 1.2705, 0.06]
+offset = [0.476437, 0.18975, 0.78]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "left_plank_3"
+kind = "box"
+role = "crate_plank"
+size = [0.06, 1.2705, 0.305625]
+offset = [-0.78, 0.18975, 0.476437]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "right_plank_3"
+kind = "box"
+role = "crate_plank"
+size = [0.06, 1.2705, 0.305625]
+offset = [0.78, 0.18975, 0.476437]
+rotation = [0, 0, 0]
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "post_0_0"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 1.65, 0.18975]
+offset = [-0.730125, 0.0, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "corner_metal_0_0"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.06, 0.284625]
+offset = [-0.730125, 1.632, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.018
+segments = 3
+
+[[parts]]
+name = "corner_wrap_x_0_0"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.23, 0.284625]
+offset = [-0.851565, 1.46, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_wrap_z_0_0"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.23, 0.055]
+offset = [-0.730125, 1.46, -0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_x_0_0"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.19, 0.284625]
+offset = [-0.851565, 0.0, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_z_0_0"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.19, 0.055]
+offset = [-0.730125, 0.0, -0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "pin_0_0"
+kind = "cylinder"
+role = "metal"
+radius = 0.025
+height = 0.012
+offset = [-0.7301249999999999, 1.6949999999999998, -0.7301249999999999]
+rotation = [0, 0, 0]
+vertices = 8
+bevel = 0.003
+segments = 3
+
+[[parts]]
+name = "post_0_1"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 1.65, 0.18975]
+offset = [-0.730125, 0.0, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "corner_metal_0_1"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.06, 0.284625]
+offset = [-0.730125, 1.632, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.018
+segments = 3
+
+[[parts]]
+name = "corner_wrap_x_0_1"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.23, 0.284625]
+offset = [-0.851565, 1.46, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_wrap_z_0_1"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.23, 0.055]
+offset = [-0.730125, 1.46, 0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_x_0_1"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.19, 0.284625]
+offset = [-0.851565, 0.0, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_z_0_1"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.19, 0.055]
+offset = [-0.730125, 0.0, 0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "pin_0_1"
+kind = "cylinder"
+role = "metal"
+radius = 0.025
+height = 0.012
+offset = [-0.7301249999999999, 1.6949999999999998, 0.7301249999999999]
+rotation = [0, 0, 0]
+vertices = 8
+bevel = 0.003
+segments = 3
+
+[[parts]]
+name = "post_1_0"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 1.65, 0.18975]
+offset = [0.730125, 0.0, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "corner_metal_1_0"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.06, 0.284625]
+offset = [0.730125, 1.632, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.018
+segments = 3
+
+[[parts]]
+name = "corner_wrap_x_1_0"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.23, 0.284625]
+offset = [0.851565, 1.46, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_wrap_z_1_0"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.23, 0.055]
+offset = [0.730125, 1.46, -0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_x_1_0"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.19, 0.284625]
+offset = [0.851565, 0.0, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_z_1_0"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.19, 0.055]
+offset = [0.730125, 0.0, -0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "pin_1_0"
+kind = "cylinder"
+role = "metal"
+radius = 0.025
+height = 0.012
+offset = [0.7301249999999999, 1.6949999999999998, -0.7301249999999999]
+rotation = [0, 0, 0]
+vertices = 8
+bevel = 0.003
+segments = 3
+
+[[parts]]
+name = "post_1_1"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 1.65, 0.18975]
+offset = [0.730125, 0.0, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "corner_metal_1_1"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.06, 0.284625]
+offset = [0.730125, 1.632, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.018
+segments = 3
+
+[[parts]]
+name = "corner_wrap_x_1_1"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.23, 0.284625]
+offset = [0.851565, 1.46, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_wrap_z_1_1"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.23, 0.055]
+offset = [0.730125, 1.46, 0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_x_1_1"
+kind = "box"
+role = "metal_caps"
+size = [0.055, 0.19, 0.284625]
+offset = [0.851565, 0.0, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "corner_bottom_z_1_1"
+kind = "box"
+role = "metal_caps"
+size = [0.284625, 0.19, 0.055]
+offset = [0.730125, 0.0, 0.851565]
+rotation = [0, 0, 0]
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "pin_1_1"
+kind = "cylinder"
+role = "metal"
+radius = 0.025
+height = 0.012
+offset = [0.7301249999999999, 1.6949999999999998, 0.7301249999999999]
+rotation = [0, 0, 0]
+vertices = 8
+bevel = 0.003
+segments = 3
+
+[[parts]]
+name = "low_front"
+kind = "box"
+role = "crate_frame"
+size = [1.65, 0.18975, 0.18975]
+offset = [0.0, 0.0, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "low_back"
+kind = "box"
+role = "crate_frame"
+size = [1.65, 0.18975, 0.18975]
+offset = [0.0, 0.0, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "low_left"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 0.18975, 1.2705]
+offset = [-0.730125, 0.0, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "low_right"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 0.18975, 1.2705]
+offset = [0.730125, 0.0, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "high_front"
+kind = "box"
+role = "crate_frame"
+size = [1.65, 0.18975, 0.18975]
+offset = [0.0, 1.46025, -0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "high_back"
+kind = "box"
+role = "crate_frame"
+size = [1.65, 0.18975, 0.18975]
+offset = [0.0, 1.46025, 0.730125]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "high_left"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 0.18975, 1.2705]
+offset = [-0.730125, 1.46025, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "high_right"
+kind = "box"
+role = "crate_frame"
+size = [0.18975, 0.18975, 1.2705]
+offset = [0.730125, 1.46025, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "brace_front"
+kind = "box"
+role = "crate_brace"
+size = [0.1815, 1.588125, 0.055]
+offset = [0.561487, 0.263513, -0.829]
+rotation = [0, 0, 45]
+bevel = 0.016
+segments = 3
+
+[[parts]]
+name = "brace_back"
+kind = "box"
+role = "crate_brace"
+size = [0.1815, 1.588125, 0.055]
+offset = [0.561487, 0.263513, 0.829]
+rotation = [0, 0, 45]
+bevel = 0.016
+segments = 3
+
+[[parts]]
+name = "brace_left"
+kind = "box"
+role = "crate_brace"
+size = [0.055, 1.588125, 0.1815]
+offset = [-0.829, 0.263513, -0.561487]
+rotation = [45, 0, 0]
+bevel = 0.016
+segments = 3
+
+[[parts]]
+name = "brace_right"
+kind = "box"
+role = "crate_brace"
+size = [0.055, 1.588125, 0.1815]
+offset = [0.829, 0.263513, -0.561487]
+rotation = [45, 0, 0]
+bevel = 0.016
+segments = 3
+
+[[parts]]
+name = "top_brace"
+kind = "box"
+role = "crate_brace"
+size = [1.65165, 0.065, 0.165]
+offset = [0.0, 1.5925, 0.0]
+rotation = [0, 45, 0]
+bevel = 0.016
+segments = 3

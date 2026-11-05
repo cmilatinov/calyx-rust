@@ -2,7 +2,7 @@
 //!
 //! ```toml
 //! # crate.toml
-//! kind = "box"            # box, rock, cylinder, blob or import
+//! kind = "box"            # box, rock, cylinder, blob, prism or import
 //! role = "crates"         # a palette role; gives the model's material
 //! shading = "smooth"      # "smooth" (the default) or "flat"
 //! smooth_angle = 60       # degrees; smooth shading only
@@ -60,6 +60,16 @@ pub enum Shape {
     /// Named pieces, assembled by a generated prefab per map. Transforms
     /// are local to the model root; meshes keep their ordinary ground origin.
     Parts { parts: Vec<Part> },
+    /// A closed footprint extruded upwards. Used for clipped paint stripes,
+    /// Jersey barrier sections and matching modular wall junctions.
+    Prism {
+        points: Vec<[f64; 2]>,
+        height: f64,
+        #[serde(default)]
+        bevel: f64,
+        #[serde(default = "default_segments")]
+        segments: u32,
+    },
     /// A rounded block: a crate, a barrier, a wall.
     Box {
         size: [f64; 3],
@@ -86,6 +96,8 @@ pub enum Shape {
     /// An upright rounded cylinder: a trunk, a post.
     Cylinder {
         radius: f64,
+        #[serde(default)]
+        top_radius: Option<f64>,
         height: f64,
         #[serde(default = "default_vertices")]
         vertices: u32,
@@ -99,6 +111,10 @@ pub enum Shape {
     /// Overlapping spheres: a tree canopy, a bush.
     Blob {
         lobes: Vec<Lobe>,
+        /// Voxel size for joining overlapping lobes into one organic surface.
+        /// Zero retains the original independent-lobe output.
+        #[serde(default)]
+        fuse: f64,
         #[serde(default = "default_subdivisions")]
         subdivisions: u32,
     },
@@ -278,7 +294,7 @@ impl Model {
                     dir,
                 )?;
                 if matches!(model.shape, Shape::Import { .. } | Shape::Parts { .. }) {
-                    return Err("parts use box, rock, cylinder or blob shapes".into());
+                    return Err("parts use box, rock, cylinder, blob or prism shapes".into());
                 }
                 parsed.push(Part {
                     name,
@@ -385,6 +401,29 @@ impl Model {
             }
         };
         match &self.shape {
+            Shape::Prism {
+                points,
+                height,
+                bevel,
+                segments: s,
+            } => {
+                positive("height", *height)?;
+                segments(*s)?;
+                if points.len() < 3 || points.iter().flatten().any(|v| !v.is_finite()) {
+                    return Err("a prism needs at least three finite footprint points".into());
+                }
+                let area: f64 = points
+                    .iter()
+                    .zip(points.iter().cycle().skip(1))
+                    .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+                    .sum();
+                if area.abs() < 1e-8 {
+                    return Err("prism footprint has zero area".into());
+                }
+                if !bevel.is_finite() || *bevel < 0.0 || *bevel * 2.0 >= *height {
+                    return Err("prism bevel must fit its height".into());
+                }
+            }
             Shape::Parts { .. } => return Err("list parts without a top-level kind".into()),
             Shape::Box {
                 size,
@@ -424,6 +463,7 @@ impl Model {
             }
             Shape::Cylinder {
                 radius,
+                top_radius,
                 height,
                 vertices,
                 bevel,
@@ -431,6 +471,9 @@ impl Model {
                 flare,
             } => {
                 positive("radius", *radius)?;
+                if let Some(radius) = top_radius {
+                    positive("top_radius", *radius)?;
+                }
                 positive("height", *height)?;
                 segments(*s)?;
                 if !(3..=64).contains(vertices) {
@@ -448,11 +491,13 @@ impl Model {
             }
             Shape::Blob {
                 lobes,
+                fuse,
                 subdivisions: d,
             } => {
                 if lobes.is_empty() {
                     return Err("a blob needs at least one lobe".into());
                 }
+                in_range("fuse", *fuse, 0.0, 0.5)?;
                 for lobe in lobes {
                     positive("lobe radius", lobe.radius)?;
                 }

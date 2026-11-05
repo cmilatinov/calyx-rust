@@ -1,0 +1,20 @@
+# Low lumpy green berry bush with visible red fruit.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "leaves"
+kind = "blob"
+role = "tree_canopies"
+lobes = [{center = [-0.25, 0.35, 0], radius = 0.38}, {center = [0.25, 0.35, 0], radius = 0.4}, {center = [0, 0.45, 0.18], radius = 0.4}, {center = [0, 0.4, -0.22], radius = 0.35}]
+subdivisions = 3
+fuse = 0.045
+offset = [0, 0, 0]
+
+[[parts]]
+name = "berries"
+kind = "blob"
+role = "berries"
+lobes = [{center = [-0.25, 0.62, -0.21], radius = 0.07}, {center = [0.22, 0.65, -0.2], radius = 0.07}, {center = [0.05, 0.8, 0.1], radius = 0.07}, {center = [-0.27, 0.64, 0.2], radius = 0.07}, {center = [0.32, 0.55, 0.12], radius = 0.07}, {center = [0, 0.55, -0.43], radius = 0.07}]
+subdivisions = 3
+fuse = 0
+offset = [0, 0, 0]

@@ -71,17 +71,19 @@ convention.
 | --- | --- | --- |
 | Ground | grass `#87BC6C` | sand `#B9AD97` |
 | Road / lane | sand `#D0C292` | packed earth `#B1A289` |
-| Perimeter walls | cliff `#C9AA7A` | terracotta `#B18665` |
+| Perimeter walls | warm tan `#D6B275` | grey stone `#AAA59D` |
 | Barriers | stone `#BFB9AE` | bone concrete `#C0BCB6` |
 | Crates | bark `#A2855E` | gunmetal `#66635F` |
-| Crate frame | dark bark `#6C513B` | dark gunmetal `#464747` |
-| Crate inset panel | light bark `#BD9769` | light stone `#969187` |
+| Crate frame | timber `#986128` | timber `#79572E` |
+| Crate inset panel | honey timber `#C28B3C` | muted timber `#B99863` |
 | Hazard yellow | yellow `#F3C84B` | ochre yellow `#E6B84C` |
 | Hazard black | charcoal `#303038` | graphite `#303030` |
-| Grass tufts | grass `#87BC6C` | scrub green `#92A374` |
-| Rocks | stone `#BFB9AE` | dune shadow `#A9957A` |
+| Grass tufts | grass `#83AC38` | scrub green `#9AAB61` |
+| Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` |
-| Tree canopies | leaf `#62B07D` | scrub green `#92A374` |
+| Tree lower foliage | dark leaf `#5F8E2C` | dark sage `#7F8C57` |
+| Tree middle foliage | leaf `#83B942` | sage `#A4B479` |
+| Tree upper foliage | light leaf `#AACF58` | light sage `#C1C989` |
 | Tank tracks and guns | tread dark `#6C6C74` | gunmetal `#66635F` |
 | Road wheels | cream `#D4D2CD` | bone concrete `#C0BCB6` |
 | Emissive signals | ember `#FFB000`, strength 30 | amber `#FFB547`, strength 40 |
@@ -186,6 +188,16 @@ Adding a player colour, or changing one:
 Shadow distance 70 m covers the Far framing. Keep vignette at or below 0.2:
 the game view is very wide and the vignette is round.
 
+The concept sheet controls kit construction as well as colour: timber crates
+have visible slats, diagonal braces and silver corner hardware on both maps;
+Jersey barriers have lifting loops and diagonal paint on the camera-visible top
+and sloped shoulders; trees have irregular scalloped dark/middle/light foliage
+tiers and a broad organic root flare. Close-ups cannot substitute for the Far
+camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
+`metal`, `metal_caps`, `flag_red`, `berries`, `sandbags`, `sandbag_seams`,
+`pickup_yellow`, `pickup_blue`) are defined alongside these roles in
+`calyx_model_gen::palette`.
+
 ## Silhouette and scale
 
 - Chunky, softly rounded shapes; generous bevels (0.12–0.35 m), no thin
@@ -219,8 +231,12 @@ the game view is very wide and the vignette is round.
 - Multi-part models use named `[[parts]]` tables in the parameter file. Each
   part has its own `kind`, shape keys, `role`, optional `shading`, `offset`
   (XYZ metres) and `rotation` (XYZ Euler degrees). Omitted transforms are zero.
+  A `prism` extrudes a closed XZ footprint: clipped stripe polygons, Jersey
+  cross-sections and wall junctions. A cylinder may set `top_radius` for a
+  tapered trunk. A blob may set `fuse` (voxel size) to join overlapping lobes
+  into one organic surface rather than intersecting spheres.
   Model-level `shading`, `smooth_angle` and optional `outline` apply to all
-  parts; a part may override shading. The four generated shapes are supported;
+  parts; a part may override shading. The five generated shapes are supported;
   sourced models remain in the single-shape format.
 - Each part becomes `generated/models/<model>__<part>.obj`. The generator
   assembles them under one root in `generated/prefabs/<map>/<model>.cxprefab`,
@@ -229,8 +245,12 @@ the game view is very wide and the vignette is round.
   place the complete model. Existing single-shape files and ids stay the same.
 - Generated opaque prop materials set `outline_style = 1`; ground, road,
   signals and legacy hull ink use 0. New parts need no inverted hull.
-- `tree.toml`, `barrier_hazard.toml` and `crate_framed.toml` are the first
-  assembled examples, shown on both maps in the look-dev scene.
+- The complete 23-piece concept-sheet kit is shown on both maps in the
+  look-dev scene: six tileable wall modules, two barriers, two crates, three
+  tree sizes, three rock sizes and seven props. The Scenario camera shows a
+  pen with repeated wall joins, cover clusters and the existing player tanks.
+  [Arena kit layout and collider handoff](../../../sandbox/asset_sources/arena-kit.md)
+  records the one-metre root placement grid and collider choices.
 - No textures are needed for the style itself.
 
 ## Evidence
@@ -239,8 +259,9 @@ Final look-dev captures (Far and the match scenario at Far):
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-492/final>, with
 inverted-hull outlines; the outline pass against them (`v2_*` for the
 styled pass): <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-509>.
-Multi-part generator proof models (tree, striped barrier and framed crate), at
-the Far framing on both maps: <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517>.
+The complete concept-sheet arena kit, Far gallery, repeated-join pen and all
+23 isolated model close-ups on both maps:
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v2>.
 Compare their shapes and material breaks with the [concept sheet](concept-sheet.png).
 
 Earlier rounds, including the dropped candidates and pattern experiments,
