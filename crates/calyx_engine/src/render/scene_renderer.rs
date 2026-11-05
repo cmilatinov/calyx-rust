@@ -1027,29 +1027,40 @@ impl SceneRenderer {
             }
             let uuid = scene.uuid(owner);
             let instances = self.foliage.instances(uuid, foliage);
-            let entries: Vec<_> = foliage
-                .entries
+            let parts_by_prefab: Vec<Vec<_>> = foliage
+                .prefabs
                 .iter()
-                .map(|entry| {
-                    entry
-                        .mesh
-                        .get_ref(&self.asset_context.registries)
-                        .zip(entry.material.get_ref(&self.asset_context.registries))
+                .map(|source| {
+                    let Some(prefab) = source.get_ref(&self.asset_context.registries) else {
+                        return Vec::new();
+                    };
+                    self.foliage
+                        .parts(&prefab)
+                        .iter()
+                        .filter_map(|part| {
+                            Some((
+                                part.mesh.get_ref(&self.asset_context.registries)?,
+                                part.material.get_ref(&self.asset_context.registries)?,
+                                part.transform,
+                                part.cast_shadows,
+                            ))
+                        })
+                        .collect()
                 })
                 .collect();
             let world = scene.world_transform(owner).matrix();
             for instance in instances.iter() {
-                let Some((mesh, material)) = &entries[instance.entry] else {
-                    continue;
-                };
-                self.insert_draw_list_entry(
-                    mesh,
-                    material,
-                    uuid,
-                    None,
-                    (world * instance.transform).into(),
-                    foliage.cast_shadows,
-                );
+                let placement = world * instance.transform;
+                for (mesh, material, transform, cast_shadows) in &parts_by_prefab[instance.prefab] {
+                    self.insert_draw_list_entry(
+                        mesh,
+                        material,
+                        uuid,
+                        None,
+                        (placement * transform).into(),
+                        foliage.cast_shadows && *cast_shadows,
+                    );
+                }
             }
         }
         self.foliage.end_frame();
@@ -3606,7 +3617,6 @@ mod tests {
 
     #[test]
     fn foliage_batches_a_thousand_copies_and_tracks_authoring_edits() {
-        use crate::component::FoliageEntry;
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let context = context.lock_read();
@@ -3615,19 +3625,36 @@ mod tests {
             pbr_material(&context, "test/foliage_a"),
             pbr_material(&context, "test/foliage_b"),
         ];
+        let mut source = SceneBuilder::new(context.registries.clone());
+        let root = source.spawn("prefab root");
+        for (index, material) in materials.iter().enumerate() {
+            let part = source.spawn_child(root, format!("part {index}"));
+            source.add_component(
+                part,
+                ComponentMesh {
+                    mesh: AssetRef::from_id(cube.id()),
+                    material: AssetRef::from_id(material.id()),
+                    ..Default::default()
+                },
+            );
+            source.set_transform(part, glm::translation(&vec3(index as f32 * 3.0, 0.0, 0.0)));
+        }
+        let prefab = context
+            .registries
+            .assets
+            .read()
+            .create_or_update(
+                "test/foliage_prefab".into(),
+                source.scene().create_prefab(root),
+            )
+            .unwrap();
         let mut builder = SceneBuilder::new(context.registries.clone());
         let parent = builder.spawn("parent");
         let owner = builder.spawn_child(parent, "foliage");
         builder.add_component(
             owner,
             ComponentFoliage {
-                entries: materials
-                    .iter()
-                    .map(|material| FoliageEntry {
-                        mesh: AssetRef::from_id(cube.id()),
-                        material: AssetRef::from_id(material.id()),
-                    })
-                    .collect(),
+                prefabs: vec![AssetRef::from_id(prefab.id())],
                 density: 10.0,
                 ..Default::default()
             },
@@ -3637,7 +3664,7 @@ mod tests {
         let uuid = scene.uuid(owner);
         let mut renderer = renderer(&context, 1, (64, 64));
         renderer.build_asset_data(&context.render_context, &scene);
-        assert_eq!(renderer.draw_list.len(), 1000);
+        assert_eq!(renderer.draw_list.len(), 2000);
         assert_eq!(renderer.object_ids_build, [uuid]);
         assert!(renderer.draw_list.iter().all(|entry| entry.cast_shadows));
         renderer.finish_object_ids();
@@ -3649,7 +3676,7 @@ mod tests {
         );
         assert_eq!(
             batches.iter().map(|b| b.instances.len()).sum::<usize>(),
-            1000
+            2000
         );
         assert_eq!(
             scene.objects().count(),
@@ -3658,7 +3685,7 @@ mod tests {
         );
 
         scene.write_component::<ComponentFoliage, _>(owner, |patch| {
-            patch.entries.truncate(1);
+            patch.prefabs.truncate(1);
             patch.area = glm::vec2(1.0, 1.0);
             patch.density = 1.0;
             patch.scale_range = glm::vec2(1.0, 1.0);
@@ -3672,7 +3699,7 @@ mod tests {
         );
         scene.set_transform(parent, &parent_transform.matrix());
         renderer.build_asset_data(&context.render_context, &scene);
-        assert_eq!(renderer.draw_list.len(), 1);
+        assert_eq!(renderer.draw_list.len(), 2);
         assert!(!renderer.draw_list[0].cast_shadows);
         let local = scene
             .read_component::<ComponentFoliage, _, _>(owner, |patch| {
@@ -3680,8 +3707,10 @@ mod tests {
             })
             .unwrap();
         let expected = parent_transform.matrix() * local;
-        let actual: Mat4 = renderer.draw_list[0].transform.into();
-        assert!((actual - expected).norm() < 0.0001);
+        assert!(renderer.draw_list.iter().any(|entry| {
+            let actual: Mat4 = entry.transform.into();
+            (actual - expected).norm() < 0.0001
+        }));
         let position = vec3(expected[(0, 3)], expected[(1, 3)], expected[(2, 3)]);
         let view = front_camera(1.0, 10.0);
         renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
@@ -3701,7 +3730,58 @@ mod tests {
         );
         scene.write_component::<ComponentID, _>(parent, |id| id.visible = true);
         renderer.build_asset_data(&context.render_context, &scene);
+        assert_eq!(renderer.draw_list.len(), 2);
+
+        let placements = scene
+            .read_component::<ComponentFoliage, _, _>(owner, |patch| {
+                renderer.foliage.instances(uuid, patch)
+            })
+            .unwrap();
+        // Editing the shared prefab changes its parts, but not random placement.
+        for components in prefab.write().data.components.values_mut() {
+            if let Some(mesh) = components.get_mut(&ComponentMesh::type_uuid()) {
+                mesh["material"] = serde_json::json!(materials[0].id());
+            }
+        }
+        renderer.build_asset_data(&context.render_context, &scene);
+        let unchanged = scene
+            .read_component::<ComponentFoliage, _, _>(owner, |patch| {
+                renderer.foliage.instances(uuid, patch)
+            })
+            .unwrap();
+        assert!(Arc::ptr_eq(&placements, &unchanged));
+        renderer.finish_object_ids();
+        assert_eq!(
+            renderer.build_draw_list().len(),
+            1,
+            "updated materials merge batches"
+        );
+
+        // Registry replacement/reload is observed even with the same asset ID.
+        let child = source.scene().children(root).next().unwrap();
+        source
+            .scene_mut()
+            .set_component_enabled::<ComponentMesh>(child, false);
+        let replacement = context
+            .registries
+            .assets
+            .read()
+            .create_or_update(
+                "test/foliage_prefab".into(),
+                source.scene().create_prefab(root),
+            )
+            .unwrap();
+        assert_eq!(replacement.id(), prefab.id());
+        renderer.build_asset_data(&context.render_context, &scene);
         assert_eq!(renderer.draw_list.len(), 1);
+        scene.write_component::<ComponentFoliage, _>(owner, |patch| {
+            patch.prefabs[0] = AssetRef::default();
+        });
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert!(
+            renderer.draw_list.is_empty(),
+            "a missing prefab skips its copies"
+        );
     }
 
     #[test]

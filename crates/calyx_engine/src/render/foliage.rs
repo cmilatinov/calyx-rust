@@ -1,17 +1,23 @@
 use crate::component::ComponentFoliage;
+use crate::core::Ref;
 use crate::math::Transform;
-use crate::scene::SceneId;
+use crate::scene::{Prefab, SceneId};
+
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{Mat4, Vec3};
+pub(super) use prefabs::FoliagePart;
+use prefabs::PrefabParts;
 use std::collections::HashMap;
 use std::sync::Arc;
 use uuid::Uuid;
+
+mod prefabs;
 
 const MAX_INSTANCES: usize = 100_000;
 
 #[derive(Debug, PartialEq)]
 pub(super) struct FoliageInstance {
-    pub entry: usize,
+    pub prefab: usize,
     pub transform: Mat4,
 }
 
@@ -19,7 +25,7 @@ pub(super) struct FoliageInstance {
 // Bitwise keys also keep malformed NaN parameters from regenerating every frame.
 #[derive(PartialEq)]
 struct LayoutKey {
-    entries: usize,
+    prefabs: usize,
     seed: u32,
     parameters: [u32; 7],
 }
@@ -27,7 +33,7 @@ struct LayoutKey {
 impl From<&ComponentFoliage> for LayoutKey {
     fn from(foliage: &ComponentFoliage) -> Self {
         Self {
-            entries: foliage.entries.len(),
+            prefabs: foliage.prefabs.len(),
             seed: foliage.seed,
             parameters: [
                 foliage.area.x,
@@ -53,10 +59,12 @@ struct CachedLayout {
 pub(super) struct FoliageCache {
     scene: Option<SceneId>,
     layouts: HashMap<Uuid, CachedLayout>,
+    prefabs: PrefabParts,
 }
 
 impl FoliageCache {
     pub fn begin_frame(&mut self, scene: SceneId) {
+        self.prefabs.begin_frame();
         if self.scene != Some(scene) {
             self.layouts.clear();
             self.scene = Some(scene);
@@ -81,7 +89,12 @@ impl FoliageCache {
         layout.instances.clone()
     }
 
+    pub fn parts(&mut self, prefab: &Ref<Prefab>) -> Arc<[FoliagePart]> {
+        self.prefabs.parts(prefab)
+    }
+
     pub fn end_frame(&mut self) {
+        self.prefabs.end_frame();
         self.layouts.retain(|_, layout| layout.seen);
     }
 }
@@ -96,7 +109,7 @@ fn scatter(foliage: &ComponentFoliage) -> Vec<FoliageInstance> {
         foliage.rotation_range.x,
         foliage.rotation_range.y,
     ];
-    if foliage.entries.is_empty()
+    if foliage.prefabs.is_empty()
         || parameters.iter().any(|v| !v.is_finite())
         || parameters[..5].iter().any(|v| *v <= 0.0)
     {
@@ -108,7 +121,7 @@ fn scatter(foliage: &ComponentFoliage) -> Vec<FoliageInstance> {
     let mut random = Random(foliage.seed as u64);
     let mut instances = Vec::with_capacity(count);
     for _ in 0..count {
-        let entry = ((random.next() as u64 * foliage.entries.len() as u64) >> 32) as usize;
+        let prefab = ((random.next() as u64 * foliage.prefabs.len() as u64) >> 32) as usize;
         let position = Vec3::new(
             (random.unit() - 0.5) * foliage.area.x,
             0.0,
@@ -119,7 +132,7 @@ fn scatter(foliage: &ComponentFoliage) -> Vec<FoliageInstance> {
             .between(foliage.rotation_range.x, foliage.rotation_range.y)
             .to_radians();
         instances.push(FoliageInstance {
-            entry,
+            prefab,
             transform: Transform::from_components(
                 position,
                 UnitQuaternion::from_axis_angle(&Vec3::y_axis(), yaw),
@@ -154,13 +167,13 @@ impl Random {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::component::FoliageEntry;
+    use crate::assets::AssetRef;
     use crate::test_support::test_scene;
     use nalgebra_glm::Vec2;
 
     fn patch() -> ComponentFoliage {
         ComponentFoliage {
-            entries: vec![FoliageEntry::default(), FoliageEntry::default()],
+            prefabs: vec![AssetRef::default(), AssetRef::default()],
             ..Default::default()
         }
     }
@@ -173,7 +186,7 @@ mod tests {
         let first = scatter(&foliage);
         assert_eq!(first.len(), 100);
         assert_eq!(first, scatter(&foliage));
-        assert!(first.iter().any(|i| i.entry == 0) && first.iter().any(|i| i.entry == 1));
+        assert!(first.iter().any(|i| i.prefab == 0) && first.iter().any(|i| i.prefab == 1));
         for instance in &first {
             let t = Transform::from(instance.transform);
             assert!(t.position.x.abs() <= 4.0 && t.position.z.abs() <= 2.5);
@@ -202,7 +215,7 @@ mod tests {
             assert!(scatter(&foliage).is_empty());
         }
         foliage.density = 1.0;
-        foliage.entries.clear();
+        foliage.prefabs.clear();
         assert!(scatter(&foliage).is_empty());
     }
 

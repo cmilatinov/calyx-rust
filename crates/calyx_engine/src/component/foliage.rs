@@ -1,36 +1,25 @@
 use crate as calyx_engine;
-use crate::assets::material::Material;
-use crate::assets::mesh::Mesh;
 use crate::assets::AssetRef;
 use crate::component::{Component, ReflectComponent};
 use crate::reflect::{Reflect, ReflectDefault};
+use crate::scene::Prefab;
 use crate::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::Vec2;
 use serde::{Deserialize, Serialize};
 
-/// One equally weighted mesh/material choice in a foliage patch.
-#[derive(Default, TypeUuid, Serialize, Deserialize, Reflect)]
-#[uuid = "8bdf10ad-1631-4076-9f7e-93d4efdd50dd"]
-#[reflect(Default, TypeUuidDynamic)]
-#[serde(default)]
-pub struct FoliageEntry {
-    /// Mesh whose origin rests on the patch's plane.
-    pub mesh: AssetRef<Mesh>,
-    /// Material applied to this mesh.
-    pub material: AssetRef<Material>,
-}
-
-/// Deterministic mesh instances on a flat, local XZ rectangle, centered on its owner.
+/// Deterministic visual prefab instances on a flat, local XZ rectangle, centered on its owner.
 /// Copies share the owner's visibility, transform, selection and shadow setting;
-/// they do not create game objects or colliders. The renderer caches the layout.
+/// they do not create game objects or colliders. Only static meshes are drawn;
+/// scripts, lights, particles and skinned meshes are not instantiated or run.
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "e0ded3f3-5cc1-4412-a1ad-40db8a597735"]
 #[reflect(Default, TypeUuidDynamic, Component)]
 #[reflect_attr(name = "Foliage", category = "Rendering")]
 #[serde(default)]
 pub struct ComponentFoliage {
-    /// Equally likely mesh/material choices. Missing assets skip their copies.
-    pub entries: Vec<FoliageEntry>,
+    /// Equally likely prefab choices, preserving every visible static mesh part,
+    /// material and root/nested transform. Missing or meshless assets draw nothing.
+    pub prefabs: Vec<AssetRef<Prefab>>,
     /// Width (X) and depth (Z) in local units. The ground plane is local Y = 0.
     #[reflect_attr(min = 0.0, speed = 0.1)]
     pub area: Vec2,
@@ -45,14 +34,14 @@ pub struct ComponentFoliage {
     /// Minimum and maximum rotation around local Y, in degrees.
     #[reflect_attr(speed = 1.0)]
     pub rotation_range: Vec2,
-    /// Whether every copy draws into shadow maps.
+    /// Whether prefab parts that cast shadows may draw into shadow maps.
     pub cast_shadows: bool,
 }
 
 impl Default for ComponentFoliage {
     fn default() -> Self {
         Self {
-            entries: Vec::new(),
+            prefabs: Vec::new(),
             area: Vec2::new(10.0, 10.0),
             density: 1.0,
             seed: 0,
@@ -85,15 +74,11 @@ mod tests {
             .is_some());
         let mut scene = registries.scene();
         let owner = scene.create(None, None);
-        let mesh = uuid::Uuid::new_v4();
-        let material = uuid::Uuid::new_v4();
+        let prefab = uuid::Uuid::new_v4();
         scene.add_component(
             owner,
             ComponentFoliage {
-                entries: vec![FoliageEntry {
-                    mesh: AssetRef::from_id(mesh),
-                    material: AssetRef::from_id(material),
-                }],
+                prefabs: vec![AssetRef::from_id(prefab)],
                 seed: 42,
                 density: 2.5,
                 ..Default::default()
@@ -106,13 +91,6 @@ mod tests {
         let foliage: ComponentFoliage = serde_json::from_value(value.clone()).unwrap();
         assert_eq!(foliage.seed, 42);
         assert_eq!(foliage.density, 2.5);
-        assert_eq!(
-            serde_json::to_value(&foliage.entries[0].mesh).unwrap(),
-            serde_json::to_value(AssetRef::<Mesh>::from_id(mesh)).unwrap()
-        );
-        assert_eq!(
-            serde_json::to_value(&foliage.entries[0].material).unwrap(),
-            serde_json::to_value(AssetRef::<Material>::from_id(material)).unwrap()
-        );
+        assert_eq!(foliage.prefabs, vec![AssetRef::<Prefab>::from_id(prefab)]);
     }
 }
