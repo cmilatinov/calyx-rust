@@ -525,6 +525,10 @@ impl EditorApp {
         // A thumbnail worker's scene is not one the load can suspend, so no
         // such job may hold one while the assembly is replaced.
         let _scene_thumbnails_paused = self.state.thumbnails.pause_scene_jobs();
+        // Resolved effects may have project-defined vtables. Drop them before
+        // replacing the DLL, while its destructors are still callable.
+        self.state.scene_renderer.clear_post_process_settings();
+        self.state.game_renderer.clear_post_process_settings();
         self.project_manager
             .write()
             .load_build(load, &mut self.state.game.scenes);

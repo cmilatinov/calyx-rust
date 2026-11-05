@@ -133,11 +133,11 @@ impl PostProcessPass for OutlinePass {
     }
 
     fn enabled(&self, settings: &PostProcessSettings) -> bool {
-        settings.outline.is_some()
+        settings.get::<ComponentOutline>().is_some()
     }
 
     fn prepare(&mut self, context: &PassContext, settings: &PostProcessSettings) {
-        let Some(outline) = &settings.outline else {
+        let Some(outline) = settings.get::<ComponentOutline>() else {
             return;
         };
         let drawn = drawn_outline_styles(outline);

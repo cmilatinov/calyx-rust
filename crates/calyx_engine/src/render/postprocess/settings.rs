@@ -1,180 +1,334 @@
-//! Post-processing settings, gathered from the effect components beside the
-//! global volume that selects them, with the local volumes around the render
-//! camera blended over them.
+//! Persistent per-view settings resolved directly from borrowed volume effects.
 
-use super::blend::{blend_effect, BlendEffect};
+use std::collections::{HashMap, HashSet};
+use std::fmt;
+
 use crate::assets::post_process_profile::PostProcessProfile;
 use crate::component::{
-    Component, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
-    ComponentColorGrading, ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
+    ComponentGlobalPostProcessVolume, ComponentLocalPostProcessVolume, ComponentTonemap,
+    PostProcessEffect, ReflectPostProcessEffect,
 };
-use crate::scene::{GameObject, Scene};
+use crate::reflect::type_registry::TypeRegistry;
+use crate::reflect::ReflectDefault;
+use crate::scene::{GameObject, Scene, SceneId};
+use crate::utils::TypeUuid;
 use legion::storage::ComponentTypeId;
-use legion::{Entity, IntoQuery};
+use legion::{Entity, IntoQuery, Query};
 use nalgebra_glm::Vec3;
 use uuid::Uuid;
 
-/// Everything the post-processing chain reads for one frame, gathered from
-/// the effect components on the selected volume's game object.
-///
-/// An effect is `None`, and its pass off, when the volume's object has no
-/// enabled component for it. Tone mapping always runs, with its defaults
-/// when there is no enabled tone-mapping component.
-#[derive(Clone, Debug, Default, PartialEq)]
+/// Storage for one effect, retained even during frames in which it is off.
+pub struct EffectSlot {
+    /// Whether a pass may read the effect this frame.
+    pub active: bool,
+    /// The same concrete component type registered under the slot's UUID.
+    pub effect: Box<dyn PostProcessEffect>,
+}
+
+/// The post-processing settings of one view. Resolve into this same value each
+/// frame: slots, volume queries and sorting storage are retained after warm-up.
+/// An inactive or absent effect is `None`; tone mapping is always present.
 pub struct PostProcessSettings {
-    /// Tone mapping, the display transform. It always runs.
-    pub tonemapping: ComponentTonemap,
-    /// Screen-space ambient occlusion, first in the `Hdr` stage.
-    pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
-    /// Distance fog, first in the `Hdr` stage.
-    pub fog: Option<ComponentFog>,
-    /// Depth of field, in the `Hdr` stage.
-    pub depth_of_field: Option<ComponentDepthOfField>,
-    /// Bloom, in the `Hdr` stage.
-    pub bloom: Option<ComponentBloom>,
-    /// White balance, contrast and saturation, after tone mapping.
-    pub color_grading: Option<ComponentColorGrading>,
-    /// Darkened screen edges, after tone mapping.
-    pub vignette: Option<ComponentVignette>,
-    /// Ink outlines, after colour grading and before FXAA.
-    pub outline: Option<ComponentOutline>,
-    /// Screen-space anti-aliasing (FXAA), after tone mapping.
-    pub anti_aliasing: Option<ComponentAntiAliasing>,
+    effects: HashMap<Uuid, EffectSlot>,
+    scene_id: Option<SceneId>,
+    global_query: Query<(Entity, &'static ComponentGlobalPostProcessVolume)>,
+    local_query: Query<(Entity, &'static ComponentLocalPostProcessVolume)>,
+    local_volumes: Vec<(i32, Uuid, (GameObject, f32))>,
+    global_ties: HashSet<i32>,
+    local_ties: HashSet<i32>,
 }
 
-/// One volume's effects, from its profile and the enabled effect components
-/// on its game object, each `None` when neither switches it on.
-///
-/// Tone mapping is optional here too: a local volume without a tone-mapping
-/// component leaves the exposure below it alone.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct PostProcessEffects {
-    /// Tone mapping.
-    pub tonemapping: Option<ComponentTonemap>,
-    /// Screen-space ambient occlusion.
-    pub ambient_occlusion: Option<ComponentAmbientOcclusion>,
-    /// Distance fog.
-    pub fog: Option<ComponentFog>,
-    /// Depth of field.
-    pub depth_of_field: Option<ComponentDepthOfField>,
-    /// Bloom.
-    pub bloom: Option<ComponentBloom>,
-    /// Colour grading.
-    pub color_grading: Option<ComponentColorGrading>,
-    /// Vignette.
-    pub vignette: Option<ComponentVignette>,
-    /// Ink outlines.
-    pub outline: Option<ComponentOutline>,
-    /// Anti-aliasing (FXAA).
-    pub anti_aliasing: Option<ComponentAntiAliasing>,
+impl Default for PostProcessSettings {
+    fn default() -> Self {
+        Self::empty().with(ComponentTonemap::default())
+    }
 }
 
-impl PostProcessEffects {
-    /// The effects of the volume on `game_object`: its profile's enabled
-    /// entries, if it has a profile, with each enabled effect component on
-    /// the object replacing its entry. An effect neither switches on is
-    /// `None`; a disabled component leaves the profile's entry, and a
-    /// disabled entry is off. See [`PostProcessProfile`].
+impl PostProcessSettings {
+    pub(crate) fn empty() -> Self {
+        Self {
+            effects: HashMap::new(),
+            scene_id: None,
+            global_query: <(Entity, &ComponentGlobalPostProcessVolume)>::query(),
+            local_query: <(Entity, &ComponentLocalPostProcessVolume)>::query(),
+            local_volumes: Vec::new(),
+            global_ties: HashSet::new(),
+            local_ties: HashSet::new(),
+        }
+    }
+
+    /// Borrows an active effect by its component type.
+    pub fn get<T: PostProcessEffect + TypeUuid>(&self) -> Option<&T> {
+        self.effects
+            .get(&T::type_uuid())
+            .filter(|slot| slot.active)
+            .and_then(|slot| slot.effect.as_any().downcast_ref())
+    }
+
+    /// Adds or replaces one effect, for constructing settings outside a scene.
+    pub fn with(mut self, effect: impl PostProcessEffect) -> Self {
+        self.effects.insert(
+            effect.uuid(),
+            EffectSlot {
+                active: true,
+                effect: Box::new(effect),
+            },
+        );
+        self
+    }
+
+    /// Drops all effect values while their defining code is still loaded.
+    /// Call before unloading a project assembly that registered effect types.
+    pub fn clear(&mut self) {
+        self.effects.clear();
+        self.local_volumes.clear();
+    }
+
+    /// Resets active flags and resolves the selected global volume followed by
+    /// local volumes in ascending priority/object-id order. No intermediate
+    /// effect sets are cloned. The queries and contributing-volume buffer are
+    /// warmed for all local volumes, even those currently outside the camera.
+    pub fn resolve_into(&mut self, scene: &Scene, camera_position: &Vec3) {
+        if self.scene_id != Some(scene.id()) {
+            // Legion retains layout matches per world. Keep only this view's
+            // current scene, rather than every play snapshot it ever rendered.
+            self.global_query = <(Entity, &ComponentGlobalPostProcessVolume)>::query();
+            self.local_query = <(Entity, &ComponentLocalPostProcessVolume)>::query();
+            self.scene_id = Some(scene.id());
+        }
+        for slot in self.effects.values_mut() {
+            slot.active = false;
+        }
+        let types = scene.registries().types.read();
+        self.apply(&ComponentTonemap::default(), &types, None);
+        drop(types);
+
+        let selection = select_volume(self.global_query.iter(scene.world()).map(
+            |(entity, volume)| {
+                (
+                    scene.is_type_enabled(
+                        *entity,
+                        ComponentTypeId::of::<ComponentGlobalPostProcessVolume>(),
+                    ),
+                    volume.priority,
+                    *entity,
+                )
+            },
+        ));
+        if let Some(priority) = selection.tie {
+            if self.global_ties.insert(priority) {
+                warn_global_tie(priority);
+            }
+        }
+        if let Some(volume) = selection
+            .selected
+            .and_then(|entity| scene.game_object_from_entity(entity))
+        {
+            self.apply_volume(scene, volume, None);
+        }
+        self.gather_local_volumes(scene, camera_position);
+        for index in 0..self.local_volumes.len() {
+            let (_, _, (volume, factor)) = self.local_volumes[index];
+            self.apply_volume(scene, volume, Some(factor));
+        }
+    }
+
+    /// Resolves a fresh settings value. Renderers use `resolve_into` to reuse it.
+    pub fn resolve(scene: &Scene, camera_position: &Vec3) -> Self {
+        let mut settings = Self::default();
+        settings.resolve_into(scene, camera_position);
+        settings
+    }
+
+    fn gather_local_volumes(&mut self, scene: &Scene, camera_position: &Vec3) {
+        self.local_volumes.clear();
+        // Reserve for every volume, so entering an already-known volume does
+        // not grow the scratch buffer on a later frame.
+        let count = self.local_query.iter(scene.world()).count();
+        self.local_volumes.reserve(count);
+        for (entity, volume) in self.local_query.iter(scene.world()) {
+            if !scene.is_type_enabled(
+                *entity,
+                ComponentTypeId::of::<ComponentLocalPostProcessVolume>(),
+            ) {
+                continue;
+            }
+            let Some(object) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            let factor = volume.blend_factor(&scene.world_transform(object), camera_position);
+            if factor > 0.0 {
+                self.local_volumes
+                    .push((volume.priority, scene.uuid(object), (object, factor)));
+            }
+        }
+        if let Some(priority) = order_local_volumes(&mut self.local_volumes) {
+            if self.local_ties.insert(priority) {
+                crate::logging::warn_once(
+                    format!("local-post-process-volume-tie:{priority}"),
+                    || {
+                        format!("Several local post-process volumes around the camera share priority {priority}; applying them in object id order")
+                    },
+                );
+            }
+        }
+    }
+
+    /// The contributing local volumes and their factors, in application order.
+    /// This inspection helper allocates; frame resolution retains its buffer.
+    pub fn local_volumes(scene: &Scene, camera_position: &Vec3) -> Vec<(GameObject, f32)> {
+        let mut settings = Self::default();
+        settings.gather_local_volumes(scene, camera_position);
+        settings
+            .local_volumes
+            .iter()
+            .map(|(_, _, item)| *item)
+            .collect()
+    }
+
+    /// The enabled global volume with highest priority, first found on a tie.
+    pub fn selected_volume(scene: &Scene) -> Option<GameObject> {
+        let mut query = <(Entity, &ComponentGlobalPostProcessVolume)>::query();
+        let selection = select_volume(query.iter(scene.world()).map(|(entity, volume)| {
+            (
+                scene.is_type_enabled(
+                    *entity,
+                    ComponentTypeId::of::<ComponentGlobalPostProcessVolume>(),
+                ),
+                volume.priority,
+                *entity,
+            )
+        }));
+        if let Some(priority) = selection.tie {
+            warn_global_tie(priority);
+        }
+        selection
+            .selected
+            .and_then(|entity| scene.game_object_from_entity(entity))
+    }
+
+    /// Resolves a volume's profile and enabled component overrides on their own.
     pub fn from_game_object(scene: &Scene, game_object: GameObject) -> Self {
-        let components = Self::components(scene, game_object);
-        match PostProcessProfile::of_volume(scene, game_object) {
-            Some(profile) => Self::from_profile(&profile.read()).overlaid_by(&components),
-            None => components,
+        let mut settings = Self::default();
+        settings.apply_volume(scene, game_object, None);
+        settings
+    }
+
+    fn apply_volume(&mut self, scene: &Scene, object: GameObject, factor: Option<f32>) {
+        let profile = PostProcessProfile::of_volume(scene, object);
+        let types = scene.registries().types.read();
+        let components = scene.registries().components.read();
+        if let Some(profile) = profile {
+            let profile = profile.read();
+            for effect in profile.enabled_effects() {
+                // A component overrides a profile entry before any blending.
+                // Applying both would incorrectly blend a local effect twice.
+                let overridden = components
+                    .component(effect.uuid())
+                    .is_some_and(|prototype| {
+                        scene.is_component_enabled_dyn(object, prototype)
+                            && scene
+                                .read_component_dyn(object, prototype, |_| ())
+                                .is_some()
+                    });
+                if !overridden {
+                    self.apply(effect, &types, factor);
+                }
+            }
+        }
+        for (id, prototype) in components.components() {
+            let Some(meta) = types.trait_meta::<ReflectPostProcessEffect>(*id) else {
+                continue;
+            };
+            if !scene.is_component_enabled_dyn(object, prototype.as_ref()) {
+                continue;
+            }
+            scene.read_component_dyn(object, prototype.as_ref(), |component| {
+                if let Some(effect) = meta.get(component.as_reflect()) {
+                    self.apply(effect, &types, factor);
+                }
+            });
         }
     }
 
-    /// Temporary adapter for the renderer's fixed settings, until #519 migrates
-    /// resolution to persistent UUID-keyed slots. Profile access stays generic.
-    pub fn from_profile(profile: &PostProcessProfile) -> Self {
-        Self {
-            tonemapping: profile.effect().cloned(),
-            ambient_occlusion: profile.effect().cloned(),
-            fog: profile.effect().cloned(),
-            depth_of_field: profile.effect().cloned(),
-            bloom: profile.effect().cloned(),
-            color_grading: profile.effect().cloned(),
-            vignette: profile.effect().cloned(),
-            outline: profile.effect().cloned(),
-            anti_aliasing: profile.effect().cloned(),
-        }
-    }
-
-    /// `self` with each effect `over` has replacing this one's.
-    pub fn overlaid_by(&self, over: &Self) -> Self {
-        Self {
-            tonemapping: over.tonemapping.or(self.tonemapping),
-            ambient_occlusion: over.ambient_occlusion.or(self.ambient_occlusion),
-            fog: over.fog.or(self.fog),
-            depth_of_field: over.depth_of_field.or(self.depth_of_field),
-            bloom: over.bloom.or(self.bloom),
-            color_grading: over.color_grading.or(self.color_grading),
-            vignette: over.vignette.or(self.vignette),
-            outline: over.outline.clone().or_else(|| self.outline.clone()),
-            anti_aliasing: over.anti_aliasing.or(self.anti_aliasing),
-        }
-    }
-
-    /// The enabled effect components on `game_object`, without its volume's
-    /// profile. A missing or disabled component is `None`.
-    pub fn components(scene: &Scene, game_object: GameObject) -> Self {
-        Self {
-            tonemapping: effect(scene, game_object),
-            ambient_occlusion: effect(scene, game_object),
-            fog: effect(scene, game_object),
-            depth_of_field: effect(scene, game_object),
-            bloom: effect(scene, game_object),
-            color_grading: effect(scene, game_object),
-            vignette: effect(scene, game_object),
-            outline: effect(scene, game_object),
-            anti_aliasing: effect(scene, game_object),
+    fn apply(&mut self, source: &dyn PostProcessEffect, types: &TypeRegistry, factor: Option<f32>) {
+        let slot = self.effects.entry(source.uuid()).or_insert_with(|| {
+            let meta = types
+                .trait_meta::<ReflectPostProcessEffect>(source.uuid())
+                .expect("a registered effect has reflected effect metadata");
+            let default = types
+                .trait_meta::<ReflectDefault>(source.uuid())
+                .expect("a registered effect component has a reflected default");
+            EffectSlot {
+                active: false,
+                effect: meta
+                    .get_boxed(default.default())
+                    .expect("effect metadata and default have the same concrete type"),
+            }
+        });
+        match factor {
+            None => {
+                slot.effect.copy_from(source);
+                slot.active = true;
+            }
+            Some(factor) => {
+                let factor = factor.clamp(0.0, 1.0);
+                if !slot.active {
+                    slot.effect.copy_from(source);
+                    if !slot.effect.reset_neutral() {
+                        slot.active = factor >= 0.5;
+                        return;
+                    }
+                }
+                slot.effect.blend_into(source, factor);
+                slot.active = true;
+            }
         }
     }
 }
 
-impl From<PostProcessEffects> for PostProcessSettings {
-    /// The settings `effects` describe on their own: tone mapping falls back
-    /// to its defaults.
-    fn from(effects: PostProcessEffects) -> Self {
-        Self {
-            tonemapping: effects.tonemapping.unwrap_or_default(),
-            ambient_occlusion: effects.ambient_occlusion,
-            fog: effects.fog,
-            depth_of_field: effects.depth_of_field,
-            bloom: effects.bloom,
-            color_grading: effects.color_grading,
-            vignette: effects.vignette,
-            outline: effects.outline,
-            anti_aliasing: effects.anti_aliasing,
-        }
-    }
-}
-
-/// The items of `volumes`, `(priority, object id, item)` triples, in the
-/// order local volumes apply: ascending priority, then ascending object id,
-/// so tied volumes keep one order from frame to frame. `tie` is the lowest
-/// priority two of them share, if any.
-pub(crate) fn order_local_volumes<T>(
-    volumes: impl IntoIterator<Item = (i32, Uuid, T)>,
-) -> LocalVolumeOrder<T> {
-    let mut volumes: Vec<_> = volumes.into_iter().collect();
-    volumes.sort_by_key(|(priority, id, _)| (*priority, *id));
-    let tie = volumes
+/// Sorts local volumes in place and returns the lowest tied priority.
+pub(crate) fn order_local_volumes<T>(volumes: &mut [(i32, Uuid, T)]) -> Option<i32> {
+    volumes.sort_unstable_by_key(|(priority, id, _)| (*priority, *id));
+    volumes
         .windows(2)
         .find(|pair| pair[0].0 == pair[1].0)
-        .map(|pair| pair[0].0);
-    LocalVolumeOrder {
-        ordered: volumes.into_iter().map(|(_, _, item)| item).collect(),
-        tie,
+        .map(|pair| pair[0].0)
+}
+
+impl fmt::Debug for PostProcessSettings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_map()
+            .entries(
+                self.effects
+                    .iter()
+                    .filter(|(_, slot)| slot.active)
+                    .map(|(id, slot)| (id, slot.effect.serialize())),
+            )
+            .finish()
     }
 }
 
-/// The items [`order_local_volumes`] ordered, and the lowest priority
-/// several of them share.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct LocalVolumeOrder<T> {
-    pub ordered: Vec<T>,
-    pub tie: Option<i32>,
+impl PartialEq for PostProcessSettings {
+    fn eq(&self, other: &Self) -> bool {
+        let count = |settings: &Self| settings.effects.values().filter(|slot| slot.active).count();
+        count(self) == count(other)
+            && self
+                .effects
+                .iter()
+                .filter(|(_, slot)| slot.active)
+                .all(|(id, slot)| {
+                    other.effects.get(id).is_some_and(|other| {
+                        other.active && slot.effect.serialize() == other.effect.serialize()
+                    })
+                })
+    }
+}
+
+fn warn_global_tie(priority: i32) {
+    crate::logging::warn_once(format!("post-process-volume-tie:{priority}"), || {
+        format!("Several enabled global post-process volumes share priority {priority}; using the first found")
+    });
 }
 
 /// The item [`select_volume`] picked, and the priority several enabled
@@ -212,125 +366,5 @@ pub(crate) fn select_volume<T>(
     }
 }
 
-/// `game_object`'s effect component `T`, or `None` when it has none or the
-/// scene holds it disabled.
-fn effect<T: Component + Clone + 'static>(scene: &Scene, game_object: GameObject) -> Option<T> {
-    scene
-        .read_component::<T, _, _>(game_object, |effect| effect.clone())
-        .filter(|_| scene.is_component_enabled::<T>(game_object))
-}
-
-impl PostProcessSettings {
-    /// The settings `scene` renders with from a camera at `camera_position`,
-    /// in world space: those of [`Self::selected_volume`], or the defaults,
-    /// tone mapping alone, when no global volume is enabled, with each of
-    /// [`Self::local_volumes`] blended over them in turn.
-    pub fn resolve(scene: &Scene, camera_position: &Vec3) -> Self {
-        let global = Self::selected_volume(scene)
-            .map(|volume| Self::from_game_object(scene, volume))
-            .unwrap_or_default();
-        Self::local_volumes(scene, camera_position)
-            .into_iter()
-            .fold(global, |settings, (volume, factor)| {
-                settings.blend(&PostProcessEffects::from_game_object(scene, volume), factor)
-            })
-    }
-
-    /// The enabled local volumes of `scene` that contribute at
-    /// `camera_position`, with their blend factors, in the order they apply:
-    /// ascending priority, ties in ascending object id with a warning once
-    /// per priority. A volume whose factor is zero is left out.
-    pub fn local_volumes(scene: &Scene, camera_position: &Vec3) -> Vec<(GameObject, f32)> {
-        let mut query = <(Entity, &ComponentLocalPostProcessVolume)>::query();
-        let contributing = query
-            .iter(scene.world())
-            .filter(|(entity, _)| {
-                scene.is_type_enabled(
-                    **entity,
-                    ComponentTypeId::of::<ComponentLocalPostProcessVolume>(),
-                )
-            })
-            .filter_map(|(entity, volume)| {
-                let game_object = scene.game_object_from_entity(*entity)?;
-                let transform = scene.world_transform(game_object);
-                let factor = volume.blend_factor(&transform, camera_position);
-                (factor > 0.0).then(|| {
-                    (
-                        volume.priority,
-                        scene.uuid(game_object),
-                        (game_object, factor),
-                    )
-                })
-            });
-        let order = order_local_volumes(contributing);
-        if let Some(priority) = order.tie {
-            crate::logging::warn_once(format!("local-post-process-volume-tie:{priority}"), || {
-                format!(
-                    "Several local post-process volumes around the camera share priority \
-                     {priority}; applying them in object id order"
-                )
-            });
-        }
-        order.ordered
-    }
-
-    /// `self` with a volume's `effects` blended over it by `factor`, from 0
-    /// (unchanged) to 1. Each effect the volume has blends field by field;
-    /// one it lacks keeps its value here; one that is off here fades in from
-    /// its neutral values, or switches on at 0.5 when it has none (FXAA).
-    /// See [`BlendEffect`].
-    pub fn blend(&self, effects: &PostProcessEffects, factor: f32) -> Self {
-        let factor = factor.clamp(0.0, 1.0);
-        Self {
-            tonemapping: effects.tonemapping.map_or(self.tonemapping, |tonemap| {
-                self.tonemapping.blend(&tonemap, factor)
-            }),
-            ambient_occlusion: blend_effect(
-                self.ambient_occlusion,
-                effects.ambient_occlusion,
-                factor,
-            ),
-            fog: blend_effect(self.fog, effects.fog, factor),
-            depth_of_field: blend_effect(self.depth_of_field, effects.depth_of_field, factor),
-            bloom: blend_effect(self.bloom, effects.bloom, factor),
-            color_grading: blend_effect(self.color_grading, effects.color_grading, factor),
-            vignette: blend_effect(self.vignette, effects.vignette, factor),
-            outline: blend_effect(self.outline.clone(), effects.outline.clone(), factor),
-            anti_aliasing: blend_effect(self.anti_aliasing, effects.anti_aliasing, factor),
-        }
-    }
-
-    /// The game object of `scene`'s enabled global volume with the highest
-    /// priority, the first found on a tie, or `None` when no volume is
-    /// enabled. Warns once per priority on a tie.
-    pub fn selected_volume(scene: &Scene) -> Option<GameObject> {
-        let mut query = <(Entity, &ComponentGlobalPostProcessVolume)>::query();
-        let selection = select_volume(query.iter(scene.world()).map(|(entity, volume)| {
-            let enabled = scene.is_type_enabled(
-                *entity,
-                ComponentTypeId::of::<ComponentGlobalPostProcessVolume>(),
-            );
-            (enabled, volume.priority, *entity)
-        }));
-        if let Some(priority) = selection.tie {
-            crate::logging::warn_once(format!("post-process-volume-tie:{priority}"), || {
-                format!(
-                    "Several enabled global post-process volumes share priority {priority};                      using the first found"
-                )
-            });
-        }
-        selection
-            .selected
-            .and_then(|entity| scene.game_object_from_entity(entity))
-    }
-
-    /// The settings the volume on `game_object` describes, from its profile
-    /// and the enabled effect components on the object. An effect neither
-    /// switches on is off, and tone mapping falls back to its defaults.
-    ///
-    /// It reads [`PostProcessEffects::from_game_object`], the one path that
-    /// gathers a volume's effects, global or local.
-    pub fn from_game_object(scene: &Scene, game_object: GameObject) -> Self {
-        PostProcessEffects::from_game_object(scene, game_object).into()
-    }
-}
+#[cfg(test)]
+mod test_support;

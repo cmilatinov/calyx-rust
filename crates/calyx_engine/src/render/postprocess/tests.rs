@@ -908,13 +908,10 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
     assert_eq!(texel[3], 0.0, "transparent stays transparent");
 
     // Exposure scales the input by 2^EV before the curve.
-    let settings = PostProcessSettings {
-        tonemapping: ComponentTonemap {
-            exposure_ev: 2.0,
-            ..Default::default()
-        },
+    let settings = PostProcessSettings::default().with(ComponentTonemap {
+        exposure_ev: 2.0,
         ..Default::default()
-    };
+    });
     let (texel, _) = run_chain(
         &render_context,
         &mut chain,
@@ -932,13 +929,10 @@ fn tone_mapping_matches_the_aces_fit_and_keeps_alpha() {
 
 /// Settings that tone-map with the neutral preset at `exposure_ev`.
 fn neutral(exposure_ev: f32) -> PostProcessSettings {
-    PostProcessSettings {
-        tonemapping: ComponentTonemap {
-            preset: TonemappingPreset::Neutral,
-            exposure_ev,
-        },
-        ..Default::default()
-    }
+    PostProcessSettings::default().with(ComponentTonemap {
+        preset: TonemappingPreset::Neutral,
+        exposure_ev,
+    })
 }
 
 #[test]
@@ -1107,21 +1101,25 @@ fn no_enabled_volume_selects_nothing_and_the_defaults_tone_map_alone() {
     assert_eq!(selection.tie, None);
 
     let defaults = PostProcessSettings::default();
-    assert_eq!(defaults.tonemapping.preset, TonemappingPreset::Aces);
-    assert_eq!(defaults.tonemapping.exposure_ev, 0.0);
+    assert_eq!(
+        defaults
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .preset,
+        TonemappingPreset::Aces
+    );
+    assert_eq!(
+        defaults
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .exposure_ev,
+        0.0
+    );
     assert_eq!(
         defaults,
-        PostProcessSettings {
-            tonemapping: ComponentTonemap::default(),
-            ambient_occlusion: None,
-            fog: None,
-            depth_of_field: None,
-            bloom: None,
-            color_grading: None,
-            vignette: None,
-            outline: None,
-            anti_aliasing: None,
-        },
+        PostProcessSettings::default().with(ComponentTonemap::default()),
         "every effect but tone mapping is off"
     );
 }
@@ -1159,20 +1157,38 @@ fn effects_are_gathered_from_the_selected_volumes_game_object_only() {
     scene.add_component(stray, ComponentVignette::default());
 
     let settings = PostProcessSettings::resolve(&scene, &Vec3::zeros());
-    assert_eq!(settings.tonemapping.exposure_ev, -1.0);
     assert_eq!(
-        settings.anti_aliasing,
+        settings
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .exposure_ev,
+        -1.0
+    );
+    assert_eq!(
+        settings.get::<ComponentAntiAliasing>().copied(),
         Some(ComponentAntiAliasing::default())
     );
-    assert_eq!(settings.bloom, None, "the lower volume's bloom is not used");
-    assert_eq!(settings.vignette, None);
+    assert_eq!(
+        settings.get::<ComponentBloom>().copied(),
+        None,
+        "the lower volume's bloom is not used"
+    );
+    assert_eq!(settings.get::<ComponentVignette>().copied(), None);
 
     // Disabling the winning volume hands the frame to the other one.
     scene.set_component_enabled::<ComponentGlobalPostProcessVolume>(high, false);
     let settings = PostProcessSettings::resolve(&scene, &Vec3::zeros());
-    assert_eq!(settings.tonemapping.exposure_ev, 1.0);
-    assert_eq!(settings.bloom, Some(bloom));
-    assert_eq!(settings.anti_aliasing, None);
+    assert_eq!(
+        settings
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .exposure_ev,
+        1.0
+    );
+    assert_eq!(settings.get::<ComponentBloom>().copied(), Some(bloom));
+    assert_eq!(settings.get::<ComponentAntiAliasing>().copied(), None);
 }
 
 #[test]
@@ -1182,13 +1198,18 @@ fn a_disabled_tone_mapping_component_falls_back_to_the_defaults() {
     let game_object = spawn_volumes(&mut scene, &[volume(true, 0, 2.0)])[0];
     assert_eq!(
         PostProcessSettings::resolve(&scene, &Vec3::zeros())
-            .tonemapping
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
             .exposure_ev,
         2.0
     );
     assert!(scene.set_component_enabled::<ComponentTonemap>(game_object, false));
     assert_eq!(
-        PostProcessSettings::resolve(&scene, &Vec3::zeros()).tonemapping,
+        PostProcessSettings::resolve(&scene, &Vec3::zeros())
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default(),
         ComponentTonemap::default()
     );
 }
@@ -1365,7 +1386,12 @@ fn scenes_without_an_enabled_volume_are_still_tone_mapped() {
         &[volume(true, 0, 1.0), volume(true, 4, -1.0)],
     );
     assert_eq!(
-        renderer.post_process_settings().tonemapping.exposure_ev,
+        renderer
+            .post_process_settings()
+            .get::<ComponentTonemap>()
+            .copied()
+            .unwrap_or_default()
+            .exposure_ev,
         -1.0,
         "the highest-priority volume drives the frame"
     );
@@ -1479,10 +1505,7 @@ fn read_image(render_context: &RenderContext, texture: &Texture) -> Image {
 }
 
 fn fxaa_on() -> PostProcessSettings {
-    PostProcessSettings {
-        anti_aliasing: Some(ComponentAntiAliasing::default()),
-        ..Default::default()
-    }
+    PostProcessSettings::default().with(ComponentAntiAliasing::default())
 }
 
 /// Runs a chain holding only the FXAA pass over `image`.
@@ -1519,7 +1542,12 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
 
 #[test]
 fn fxaa_is_off_by_default_and_a_partial_component_loads_with_defaults() {
-    assert_eq!(PostProcessSettings::default().anti_aliasing, None);
+    assert_eq!(
+        PostProcessSettings::default()
+            .get::<ComponentAntiAliasing>()
+            .copied(),
+        None
+    );
     let defaults = ComponentAntiAliasing::default();
     assert_eq!(defaults.edge_threshold, 0.166);
     assert_eq!(defaults.subpixel, 0.75);

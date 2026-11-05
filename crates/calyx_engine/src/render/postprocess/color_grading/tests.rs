@@ -179,17 +179,11 @@ fn run_grading(settings: &PostProcessSettings, image: &Image) -> Image {
 }
 
 fn grading(grading: ComponentColorGrading) -> PostProcessSettings {
-    PostProcessSettings {
-        color_grading: Some(grading),
-        ..Default::default()
-    }
+    PostProcessSettings::default().with(grading)
 }
 
 fn vignette(vignette: ComponentVignette) -> PostProcessSettings {
-    PostProcessSettings {
-        vignette: Some(vignette),
-        ..Default::default()
-    }
+    PostProcessSettings::default().with(vignette)
 }
 
 fn assert_close(actual: f32, expected: f32, what: &str) {
@@ -202,8 +196,16 @@ fn assert_close(actual: f32, expected: f32, what: &str) {
 #[test]
 fn both_effects_are_off_by_default_and_partial_components_load_with_defaults() {
     let defaults = PostProcessSettings::default();
-    assert_eq!(defaults.color_grading, None, "grading is off by default");
-    assert_eq!(defaults.vignette, None, "the vignette is off by default");
+    assert_eq!(
+        defaults.get::<ComponentColorGrading>().copied(),
+        None,
+        "grading is off by default"
+    );
+    assert_eq!(
+        defaults.get::<ComponentVignette>().copied(),
+        None,
+        "the vignette is off by default"
+    );
 
     let grading: ComponentColorGrading =
         serde_json::from_str(r#"{"saturation":0.5}"#).expect("partial grading loads");
@@ -253,10 +255,7 @@ fn the_scene_renderer_grades_before_fxaa() {
     let context = context.lock_read();
     let renderer = SceneRenderer::new(&context, Default::default(), (WIDTH, HEIGHT))
         .expect("scene renderer should load its assets");
-    let settings = PostProcessSettings {
-        anti_aliasing: Some(ComponentAntiAliasing::default()),
-        ..grading(Default::default())
-    };
+    let settings = grading(Default::default()).with(ComponentAntiAliasing::default());
     let chain = renderer.post_process();
 
     let plan = ChainPlan::build(chain.passes(), &settings);
@@ -272,13 +271,10 @@ fn the_scene_renderer_grades_before_fxaa() {
 #[test]
 fn neutral_settings_return_the_input() {
     let image = test_image();
-    let settings = PostProcessSettings {
-        vignette: Some(ComponentVignette {
-            intensity: 0.0,
-            ..Default::default()
-        }),
-        ..grading(Default::default())
-    };
+    let settings = grading(Default::default()).with(ComponentVignette {
+        intensity: 0.0,
+        ..Default::default()
+    });
 
     let output = run_grading(&settings, &image);
 
@@ -389,20 +385,18 @@ fn the_vignette_darkens_the_corners_and_leaves_the_centre_unchanged() {
 #[test]
 fn alpha_is_preserved() {
     let image = test_image();
-    let settings = PostProcessSettings {
-        color_grading: Some(ComponentColorGrading {
+    let settings = PostProcessSettings::default()
+        .with(ComponentColorGrading {
             contrast: 1.4,
             saturation: 0.3,
             temperature: 0.6,
             tint: -0.4,
-        }),
-        vignette: Some(ComponentVignette {
+        })
+        .with(ComponentVignette {
             intensity: 0.8,
             smoothness: 0.5,
             color: Color32::from_rgb(40, 0, 80),
-        }),
-        ..Default::default()
-    };
+        });
 
     let output = run_grading(&settings, &image);
 

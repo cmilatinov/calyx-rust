@@ -165,10 +165,7 @@ fn run_fog(context: &ReadOnlyAssetContext, fog: ComponentFog, depth: f32) -> Vec
     let plan = chain.run(
         &render_context,
         &mut encoder,
-        &PostProcessSettings {
-            fog: Some(fog),
-            ..Default::default()
-        },
+        &PostProcessSettings::default().with(fog),
         ChainTargets {
             source: &source,
             output: &output,
@@ -306,7 +303,12 @@ fn the_background_takes_the_fog_colour() {
 
 #[test]
 fn fog_is_off_by_default_and_a_partial_component_loads_with_defaults() {
-    assert_eq!(PostProcessSettings::default().fog, None);
+    assert_eq!(
+        PostProcessSettings::default()
+            .get::<ComponentFog>()
+            .copied(),
+        None
+    );
     let partial: ComponentFog =
         serde_json::from_str(r#"{ "mode": "Exponential", "density": 0.2 }"#).expect("fog loads");
     assert_eq!(
