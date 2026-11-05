@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "8b8c4290-d872-482d-a9c1-a4e3167496e8",
+    "name": "lookdev/materials/moonlit/signal_shell",
+    "display_name": "signal_shell",
+    "type_uuid": "f98a7f41-84d4-482d-b7af-a670b07035ae"
+  },
+  "inner": []
+}
