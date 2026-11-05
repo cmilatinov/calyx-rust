@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "397b9fd6-1ef0-5901-899f-b6ee1c559dc2",
+    "name": "generated/models/sentry__base",
+    "display_name": "sentry__base",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

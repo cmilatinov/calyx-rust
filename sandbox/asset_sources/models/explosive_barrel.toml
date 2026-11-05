@@ -1,0 +1,85 @@
+# Steel drum with hazard bands and cap; visual asset only, explosion behavior belongs to cover gameplay.
+# Metres, Y up, forward +Z; regenerate with calyx_model_gen.
+
+[[parts]]
+name = "drum"
+kind = "cylinder"
+role = "tracks"
+radius = 0.43
+height = 1.065
+vertices = 16
+bevel = 0.025
+segments = 3
+offset = [0, 0, 0]
+
+[[parts]]
+name = "bottom_rim"
+kind = "ring"
+role = "metal_caps"
+radius = 0.455
+inner_radius = 0.39
+height = 0.055
+vertices = 32
+offset = [0, 0.025, 0]
+
+[[parts]]
+name = "top_rim"
+kind = "ring"
+role = "metal_caps"
+radius = 0.455
+inner_radius = 0.39
+height = 0.075
+vertices = 32
+offset = [0, 1.045, 0]
+
+[[parts]]
+name = "lower_hazard_band"
+kind = "ring"
+role = "hazard_yellow"
+radius = 0.436
+inner_radius = 0.425
+height = 0.16
+vertices = 32
+offset = [0, 0.19, 0]
+
+[[parts]]
+name = "upper_hazard_band"
+kind = "ring"
+role = "hazard_yellow"
+radius = 0.436
+inner_radius = 0.425
+height = 0.16
+vertices = 32
+offset = [0, 0.75, 0]
+
+[[parts]]
+name = "middle_hoop"
+kind = "ring"
+role = "hazard_black"
+radius = 0.45
+inner_radius = 0.42
+height = 0.065
+vertices = 32
+offset = [0, 0.515, 0]
+
+[[parts]]
+name = "lid"
+kind = "cylinder"
+role = "metal_caps"
+radius = 0.395
+height = 0.025
+vertices = 16
+bevel = 0.00375
+segments = 3
+offset = [0, 1.075, 0]
+
+[[parts]]
+name = "cap"
+kind = "cylinder"
+role = "hazard_black"
+radius = 0.085
+height = 0.045
+vertices = 16
+bevel = 0.00675
+segments = 3
+offset = [0.19, 1.1, 0]

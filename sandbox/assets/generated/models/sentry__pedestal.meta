@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "3f743508-d5d1-5d0a-9dc1-f3fb9d926022",
+    "name": "generated/models/sentry__pedestal",
+    "display_name": "sentry__pedestal",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

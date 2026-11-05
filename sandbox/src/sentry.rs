@@ -20,6 +20,8 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct ComponentSentry {
     pub target: GameObjectRef,
+    /// The visual head to turn. An unassigned head keeps legacy root turning.
+    pub head: GameObjectRef,
     pub range: f32,
     pub fire_interval: f32,
     pub projectile_speed: f32,
@@ -36,6 +38,7 @@ impl Default for ComponentSentry {
     fn default() -> Self {
         Self {
             target: Default::default(),
+            head: Default::default(),
             range: 16.0,
             fire_interval: 1.5,
             projectile_speed: 16.0,
@@ -94,7 +97,10 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
 
     let direction = flatten_xz(offset);
     transform.rotation = yaw_rotation(&direction);
-    scene.set_world_transform(game_object, transform.matrix());
+    let head = sentry.head.game_object(scene).unwrap_or(game_object);
+    let mut head_transform = scene.world_transform(head);
+    head_transform.rotation = transform.rotation;
+    scene.set_world_transform(head, head_transform.matrix());
     if sentry.fire_cooldown_remaining > f32::EPSILON {
         return;
     }
@@ -274,5 +280,64 @@ mod tests {
         runner.step_many(30);
 
         assert_eq!(rounds(runner.scene()), 0);
+    }
+
+    #[test]
+    fn visual_head_tracks_the_target_without_turning_the_base_or_changing_the_shooter() {
+        let (mut scene, sentry, tank) = sentry_and_tank(8.0);
+        let head = scene.create(None, Some(sentry));
+        scene.set_transform(head, &Transform::from_xyz(0.0, -0.2, 0.0).matrix());
+        let muzzle = scene.create(None, Some(head));
+        scene.set_transform(muzzle, &Transform::from_xyz(0.0, 0.2, 1.2).matrix());
+        let head_ref = GameObjectRef::new(scene.uuid(head));
+        let _ = scene.write_component::<ComponentSentry, _>(sentry, |component| {
+            component.head = head_ref;
+        });
+        let base = scene.world_transform(sentry);
+        scene.set_world_transform(tank, Transform::from_xyz(8.0, 0.0, 0.0).matrix());
+
+        super::update_sentry(&mut scene, sentry, 0.0);
+
+        assert_eq!(scene.world_transform(sentry).matrix(), base.matrix());
+        assert!(scene.world_transform(head).forward().x > 0.99);
+        let round = scene
+            .objects()
+            .find(|&object| {
+                scene
+                    .read_component::<ComponentProjectile, _, _>(object, |_| ())
+                    .is_some()
+            })
+            .unwrap();
+        let projectile = scene
+            .read_component::<ComponentProjectile, _, _>(round, |round| *round)
+            .unwrap();
+        assert_eq!(projectile.shooter.game_object(&scene), Some(sentry));
+        let shell_parts = scene
+            .children(round)
+            .filter_map(|part| {
+                scene.read_component::<calyx_engine::component::ComponentMesh, _, _>(part, |mesh| {
+                    mesh.mesh.clone()
+                })
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(shell_parts.len(), 2);
+        assert!(
+            shell_parts.iter().all(|mesh| *mesh
+                == calyx_engine::assets::AssetRef::from_id(
+                    "52c056b4-6dfb-1859-6023-23693f3ff263".parse().unwrap()
+                )),
+            "Sentry rounds keep the shared shell and luminous tail, not turret meshes"
+        );
+        assert!(
+            (scene.world_transform(round).position - scene.world_transform(muzzle).position).norm()
+                < 1e-5
+        );
+
+        // A cooldown prevents firing, not aiming. Its model continues tracking.
+        scene.set_world_transform(tank, Transform::from_xyz(-8.0, 0.0, 0.0).matrix());
+        super::update_sentry(&mut scene, sentry, 0.1);
+        assert_eq!(rounds(&scene), 1);
+        assert!(scene.world_transform(head).forward().x < -0.99);
+        assert_eq!(scene.world_transform(sentry).matrix(), base.matrix());
     }
 }

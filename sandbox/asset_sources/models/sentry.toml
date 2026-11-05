@@ -1,0 +1,124 @@
+# Fixed clay turret. Head descendants turn together; muzzle is (0,0.5,1.2) from ground pivot.
+# Metres, Y up, forward +Z; regenerate with calyx_model_gen.
+
+[[parts]]
+name = "base"
+kind = "cylinder"
+role = "metal_caps"
+radius = 0.57
+height = 0.15
+vertices = 16
+bevel = 0.0225
+segments = 3
+offset = [0, 0, 0]
+
+[[parts]]
+name = "pedestal"
+kind = "cylinder"
+role = "metal"
+radius = 0.29
+height = 0.25
+vertices = 16
+bevel = 0.025
+segments = 3
+offset = [0, 0.15, 0]
+
+[[parts]]
+name = "head"
+kind = "box"
+role = "sentry_team"
+size = [0.92, 0.4, 0.82]
+offset = [0, 0.3, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "mantlet"
+kind = "box"
+role = "metal_caps"
+size = [0.4, 0.3, 0.2]
+offset = [0, 0.05, 0.34]
+bevel = 0.06
+segments = 3
+parent = "head"
+
+[[parts]]
+name = "barrel"
+kind = "cylinder"
+role = "tracks"
+radius = 0.1
+height = 0.84
+vertices = 16
+bevel = 0.025
+segments = 3
+offset = [0, 0.2, 0.3]
+parent = "head"
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "muzzle"
+kind = "ring"
+role = "metal"
+radius = 0.15
+inner_radius = 0.085
+height = 0.08
+vertices = 32
+offset = [0, 0.2, 1.12]
+parent = "head"
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "hatch"
+kind = "cylinder"
+role = "metal_caps"
+radius = 0.18
+height = 0.055
+vertices = 16
+bevel = 0.00825
+segments = 3
+offset = [0, 0.4, -0.1]
+parent = "head"
+
+[[parts]]
+name = "anchor_l_rear"
+kind = "cylinder"
+role = "metal"
+radius = 0.055
+height = 0.035
+vertices = 16
+bevel = 0.00525
+segments = 3
+offset = [-0.38, 0.15, -0.28]
+
+[[parts]]
+name = "anchor_l_front"
+kind = "cylinder"
+role = "metal"
+radius = 0.055
+height = 0.035
+vertices = 16
+bevel = 0.00525
+segments = 3
+offset = [-0.38, 0.15, 0.28]
+
+[[parts]]
+name = "anchor_r_rear"
+kind = "cylinder"
+role = "metal"
+radius = 0.055
+height = 0.035
+vertices = 16
+bevel = 0.00525
+segments = 3
+offset = [0.38, 0.15, -0.28]
+
+[[parts]]
+name = "anchor_r_front"
+kind = "cylinder"
+role = "metal"
+radius = 0.055
+height = 0.035
+vertices = 16
+bevel = 0.00525
+segments = 3
+offset = [0.38, 0.15, 0.28]
