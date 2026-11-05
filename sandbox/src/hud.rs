@@ -5,7 +5,6 @@ mod scoreboard;
 
 use crate::combat::{combat_team, ComponentCombatStats};
 use crate::game_state::ComponentGameState;
-use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentTankController};
 use calyx_engine::component::{
     Component, ComponentDepthOfField, ComponentEventContext, ComponentHud, ComponentID,
@@ -17,11 +16,9 @@ use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
-use calyx_engine::ui::{
-    PaintCommand, PointerEvents, UiArena, UiColor, UiLength, UiNodeHandle, UiRect,
-};
+use calyx_engine::ui::{PaintCommand, PointerEvents, UiArena, UiLength, UiNodeHandle, UiRect};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use nalgebra_glm::{vec2, vec3, vec4, Mat4, Vec3};
+use nalgebra_glm::{vec2, vec4, Mat4, Vec3};
 use paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED, STEEL};
 use serde::{Deserialize, Serialize};
 
@@ -122,16 +119,6 @@ impl ComponentUpdate for ComponentTankHud {
             .unwrap_or_default();
         let blur = update_scoreboard_blur(scene, this.game_object(), open, previous);
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
-        // The aim object remains the world-space source. Its legacy mesh would
-        // otherwise overlap the projected ground ring drawn by this HUD.
-        if let Some(marker) = scene
-            .read_component::<ComponentTankController, _, _>(this.game_object(), |controller| {
-                controller.crosshair
-            })
-            .and_then(|marker| marker.game_object(scene))
-        {
-            let _ = scene.write_component::<ComponentID, _>(marker, |id| id.visible = false);
-        }
     }
 }
 /// A transient local volume changes only depth of field at the active camera;
@@ -174,7 +161,7 @@ fn update_scoreboard_blur(
             ComponentDepthOfField {
                 focus_distance: 0.0,
                 focus_range: 0.01,
-                max_blur: 16.0,
+                max_blur: 30.0,
             },
         );
         object
@@ -198,7 +185,7 @@ impl ComponentHud for ComponentTankHud {
         ui: &mut UiArena,
         viewport: UiRect,
     ) -> Option<UiNodeHandle> {
-        let state = tank_hud_state(scene, player)?;
+        scene.read_component::<ComponentTankController, _, _>(player, |_| ())?;
         let mut p = Painter::new(viewport);
         let width = viewport.width() / p.scale;
         let height = viewport.height() / p.scale;
@@ -206,81 +193,37 @@ impl ComponentHud for ComponentTankHud {
         let map = minimap::minimap_state(scene, player);
         if !hud.scoreboard_open {
             paint_world(&mut p, scene, player, hud, &map, width, height);
-            kill_feed::paint_feed(&mut p, scene, player, margin, margin);
+            let feed_width = (width * 0.30).clamp(300.0, 490.0);
+            let feed_height = (height * 0.056).clamp(36.0, 54.0);
+            kill_feed::paint_feed(
+                &mut p,
+                scene,
+                player,
+                margin,
+                margin,
+                feed_width,
+                feed_height,
+            );
+            let radius = (width * 0.077).clamp(76.0, 145.0).min(height * 0.20);
             minimap::paint_map(
                 &mut p,
                 &map,
-                margin + 221.0,
-                margin + 381.0,
-                215.0,
+                margin + radius + 10.0,
+                margin + feed_height * 2.0 + 38.0 + radius,
+                radius,
                 hud.vision_range,
             );
-            p.panel(width - margin - 260.0, margin, 260.0, 90.0, 18.0);
-            p.bold_centered(
-                width - margin - 130.0,
-                margin + 12.0,
-                &format_time(hud.time(scene)),
-                52.0,
+            let tw = (width * 0.16).clamp(160.0, 270.0);
+            let th = (height * 0.09).clamp(60.0, 88.0);
+            p.plate(width - margin - tw, margin, tw, th);
+            p.middle(
+                width - margin - tw * 0.5,
+                margin + th * 0.51,
+                format_time(hud.time(scene)),
+                th * 0.61,
                 LIGHT,
+                None,
             );
-            // Compact retained instrumentation complements the reference's world HP.
-            p.panel(margin, height - margin - 73.0, 222.0, 73.0, 12.0);
-            p.text(margin + 15.0, height - margin - 67.0, "HULL", 14.0, MUTED);
-            p.text(
-                margin + 91.0,
-                height - margin - 69.0,
-                format!(
-                    "{:03.0}/{:03.0}",
-                    state.health.max(0.0),
-                    state.max_health.max(0.0)
-                ),
-                20.0,
-                LIGHT,
-            );
-            meter(
-                &mut p,
-                margin + 15.0,
-                height - margin - 28.0,
-                192.0,
-                12.0,
-                health_ratio(state.health, state.max_health),
-                CYAN,
-            );
-            let ax = width - margin - 260.0;
-            let ay = height - margin - 93.0;
-            p.panel(ax, ay, 260.0, 93.0, 12.0);
-            p.bold_text(ax + 16.0, ay + 9.0, "CANNON", 15.0, MUTED);
-            p.text(
-                ax + 171.0,
-                ay + 3.0,
-                format!("{}/{}", state.ammo, state.max_ammo),
-                29.0,
-                LIGHT,
-            );
-            p.text(
-                ax + 16.0,
-                ay + 42.0,
-                weapon_status_label(
-                    state.max_ammo,
-                    state.reload_remaining,
-                    state.fire_cooldown_remaining,
-                    state.gameplay_locked,
-                    state.respawn_remaining,
-                ),
-                16.0,
-                if state.gameplay_locked { RED } else { LIGHT },
-            );
-            let reload_duration = scene
-                .read_component::<ComponentTankController, _, _>(player, |controller| {
-                    controller.reload_duration
-                })
-                .unwrap_or(1.0);
-            let ratio = if state.reload_remaining > 0.0 {
-                1.0 - state.reload_remaining / reload_duration.max(f32::EPSILON)
-            } else {
-                state.ammo as f32 / state.max_ammo.max(1) as f32
-            };
-            meter(&mut p, ax + 16.0, ay + 72.0, 228.0, 9.0, ratio, CYAN);
         }
         if hud.scoreboard_open {
             scoreboard::paint_scoreboard(
@@ -310,14 +253,6 @@ fn health_ratio(health: f32, max: f32) -> f32 {
         (health / max).clamp(0.0, 1.0)
     } else {
         0.0
-    }
-}
-fn meter(p: &mut Painter, x: f32, y: f32, w: f32, h: f32, ratio: f32, color: UiColor) {
-    p.fill(x - 2.0, y - 2.0, w + 4.0, h + 4.0, BLACK, h * 0.5);
-    p.fill(x, y, w, h, STEEL.with_alpha(0.5), h * 0.5);
-    let fill = w * ratio.clamp(0.0, 1.0);
-    if fill > 0.0 {
-        p.fill(x, y, fill, h, color, h * 0.5);
     }
 }
 
@@ -367,6 +302,39 @@ fn damage_tier(amount: f32, max: f32, low: f32, high: f32) -> DamageTier {
         DamageTier::Normal
     }
 }
+#[derive(Clone, Copy, Debug)]
+struct ScreenBounds {
+    left: f32,
+    right: f32,
+    top: f32,
+}
+impl Projection {
+    fn visual_bounds(&self, scene: &Scene, object: GameObject) -> Option<ScreenBounds> {
+        let mut points = scene
+            .visual_bound_corners(object)
+            .into_iter()
+            .filter_map(|point| self.point(point));
+        let (x, y) = points.next()?;
+        let mut bounds = ScreenBounds {
+            left: x,
+            right: x,
+            top: y,
+        };
+        for (x, y) in points {
+            bounds.left = bounds.left.min(x);
+            bounds.right = bounds.right.max(x);
+            bounds.top = bounds.top.min(y);
+        }
+        Some(bounds)
+    }
+}
+fn hp_anchor(bounds: ScreenBounds) -> (f32, f32, f32) {
+    (
+        (bounds.left + bounds.right) * 0.5,
+        bounds.top - 32.0,
+        ((bounds.right - bounds.left) * 0.9).max(48.0),
+    )
+}
 fn paint_world(
     p: &mut Painter,
     scene: &Scene,
@@ -385,8 +353,8 @@ fn paint_world(
             continue;
         }
         let Some(health) = scene
-            .read_component::<ComponentHealth, _, _>(object, |health| *health)
-            .filter(|health| !health.dead && health.max_health > 0.0)
+            .read_component::<ComponentHealth, _, _>(object, |h| *h)
+            .filter(|h| !h.dead && h.max_health > 0.0)
         else {
             continue;
         };
@@ -398,72 +366,92 @@ fn paint_world(
         if !friendly && !map.visible(vec2(position.x, position.z), hud.vision_range) {
             continue;
         }
-        let Some((x, y)) = projection.point(position + vec3(0.0, 2.4, 0.0)) else {
+        let Some(bounds) = projection.visual_bounds(scene, object) else {
             continue;
         };
-        p.fill(x - 120.0, y - 5.0, 240.0, 30.0, BLACK, 15.0);
-        p.fill(x - 117.0, y - 2.0, 234.0, 24.0, STEEL, 12.0);
-        meter(
-            p,
-            x - 113.0,
-            y + 2.0,
-            226.0,
-            16.0,
-            health_ratio(health.current_health, health.max_health),
-            if friendly { CYAN } else { RED },
+        let (x, y, w) = hp_anchor(bounds);
+        let h = (w * 0.115).clamp(12.0, 20.0);
+        p.fill(
+            x - w * 0.5 - 3.0,
+            y - h * 0.5 - 3.0,
+            w + 6.0,
+            h + 6.0,
+            BLACK,
+            h * 0.5 + 3.0,
         );
+        p.fill(
+            x - w * 0.5 - 1.0,
+            y - h * 0.5 - 1.0,
+            w + 2.0,
+            h + 2.0,
+            STEEL,
+            h * 0.5 + 1.0,
+        );
+        p.fill(
+            x - w * 0.5 + 1.0,
+            y - h * 0.5 + 1.0,
+            w - 2.0,
+            h - 2.0,
+            BLACK,
+            h * 0.5 - 1.0,
+        );
+        let fill = (w - 6.0) * health_ratio(health.current_health, health.max_health);
+        if fill > 0.0 {
+            p.fill(
+                x - w * 0.5 + 3.0,
+                y - h * 0.5 + 3.0,
+                fill,
+                h - 6.0,
+                if friendly { CYAN } else { RED },
+                (h - 6.0) * 0.5,
+            );
+        }
         if !friendly {
             p.polygon(
-                &[(x - 7.0, y + 30.0), (x + 7.0, y + 30.0), (x, y + 40.0)],
+                &[
+                    (x - 8.0, y + h * 0.5 + 7.0),
+                    (x + 8.0, y + h * 0.5 + 7.0),
+                    (x, y + h * 0.5 + 19.0),
+                ],
+                BLACK,
+            );
+            p.polygon(
+                &[
+                    (x - 5.5, y + h * 0.5 + 8.5),
+                    (x + 5.5, y + h * 0.5 + 8.5),
+                    (x, y + h * 0.5 + 16.0),
+                ],
                 RED,
             );
         }
     }
     let aim = scene
-        .read_component::<ComponentTankController, _, _>(player, |controller| controller.crosshair)
-        .and_then(|marker| marker.game_object(scene))
-        .map(|marker| scene.world_transform(marker).position);
-    if let Some(aim) = aim {
-        let origin = vec3(aim.x, aim.y + 0.035, aim.z);
-        for i in 0..80 {
-            let a = i as f32 * std::f32::consts::TAU / 80.0;
-            let b = (i + 1) as f32 * std::f32::consts::TAU / 80.0;
-            if let (Some(a), Some(b)) = (
-                projection.point(origin + vec3(a.cos() * 0.85, 0.0, a.sin() * 0.85)),
-                projection.point(origin + vec3(b.cos() * 0.85, 0.0, b.sin() * 0.85)),
-            ) {
-                p.line(a, b, BLACK.with_alpha(0.65), 5.0);
-                p.line(a, b, LIGHT, 2.2);
-            }
-        }
-        for direction in [
-            vec3(1.0, 0.0, 0.0),
-            vec3(-1.0, 0.0, 0.0),
-            vec3(0.0, 0.0, 1.0),
-            vec3(0.0, 0.0, -1.0),
-        ] {
-            if let (Some(a), Some(b)) = (
-                projection.point(origin + direction * 1.05),
-                projection.point(origin + direction * 1.45),
-            ) {
-                p.line(a, b, BLACK.with_alpha(0.65), 6.0);
-                p.line(a, b, LIGHT, 3.0);
-            }
-        }
-        if let Some((x, y)) = projection.point(origin) {
-            p.circle(x, y, 2.0, LIGHT);
-        }
-    }
+        .read_component::<ComponentTankController, _, _>(player, |c| c.crosshair)
+        .and_then(|r| r.game_object(scene))
+        .and_then(|o| projection.point(scene.world_transform(o).position));
     let _ = scene.read_component::<ComponentCombatStats, _, _>(player, |stats| {
         for (index, hit) in stats.feedback.iter().enumerate() {
-            if hit.age >= 0.9 {
+            if hit.age >= crate::combat::DAMAGE_FEEDBACK_LIFETIME {
                 continue;
             }
-            let Some((mut x, mut y)) = projection.point(hit.position + vec3(0.0, 2.0, 0.0)) else {
+            let bounds = GameObjectRef::new(hit.target)
+                .game_object(scene)
+                .and_then(|target| projection.visual_bounds(scene, target));
+            let anchor = bounds
+                .map(hp_anchor)
+                .map(|(x, y, w)| (x - w * 0.4, y - 25.0))
+                .or_else(|| projection.point(hit.position).map(|(x, y)| (x, y - 70.0)));
+            let Some((x, base_y)) = anchor else {
                 continue;
             };
-            x += ((index % 3) as f32 - 1.0) * 20.0;
-            y -= 28.0 + hit.age * 70.0;
+            // New hits are appended; each newer hit sits above the surviving older hits.
+            let stack = stats.feedback[..index]
+                .iter()
+                .filter(|older| {
+                    older.target == hit.target
+                        && older.age < crate::combat::DAMAGE_FEEDBACK_LIFETIME
+                })
+                .count();
             let tier = damage_tier(
                 hit.amount,
                 hit.max_health,
@@ -471,101 +459,65 @@ fn paint_world(
                 hud.high_damage_ratio,
             );
             let (size, color) = match tier {
-                DamageTier::High => (43.0, RED),
-                DamageTier::Normal => (32.0, LIGHT),
-                DamageTier::Low => (25.0, MUTED),
+                DamageTier::High => (35.0, RED),
+                DamageTier::Normal => (28.0, LIGHT),
+                DamageTier::Low => (23.0, MUTED),
             };
+            let pop = 1.0 + 0.22 * (1.0 - hit.age / 0.14).clamp(0.0, 1.0);
+            let opacity =
+                ((crate::combat::DAMAGE_FEEDBACK_LIFETIME - hit.age) / 0.35).clamp(0.0, 1.0);
             let number = if hit.amount < 1.0 {
                 format!("-{:.1}", hit.amount)
             } else {
                 format!("-{:.0}", hit.amount)
             };
-            let text = if tier == DamageTier::High {
+            let number = if tier == DamageTier::High {
                 format!("{number}!")
             } else {
                 number
             };
-            let opacity = ((0.9 - hit.age) / 0.3).clamp(0.0, 1.0);
-            for (dx, dy) in [(-1.5, 0.0), (1.5, 0.0), (0.0, -1.5), (0.0, 1.5)] {
-                p.centered(x + dx, y + dy, &text, size, BLACK.with_alpha(opacity));
+            p.label(
+                x,
+                base_y - stack as f32 * 35.0 - hit.age * 10.0,
+                number,
+                size,
+                color.with_alpha(opacity),
+                calyx_engine::ui::TextAnchor::CenterRight,
+                None,
+                true,
+                Some(3.0),
+            );
+            if let Some(PaintCommand::Label(label)) = p.commands.last_mut() {
+                label.scale = pop;
             }
-            p.centered(x, y, &text, size, color.with_alpha(opacity));
         }
         if let Some(hit) = stats
             .feedback
             .iter()
-            .filter(|hit| hit.age < 0.16)
+            .filter(|h| h.age < 0.25)
             .min_by(|a, b| a.age.total_cmp(&b.age))
         {
-            let (x, y) = aim
-                .and_then(|aim| projection.point(aim))
-                .unwrap_or((width * 0.5, height * 0.5));
-            for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
-                p.line(
-                    (x + dx * 9.0, y + dy * 9.0),
-                    (x + dx * 19.0, y + dy * 19.0),
-                    LIGHT.with_alpha(1.0 - hit.age / 0.16),
-                    3.0,
-                );
+            if let Some((x, y)) = aim {
+                let scale = 1.0 + 0.25 * (1.0 - hit.age / 0.1).clamp(0.0, 1.0);
+                let opacity = ((0.25 - hit.age) / 0.1).clamp(0.0, 1.0);
+                for (dx, dy) in [(-1.0, -1.0), (1.0, -1.0), (-1.0, 1.0), (1.0, 1.0)] {
+                    let points = |outer: f32, inner: f32, thick: f32| {
+                        [
+                            (x + dx * inner * scale, y + dy * inner * scale),
+                            (x + dx * outer * scale, y + dy * (outer - thick) * scale),
+                            (
+                                x + dx * (outer + 2.0) * scale,
+                                y + dy * (outer + 2.0) * scale,
+                            ),
+                            (x + dx * (outer - thick) * scale, y + dy * outer * scale),
+                        ]
+                    };
+                    p.polygon(&points(32.0, 8.0, 10.0), BLACK.with_alpha(opacity));
+                    p.polygon(&points(29.0, 11.0, 6.0), LIGHT.with_alpha(opacity));
+                }
             }
         }
     });
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct TankHudState {
-    health: f32,
-    max_health: f32,
-    ammo: u32,
-    max_ammo: u32,
-    reload_remaining: f32,
-    fire_cooldown_remaining: f32,
-    gameplay_locked: bool,
-    /// Seconds until the tank respawns, while it is dead.
-    respawn_remaining: Option<f32>,
-}
-
-fn tank_hud_state(scene: &Scene, game_object: GameObject) -> Option<TankHudState> {
-    let controller = scene
-        .read_component::<ComponentTankController, _, _>(game_object, |component| *component)?;
-    let health =
-        scene.read_component::<ComponentHealth, _, _>(game_object, |component| *component)?;
-    let respawn =
-        scene.read_component::<ComponentRespawnState, _, _>(game_object, |component| *component);
-    Some(TankHudState {
-        health: health.current_health,
-        max_health: health.max_health,
-        ammo: controller.ammo,
-        max_ammo: controller.max_ammo,
-        reload_remaining: controller.reload_remaining,
-        fire_cooldown_remaining: controller.fire_cooldown_remaining,
-        gameplay_locked: respawn.is_some_and(|respawn| respawn.is_gameplay_locked()),
-        respawn_remaining: respawn
-            .filter(|respawn| !respawn.alive)
-            .map(|respawn| respawn.respawn_remaining),
-    })
-}
-
-fn weapon_status_label(
-    capacity: u32,
-    reload_remaining: f32,
-    fire_cooldown_remaining: f32,
-    gameplay_locked: bool,
-    respawn_remaining: Option<f32>,
-) -> String {
-    if capacity == 0 {
-        "DISABLED".to_string()
-    } else if let Some(respawn_remaining) = respawn_remaining {
-        format!("RESPAWN IN {respawn_remaining:.1}s")
-    } else if gameplay_locked {
-        "SYSTEM LOCKED".to_string()
-    } else if reload_remaining > f32::EPSILON {
-        format!("RELOADING {reload_remaining:.1}s")
-    } else if fire_cooldown_remaining > f32::EPSILON {
-        format!("COOLDOWN {fire_cooldown_remaining:.1}s")
-    } else {
-        "READY".to_string()
-    }
 }
 
 #[cfg(test)]
@@ -607,40 +559,50 @@ mod tests {
             .paint_commands
     }
     #[test]
-    fn live_health_ammo_reload_and_timer_are_painted_at_both_viewport_sizes() {
+    fn timer_and_radar_remain_without_removed_bottom_instrument_panels() {
         let (scene, _) = setup();
         for (width, height) in [(1672.0, 941.0), (960.0, 540.0)] {
             let commands = commands(&scene, width, height);
             let text = commands
                 .iter()
                 .filter_map(|c| {
-                    if let PaintCommand::Text { text, .. } = c {
-                        Some(text.as_str())
+                    if let PaintCommand::Label(label) = c {
+                        Some(label.text.as_str())
                     } else {
                         None
                     }
                 })
                 .collect::<Vec<_>>();
-            for expected in [
-                "HULL",
-                "042/090",
-                "CANNON",
-                "2/6",
-                "RELOADING 0.8s",
-                "05:00",
-                "N",
-            ] {
-                assert!(text.contains(&expected), "{expected} in {text:?}");
-            }
-            for command in commands {
-                if let PaintCommand::Text {
-                    rect, font_size, ..
-                } = command
-                {
-                    assert!(rect.height() >= font_size * 1.25);
-                }
-            }
+            assert!(text.contains(&"05:00"));
+            assert!(text.contains(&"N"));
+            assert!(!text
+                .iter()
+                .any(|s| s.contains("HULL") || s.contains("CANNON") || s.contains("RELOAD")));
         }
+    }
+    #[test]
+    fn health_annotation_width_tracks_projected_geometry_and_anchor_clears_top() {
+        let far = hp_anchor(ScreenBounds {
+            left: 100.0,
+            right: 180.0,
+            top: 200.0,
+        });
+        let near = hp_anchor(ScreenBounds {
+            left: 100.0,
+            right: 260.0,
+            top: 200.0,
+        });
+        assert_eq!(far, (140.0, 168.0, 72.0));
+        assert_eq!(near.2, far.2 * 2.0);
+        assert_eq!(
+            hp_anchor(ScreenBounds {
+                left: 0.0,
+                right: 10.0,
+                top: 80.0
+            })
+            .2,
+            48.0
+        );
     }
     #[test]
     fn timer_uses_simulation_delta_resets_with_scene_and_reads_match_state() {
@@ -675,25 +637,17 @@ mod tests {
         assert_eq!(format_time(hud.time(&scene)), "00:42");
     }
     #[test]
-    fn damage_tiers_are_removed_health_ratios_and_weapon_locks_remain_truthful() {
+    fn damage_tiers_are_removed_health_ratios() {
         assert_eq!(damage_tier(10.0, 100.0, 0.15, 0.5), DamageTier::Low);
         assert_eq!(damage_tier(35.0, 100.0, 0.15, 0.5), DamageTier::Normal);
         assert_eq!(damage_tier(60.0, 100.0, 0.15, 0.5), DamageTier::High);
-        assert_eq!(weapon_status_label(6, 0.0, 0.0, false, None), "READY");
-        assert_eq!(
-            weapon_status_label(6, 0.0, 0.3, false, None),
-            "COOLDOWN 0.3s"
-        );
-        assert_eq!(
-            weapon_status_label(6, 0.0, 0.0, true, Some(2.5)),
-            "RESPAWN IN 2.5s"
-        );
     }
     #[test]
     fn scoreboard_is_held_and_bounded_with_many_real_rows() {
         let (mut scene, tank) = setup();
         for i in 0..80 {
             let actor = scene.create(None, None);
+            scene.add_component(actor, ComponentTankController::default());
             scene.add_component(
                 actor,
                 ComponentCombatStats {
@@ -704,18 +658,18 @@ mod tests {
         }
         assert!(!commands(&scene, 960.0, 540.0)
             .iter()
-            .any(|c| matches!(c,PaintCommand::Text{text,..}if text=="SCOREBOARD")));
+            .any(|c| matches!(c,PaintCommand::Label(label)if label.text=="SCOREBOARD")));
         scene.write_component::<ComponentTankHud, _>(tank, |hud| hud.scoreboard_open = true);
         let commands = commands(&scene, 960.0, 540.0);
         assert!(commands
             .iter()
-            .any(|c| matches!(c,PaintCommand::Text{text,..}if text=="SCOREBOARD")));
+            .any(|c| matches!(c,PaintCommand::Label(label)if label.text=="SCOREBOARD")));
         assert!(commands
             .iter()
-            .any(|c| matches!(c,PaintCommand::Text{text,..}if text.starts_with("PAGE 1/"))));
+            .any(|c| matches!(c,PaintCommand::Label(label)if label.text.starts_with("PAGE 1/"))));
         for command in commands {
-            if let PaintCommand::Text { rect, .. } = command {
-                assert!(rect.max.y <= 590.0, "text overflow {rect:?}");
+            if let PaintCommand::Label(label) = command {
+                assert!(label.position.y <= 590.0, "text overflow {label:?}");
             }
         }
     }

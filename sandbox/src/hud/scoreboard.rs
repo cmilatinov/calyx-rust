@@ -1,8 +1,8 @@
 //! Team-grouped live combat statistics. Rendering never synthesizes rows.
-use super::paint::{clipped_name, Painter, BLACK, CYAN, LIGHT, MUTED, RED};
-use crate::combat::{combat_team, ComponentCombatStats};
+use super::paint::{Painter, CYAN, LIGHT, MUTED, RED};
+use crate::combat::{combat_team, is_tank_combatant, ComponentCombatStats};
 use calyx_engine::scene::{GameObject, Scene};
-use calyx_engine::ui::UiColor;
+use calyx_engine::ui::{TextAnchor, UiColor};
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ScoreboardRow {
@@ -18,6 +18,7 @@ pub(super) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<Scoreboa
     let team = combat_team(scene, player);
     let mut rows = scene
         .objects()
+        .filter(|&object| is_tank_combatant(scene, object))
         .filter_map(|object| {
             scene.read_component::<ComponentCombatStats, _, _>(object, |stats| ScoreboardRow {
                 name: scene.name(object),
@@ -75,165 +76,364 @@ pub(super) fn paint_scoreboard(
     height: f32,
     page: usize,
 ) {
-    p.fill(0.0, 0.0, width, height, UiColor::rgba(3, 8, 15, 172), 0.0);
-    let w = (width - 100.0).min(1330.0);
+    p.fill(0.0, 0.0, width, height, UiColor::rgba(3, 8, 15, 185), 0.0);
+    // A translucent radial vignette leaves the panel legible over any scene.
+    let mut points = vec![(width * 0.5, height * 0.5)];
+    let mut colors = vec![UiColor::rgba(0, 0, 0, 0)];
+    let mut indices = Vec::new();
+    for i in 0..=64 {
+        let a = i as f32 * std::f32::consts::TAU / 64.0;
+        points.push((
+            width * 0.5 + a.cos() * width * 0.72,
+            height * 0.5 + a.sin() * height * 0.72,
+        ));
+        colors.push(UiColor::rgba(0, 0, 0, 190));
+        if i > 0 {
+            indices.extend([0, i, i + 1]);
+        }
+    }
+    p.gradient(&points, &colors, &indices);
+    let w = (width * 0.83).clamp(560.0, 1500.0).min(width - 36.0);
     let x = (width - w) * 0.5;
-    let per_team = 6;
     let pages = page_count(rows);
     let page = page.min(pages - 1);
     let visible = rows
         .iter()
-        .filter(|row| row.friendly)
-        .skip(page * per_team)
-        .take(per_team)
-        .chain(
-            rows.iter()
-                .filter(|row| !row.friendly)
-                .skip(page * per_team)
-                .take(per_team),
-        )
-        .cloned()
+        .filter(|r| r.friendly)
+        .skip(page * 6)
+        .take(6)
+        .chain(rows.iter().filter(|r| !r.friendly).skip(page * 6).take(6))
         .collect::<Vec<_>>();
-    let rows = &visible;
     let count = [true, false]
         .iter()
         .map(|side| {
-            rows.iter()
-                .filter(|row| row.friendly == *side)
+            visible
+                .iter()
+                .filter(|r| r.friendly == *side)
                 .count()
                 .max(1)
         })
         .sum::<usize>();
-    let row_h = ((height - 300.0) / count as f32).clamp(26.0, 60.0);
-    let groups = 2.0;
-    let h = 148.0 + count as f32 * row_h + groups * 14.0 + 22.0;
-    let y = ((height - h) * 0.5).max(70.0);
-    p.panel(x, y, w, h, 24.0);
-    p.bevel(x + w * 0.32, y - 35.0, w * 0.36, 80.0, 18.0, BLACK);
-    p.panel(x + w * 0.32, y - 35.0, w * 0.36, 80.0, 18.0);
-    p.line(
-        (x + w * 0.38, y - 33.0),
-        (x + w * 0.62, y - 33.0),
-        CYAN,
-        2.0,
+    let unit = (height / 941.0).clamp(0.65, 1.2);
+    let padding = 32.0 * unit;
+    let gap = 30.0 * unit;
+    let header = 115.0 * unit;
+    let footer = 35.0 * unit;
+    let row_h = ((height * 0.76 - header - footer - gap) / count as f32).clamp(26.0, 66.0 * unit);
+    let h = header + footer + gap + count as f32 * row_h;
+    let y = (height - h) * 0.5 + 10.0 * unit;
+    p.panel(x, y, w, h, 30.0 * unit);
+    let title_w = (w * 0.38).max(260.0 * unit);
+    let title_h = 86.0 * unit;
+    let title_x = x + (w - title_w) * 0.5;
+    let title_y = y - title_h * 0.48;
+    // The title overlaps the main bevel, with a broad soft top glow.
+    p.title_plate(title_x, title_y, title_w, title_h);
+    p.gradient(
+        &[
+            (title_x + title_w * 0.18, title_y + 2.0),
+            (title_x + title_w * 0.5, title_y + 2.0),
+            (title_x + title_w * 0.82, title_y + 2.0),
+            (title_x + title_w * 0.18, title_y + 12.0),
+            (title_x + title_w * 0.5, title_y + 12.0),
+            (title_x + title_w * 0.82, title_y + 12.0),
+        ],
+        &[
+            CYAN.with_alpha(0.0),
+            CYAN.with_alpha(0.3),
+            CYAN.with_alpha(0.0),
+            CYAN.with_alpha(0.0),
+            CYAN.with_alpha(0.0),
+            CYAN.with_alpha(0.0),
+        ],
+        &[0, 1, 4, 0, 4, 3, 1, 2, 5, 1, 5, 4],
     );
-    p.bold_centered(x + w * 0.5, y - 31.0, "SCOREBOARD", 46.0, LIGHT);
-    let left = x + 24.0;
-    let inner = w - 48.0;
+    p.middle(
+        x + w * 0.5,
+        title_y + title_h * 0.5,
+        "SCOREBOARD",
+        46.0 * unit,
+        LIGHT,
+        Some(title_w - 40.0),
+    );
+    let left = x + padding;
+    let inner = w - padding * 2.0;
+    let rank_x = left + inner * 0.065;
+    let icon_x = left + inner * 0.13;
+    let name_x = left + inner * 0.195;
     let columns = [
-        left + inner * 0.53,
-        left + inner * 0.65,
-        left + inner * 0.77,
-        left + inner * 0.91,
+        left + inner * 0.615,
+        left + inner * 0.71,
+        left + inner * 0.805,
+        left + inner * 0.962,
     ];
-    p.text(left + 22.0, y + 70.0, "#", 25.0, LIGHT);
-    p.text(left + 88.0, y + 70.0, "PLAYER", 25.0, LIGHT);
-    p.tank(columns[0] - 25.0, y + 67.0, 1.5, LIGHT);
-    p.skull(columns[1] - 15.0, y + 63.0, 1.3, LIGHT);
-    p.assist(columns[2] - 22.0, y + 66.0, 1.4, LIGHT);
-    p.centered(columns[3], y + 70.0, "SCORE", 25.0, LIGHT);
-    if pages > 1 {
-        p.centered(
-            x + w * 0.5,
-            y + h - 26.0,
-            &format!("PAGE {}/{}  /  SCROLL", page + 1, pages),
-            14.0,
-            MUTED,
-        );
-    }
-    let mut top = y + 115.0;
+    let hy = y + header * 0.68;
+    let font = (row_h * 0.5).clamp(16.0, 32.0 * unit);
+    p.middle(rank_x, hy, "#", 25.0 * unit, MUTED, None);
+    p.label(
+        icon_x,
+        hy,
+        "PLAYER",
+        25.0 * unit,
+        LIGHT,
+        TextAnchor::CenterLeft,
+        None,
+        false,
+        None,
+    );
+    let sym = unit * 1.15;
+    p.tank(columns[0] - 25.5 * sym, hy - 12.0 * sym, sym, LIGHT);
+    p.skull(columns[1] - 11.5 * sym, hy - 12.5 * sym, sym, LIGHT);
+    p.assist(columns[2] - 16.5 * sym, hy - 11.5 * sym, sym, LIGHT);
+    p.label(
+        columns[3],
+        hy,
+        "SCORE",
+        25.0 * unit,
+        LIGHT,
+        TextAnchor::CenterRight,
+        None,
+        false,
+        None,
+    );
+    let mut top = y + header;
     for friendly in [true, false] {
-        let team_rows = rows
+        let group = visible
             .iter()
-            .filter(|row| row.friendly == friendly)
+            .filter(|r| r.friendly == friendly)
             .collect::<Vec<_>>();
+        let n = group.len().max(1);
+        let gh = n as f32 * row_h;
         let color = if friendly { CYAN } else { RED };
-        let n = team_rows.len().max(1);
-        let group_h = n as f32 * row_h + 8.0;
-        p.bevel(left, top, inner, group_h, 9.0, color.with_alpha(0.68));
+        let leader_tint = if friendly {
+            UiColor::rgba(25, 64, 81, 255)
+        } else {
+            UiColor::rgba(70, 35, 42, 255)
+        };
         p.bevel(
-            left + 1.5,
-            top + 1.5,
-            inner - 3.0,
-            group_h - 3.0,
-            8.0,
-            UiColor::rgba(15, 24, 32, 255),
+            left,
+            top,
+            inner,
+            gh,
+            15.0 * unit,
+            UiColor::rgba(77, 95, 108, 220),
         );
-        if team_rows.is_empty() {
-            p.text(
-                left + 88.0,
-                top + 10.0,
+        p.bevel(
+            left + 2.0,
+            top + 2.0,
+            inner - 4.0,
+            gh - 4.0,
+            14.0 * unit,
+            UiColor::rgba(14, 23, 30, 250),
+        );
+        // Angled left edge: full team colour at the leader, fading down the section.
+        p.gradient(
+            &[
+                (left + 16.0 * unit, top),
+                (left + 32.0 * unit, top),
+                (left + 13.0 * unit, top + 18.0 * unit),
+                (left + 13.0 * unit, top + gh - 15.0 * unit),
+                (left + 30.0 * unit, top + gh),
+                (left + 16.0 * unit, top + gh),
+                (left, top + gh - 16.0 * unit),
+                (left, top + 17.0 * unit),
+            ],
+            &[
+                color,
+                color,
+                color,
+                color.with_alpha(0.25),
+                color.with_alpha(0.2),
+                color.with_alpha(0.2),
+                color.with_alpha(0.25),
+                color,
+            ],
+            &[0, 1, 2, 0, 2, 7, 7, 2, 3, 7, 3, 6, 6, 3, 4, 6, 4, 5],
+        );
+        if group.is_empty() {
+            p.label(
+                name_x,
+                top + row_h * 0.5,
                 if page == 0 {
                     "No combatants"
                 } else {
                     "No more combatants"
                 },
-                18.0,
+                font,
                 MUTED,
+                TextAnchor::CenterLeft,
+                None,
+                false,
+                None,
             );
         }
-        for (index, row) in team_rows.iter().enumerate() {
-            let ry = top + 4.0 + index as f32 * row_h;
-            let highlighted = page == 0 && index == 0;
-            p.fill(
-                left + 5.0,
-                ry,
-                inner - 10.0,
-                row_h,
-                if highlighted {
-                    if friendly {
-                        UiColor::rgba(37, 63, 77, 255)
-                    } else {
-                        UiColor::rgba(65, 36, 44, 255)
-                    }
-                } else if index % 2 == 0 {
-                    UiColor::rgba(24, 34, 44, 255)
-                } else {
-                    UiColor::rgba(19, 28, 37, 255)
-                },
-                0.0,
-            );
-            p.fill(left + 3.0, ry, 4.0, row_h, color, 0.0);
-            let size = (row_h * 0.5).min(29.0);
-            let text_y = ry + (row_h - size * 1.25) * 0.5;
-            p.text(
-                left + 24.0,
-                text_y,
-                (page * per_team + index + 1).to_string(),
-                size,
-                LIGHT,
-            );
-            p.tank(left + 72.0, ry + row_h * 0.27, 1.7, LIGHT);
-            p.text(
-                left + 145.0,
-                text_y,
-                clipped_name(&row.name, inner * 0.43 - 145.0, size),
-                size,
-                color,
-            );
-            if row.is_player {
-                p.circle(left + inner * 0.45, ry + row_h * 0.5, 3.0, LIGHT);
-            }
-            for (column, value) in
-                columns
-                    .iter()
-                    .zip([row.kills, row.deaths, row.assists, row.score])
-            {
-                p.centered(
-                    *column,
-                    text_y,
-                    &grouped(value),
-                    size,
-                    if highlighted { LIGHT } else { MUTED },
+        for (index, row) in group.iter().enumerate() {
+            let ry = top + index as f32 * row_h;
+            let cy = ry + row_h * 0.5;
+            let leader = page == 0 && index == 0;
+            if leader {
+                p.gradient(
+                    &[
+                        (left + 20.0 * unit, ry + 2.0),
+                        (left + inner - 16.0 * unit, ry + 2.0),
+                        (left + inner - 2.0, ry + 16.0 * unit),
+                        (left + inner - 2.0, ry + row_h - 2.0),
+                        (left + 12.0 * unit, ry + row_h - 2.0),
+                        (left + 12.0 * unit, ry + 16.0 * unit),
+                    ],
+                    &[
+                        leader_tint,
+                        UiColor::rgba(17, 26, 34, 255),
+                        UiColor::rgba(17, 26, 34, 255),
+                        UiColor::rgba(17, 26, 34, 255),
+                        leader_tint,
+                        leader_tint,
+                    ],
+                    &[0, 1, 2, 0, 2, 3, 0, 3, 4, 0, 4, 5],
+                );
+                p.line(
+                    (left + 25.0 * unit, ry + 2.0),
+                    (left + inner - 18.0 * unit, ry + 2.0),
+                    color.with_alpha(0.8),
+                    2.0,
+                );
+                p.line(
+                    (left + 14.0 * unit, ry + row_h - 2.0),
+                    (left + inner - 3.0, ry + row_h - 2.0),
+                    color.with_alpha(0.6),
+                    2.0,
+                );
+            } else if index % 2 == 0 {
+                p.fill(
+                    left + 14.0 * unit,
+                    ry,
+                    inner - 17.0 * unit,
+                    row_h,
+                    UiColor::rgba(25, 35, 44, 255),
+                    0.0,
                 );
             }
+            if row.is_player {
+                p.polygon(
+                    &[
+                        (rank_x - 25.0 * unit, cy - 6.0 * unit),
+                        (rank_x - 18.0 * unit, cy),
+                        (rank_x - 25.0 * unit, cy + 6.0 * unit),
+                    ],
+                    color,
+                );
+            }
+            p.middle(
+                rank_x,
+                cy,
+                (page * 6 + index + 1).to_string(),
+                font,
+                MUTED,
+                None,
+            );
+            let ts = (row_h * 0.42) / 24.0;
+            p.tank(icon_x - 25.5 * ts, cy - 12.0 * ts, ts, LIGHT);
+            p.label(
+                name_x,
+                cy,
+                &row.name,
+                font * 1.1,
+                color,
+                TextAnchor::CenterLeft,
+                Some(columns[0] - name_x - inner * 0.07),
+                false,
+                None,
+            );
+            for (column, value) in columns[..3]
+                .iter()
+                .zip([row.kills, row.deaths, row.assists])
+            {
+                p.middle(
+                    *column,
+                    cy,
+                    value.to_string(),
+                    font,
+                    if leader { LIGHT } else { MUTED },
+                    None,
+                );
+            }
+            p.label(
+                columns[3],
+                cy,
+                grouped(row.score),
+                font,
+                LIGHT,
+                TextAnchor::CenterRight,
+                None,
+                false,
+                None,
+            );
         }
-        top += group_h + 18.0;
+        top += gh + gap;
+    }
+    if pages > 1 {
+        p.middle(
+            x + w * 0.5,
+            y + h - footer * 0.45,
+            format!("PAGE {}/{}  /  SCROLL", page + 1, pages),
+            14.0 * unit,
+            MUTED,
+            None,
+        );
     }
 }
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn sentry_kill_with_tank_contribution_adds_only_the_victim_death_to_scoreboard() {
+        use crate::combat::{record_damage, record_kill, KillEvent};
+        let mut scene = calyx_engine::test_support::test_scene();
+        let attacker = scene.create(
+            Some(calyx_engine::component::ComponentID {
+                name: "Helper".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        let victim = scene.create(
+            Some(calyx_engine::component::ComponentID {
+                name: "Victim".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        for (object, team) in [(attacker, 0), (victim, 1)] {
+            scene.add_component(object, crate::tank::ComponentTankController::default());
+            scene.add_component(
+                object,
+                ComponentCombatStats {
+                    team,
+                    ..Default::default()
+                },
+            );
+        }
+        let sentry = scene.create(
+            Some(calyx_engine::component::ComponentID {
+                name: "Sentry".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(sentry, crate::sentry::ComponentSentry::default());
+        scene.add_component(sentry, ComponentCombatStats::default());
+        record_damage(&mut scene, victim, Some(attacker), 35.0, 100.0);
+        record_damage(&mut scene, victim, Some(sentry), 65.0, 100.0);
+        let event = KillEvent::new(&scene, Some(sentry), victim);
+        record_kill(&mut scene, &event);
+        let rows = scoreboard_rows(&scene, attacker);
+        assert_eq!(rows.len(), 2);
+        assert!(!rows.iter().any(|r| r.name == "Sentry"));
+        for row in rows {
+            assert_eq!((row.kills, row.score, row.assists), (0, 0, 0));
+            assert_eq!(row.deaths, u32::from(row.name == "Victim"));
+        }
+    }
     #[test]
     fn groups_sort_by_actual_score_then_kills_and_preserve_assists() {
         let mut scene = calyx_engine::test_support::test_scene();
@@ -245,6 +445,7 @@ mod tests {
             (friend, 0, 150, 1, 1),
             (enemy, 1, 300, 3, 0),
         ] {
+            scene.add_component(object, crate::tank::ComponentTankController::default());
             scene.add_component(
                 object,
                 ComponentCombatStats {
@@ -256,6 +457,18 @@ mod tests {
                 },
             );
         }
+        let sentry = scene.create(
+            Some(calyx_engine::component::ComponentID {
+                name: "Sentry".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(sentry, crate::sentry::ComponentSentry::default());
+        scene.add_component(sentry, ComponentCombatStats::default());
+        let target = scene.create(None, None);
+        scene.add_component(target, crate::tank::ComponentProjectileTarget::default());
+        scene.add_component(target, ComponentCombatStats::default());
         let rows = scoreboard_rows(&scene, player);
         assert_eq!(
             rows.iter()

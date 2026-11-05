@@ -9,7 +9,7 @@ use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankContr
 use calyx_engine::component::ComponentCollider;
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Scene};
-use calyx_engine::ui::{PaintCommand, UiColor, UiPoint, UiRect, UiSize};
+use calyx_engine::ui::{UiColor, UiPoint, UiRect, UiSize};
 use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 
 /// Half the side of the square the map shows when the scene has no arena,
@@ -364,26 +364,36 @@ pub(super) fn paint_map(
     radius: f32,
     vision: f32,
 ) {
-    p.circle(x, y, radius + 10.0, BLACK);
-    p.circle(x, y, radius + 7.0, STEEL);
-    p.circle(x, y, radius + 4.0, BLACK);
-    p.circle(x, y, radius + 2.0, UiColor::rgba(139, 158, 169, 255));
-    p.circle(x, y, radius, UiColor::rgba(22, 33, 39, 255));
+    for (extra, color) in [
+        (12.0, BLACK),
+        (9.0, STEEL),
+        (5.0, UiColor::rgba(139, 158, 169, 255)),
+        (2.0, BLACK),
+        (0.0, UiColor::rgba(3, 8, 12, 255)),
+    ] {
+        p.circle(x, y, radius + extra, color);
+    }
     let rect = UiRect::from_min_size(
         UiPoint::new(x - radius, y - radius),
         UiSize::new(radius * 2.0, radius * 2.0),
     );
+    let extent = vision.max(1.0) / 0.70;
+    let view = MinimapView::facing(
+        state.player_position,
+        vec2(extent, extent),
+        state.view.right,
+    );
     let mapped = |world: Vec2| {
-        let point = state.view.map_point(world, rect);
+        let point = view.map_point(world, rect);
         (point.x, point.y)
     };
     let polygon = |p: &mut Painter, points: Vec<(f32, f32)>, color| {
-        let points = clip_circle(points, (x, y), radius - 2.0);
+        let points = clip_circle(points, (x, y), radius - 3.0);
         if points.len() >= 3 {
             p.polygon(&points, color);
         }
     };
-    let corners = |area: GroundRect| {
+    let world_corners = |area: GroundRect| {
         let [a, b] = area.half_axes;
         [
             area.center - a - b,
@@ -391,91 +401,122 @@ pub(super) fn paint_map(
             area.center + a + b,
             area.center - a + b,
         ]
-        .map(mapped)
-        .to_vec()
     };
     if let Some(floor) = state.floor {
-        polygon(p, corners(floor), UiColor::rgba(43, 54, 57, 255));
-    }
-    let origin = mapped(state.player_position);
-    let mut points = Vec::new();
-    let mut indices = Vec::new();
-    for i in 0..128 {
-        let a = i as f32 * std::f32::consts::TAU / 128.0;
-        let b = (i + 1) as f32 * std::f32::consts::TAU / 128.0;
-        let polygon = clip_circle(
-            vec![
-                origin,
-                mapped(state.sight_end(a, vision)),
-                mapped(state.sight_end(b, vision)),
-            ],
-            (x, y),
-            radius - 2.0,
+        polygon(
+            p,
+            world_corners(floor).into_iter().map(mapped).collect(),
+            UiColor::rgba(8, 15, 21, 255),
         );
-        let base = points.len() as u32;
-        points.extend(polygon.iter().map(|&(x, y)| p.point(x, y)));
-        for vertex in 1..polygon.len().saturating_sub(1) {
-            indices.extend([base, base + vertex as u32, base + vertex as u32 + 1]);
+    }
+    // Concentric, vertex-coloured rays produce a soft radial falloff, with
+    // every ray terminated by actual live cover. Nothing lights behind a wall.
+    let mut points = Vec::new();
+    let mut colors = Vec::new();
+    let mut indices = Vec::new();
+    const RAYS: usize = 192;
+    const RINGS: usize = 12;
+    for i in 0..=RAYS {
+        let angle = i as f32 * std::f32::consts::TAU / RAYS as f32;
+        let end = state.sight_end(angle, vision);
+        let length = (end - state.player_position).norm();
+        for ring in 0..=RINGS {
+            let t = ring as f32 / RINGS as f32;
+            points.push(mapped(
+                state.player_position + (end - state.player_position) * t,
+            ));
+            let distance = t * length / vision.max(1.0);
+            let radial = (1.0 - distance.powi(2)).clamp(0.0, 1.0);
+            let edge = if ring == RINGS { 0.0 } else { 1.0 };
+            colors.push(UiColor::rgba(28, 145, 191, (radial * edge * 110.0) as u8));
+            if i > 0 && ring > 0 {
+                let b = (i * (RINGS + 1) + ring) as u32;
+                let a = b - (RINGS + 1) as u32;
+                indices.extend([a - 1, a, b, a - 1, b, b - 1]);
+            }
         }
     }
-    if !indices.is_empty() {
-        p.commands.push(PaintCommand::FillTriangleMesh {
-            points,
-            indices,
-            color: UiColor::rgba(72, 126, 132, 115),
-        });
-    }
+    p.gradient(&points, &colors, &indices);
     for &cover in &state.cover {
-        polygon(p, corners(cover), UiColor::rgba(124, 133, 130, 255));
+        let corners = world_corners(cover);
+        let seen = corners.iter().any(|&point| state.visible(point, vision));
+        polygon(
+            p,
+            corners.into_iter().map(mapped).collect(),
+            if seen {
+                UiColor::rgba(72, 97, 110, 255)
+            } else {
+                UiColor::rgba(11, 19, 26, 255)
+            },
+        );
+        if seen {
+            let points = corners.map(mapped);
+            for i in 0..4 {
+                let a = points[i];
+                let b = points[(i + 1) % 4];
+                if (a.0 - x).hypot(a.1 - y) < radius - 4.0
+                    && (b.0 - x).hypot(b.1 - y) < radius - 4.0
+                {
+                    p.line(a, b, UiColor::rgba(101, 133, 146, 230), 1.5);
+                }
+            }
+        }
     }
     for blip in &state.blips {
         if !blip.friendly && !state.visible(blip.position, vision) {
             continue;
         }
         let point = mapped(blip.position);
-        if (point.0 - x).hypot(point.1 - y) > radius - 10.0 {
+        if (point.0 - x).hypot(point.1 - y) > radius - 12.0 {
             continue;
         }
-        let color = if blip.friendly { CYAN } else { RED };
         if blip.kind == BlipKind::Player {
-            let dir = state
-                .view
-                .map_direction(blip.heading.unwrap_or(vec2(0.0, 1.0)));
+            let dir = view.map_direction(blip.heading.unwrap_or(vec2(0.0, 1.0)));
             let side = vec2(-dir.y, dir.x);
-            p.polygon(
-                &[
-                    (point.0 + dir.x * 10.0, point.1 + dir.y * 10.0),
+            // Concave chevron, split into two convex blade triangles.
+            for (size, color) in [(14.0, BLACK), (11.0, LIGHT)] {
+                let at = |forward: f32, sideways: f32| {
                     (
-                        point.0 - dir.x * 7.0 + side.x * 6.0,
-                        point.1 - dir.y * 7.0 + side.y * 6.0,
-                    ),
-                    (
-                        point.0 - dir.x * 7.0 - side.x * 6.0,
-                        point.1 - dir.y * 7.0 - side.y * 6.0,
-                    ),
-                ],
-                LIGHT,
-            );
+                        point.0 + dir.x * forward * size + side.x * sideways * size,
+                        point.1 + dir.y * forward * size + side.y * sideways * size,
+                    )
+                };
+                for sign in [-1.0, 1.0] {
+                    p.polygon(
+                        &[at(1.0, 0.0), at(-0.75, sign * 0.7), at(-0.25, 0.0)],
+                        color,
+                    );
+                }
+            }
         } else {
-            p.circle(point.0, point.1, 5.0, BLACK);
-            p.circle(point.0, point.1, 3.7, color);
+            p.circle(point.0, point.1, 8.5, BLACK);
+            p.circle(
+                point.0,
+                point.1,
+                6.5,
+                if blip.friendly { CYAN } else { RED },
+            );
         }
     }
-    p.ring(x, y, radius - 1.0, UiColor::rgba(179, 199, 207, 180), 1.0);
-
-    // North points through the same camera-relative rotation as arena geometry.
-    let north = state.view.map_direction(vec2(0.0, 1.0));
-    let nx = x + north.x * (radius - 1.0);
-    let ny = y + north.y * (radius - 1.0);
-    p.circle(nx, ny, 16.0, BLACK);
-    p.ring(nx, ny, 15.0, STEEL, 1.0);
-    p.centered(nx, ny - 12.0, "N", 18.0, LIGHT);
-    p.line(
-        (x + north.x * (radius - 21.0), y + north.y * (radius - 21.0)),
-        (x + north.x * (radius - 11.0), y + north.y * (radius - 11.0)),
-        MUTED,
-        1.5,
-    );
+    p.ring(x, y, radius - 2.0, BLACK.with_alpha(0.75), 5.0);
+    for i in 0..24 {
+        let a = i as f32 * std::f32::consts::TAU / 24.0;
+        let major = i % 6 == 0;
+        let inside = radius + if major { 2.0 } else { 5.0 };
+        p.line(
+            (x + a.cos() * inside, y + a.sin() * inside),
+            (x + a.cos() * (radius + 9.0), y + a.sin() * (radius + 9.0)),
+            MUTED.with_alpha(if major { 0.8 } else { 0.4 }),
+            if major { 2.5 } else { 1.5 },
+        );
+    }
+    let north = view.map_direction(vec2(0.0, 1.0));
+    let nx = x + north.x * (radius + 5.0);
+    let ny = y + north.y * (radius + 5.0);
+    p.circle(nx, ny, 19.0, BLACK);
+    p.circle(nx, ny, 17.0, STEEL);
+    p.circle(nx, ny, 14.5, BLACK);
+    p.middle(nx, ny, "N", 24.0, LIGHT, None);
 }
 
 #[cfg(test)]

@@ -1,6 +1,8 @@
 use super::geometry::{UiPoint, UiRect};
 use super::paint::PaintCommand;
 use super::style::{Border, CornerRadius, UiColor, UiTransform};
+use super::TextLabel;
+mod text;
 
 /// Rendering backend boundary for runtime UI paint commands.
 pub trait UiBackend {
@@ -18,6 +20,8 @@ pub trait UiBackend {
     fn fill_triangle_mesh(&mut self, points: &[UiPoint], indices: &[u32], color: UiColor);
     fn stroke_rect(&mut self, rect: UiRect, border: Border, radius: CornerRadius);
     fn draw_text(&mut self, rect: UiRect, text: &str, color: UiColor, font_size: f32);
+    fn draw_label(&mut self, label: &TextLabel);
+    fn color_mesh(&mut self, points: &[UiPoint], colors: &[UiColor], indices: &[u32]);
     fn draw_image(
         &mut self,
         rect: UiRect,
@@ -31,6 +35,12 @@ pub trait UiBackend {
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum BackendOp<T> {
+    Label(TextLabel),
+    ColorMesh {
+        points: Vec<UiPoint>,
+        colors: Vec<UiColor>,
+        indices: Vec<u32>,
+    },
     BeginFrame {
         viewport: UiRect,
         scale_factor: f32,
@@ -90,6 +100,19 @@ pub struct RecordingBackend<T: Clone> {
 
 impl<T: Clone> UiBackend for RecordingBackend<T> {
     type TextureId = T;
+
+    fn draw_label(&mut self, label: &TextLabel) {
+        self.ops.push(BackendOp::Label(label.clone()));
+    }
+    fn color_mesh(&mut self, points: &[UiPoint], colors: &[UiColor], indices: &[u32]) {
+        if points.len() == colors.len() && valid_triangle_mesh(points, indices) {
+            self.ops.push(BackendOp::ColorMesh {
+                points: points.to_vec(),
+                colors: colors.to_vec(),
+                indices: indices.to_vec(),
+            });
+        }
+    }
 
     fn begin_frame(&mut self, viewport: UiRect, scale_factor: f32) {
         self.ops.push(BackendOp::BeginFrame {
@@ -200,6 +223,12 @@ pub fn render_commands<B, F>(
     backend.begin_frame(viewport, scale_factor);
     for command in commands {
         match command {
+            PaintCommand::Label(label) => backend.draw_label(label),
+            PaintCommand::ColorMesh {
+                points,
+                colors,
+                indices,
+            } => backend.color_mesh(points, colors, indices),
             PaintCommand::PushClip(rect) => backend.push_clip(*rect),
             PaintCommand::PopClip => backend.pop_clip(),
             PaintCommand::PushTransform { rect, transform } => {
@@ -255,6 +284,7 @@ pub struct EguiUiBackend<'a> {
 
 impl<'a> EguiUiBackend<'a> {
     pub fn new(painter: &'a egui::Painter) -> Self {
+        text::install_fonts(painter.ctx());
         Self {
             painter,
             clip_stack: Vec::new(),
@@ -265,6 +295,25 @@ impl<'a> EguiUiBackend<'a> {
 
 impl UiBackend for EguiUiBackend<'_> {
     type TextureId = egui::TextureId;
+
+    fn draw_label(&mut self, label: &TextLabel) {
+        let mut label = label.clone();
+        label.position = self.transform_point(label.position);
+        text::paint_label(&self.active_painter(), &label);
+    }
+
+    fn color_mesh(&mut self, points: &[UiPoint], colors: &[UiColor], indices: &[u32]) {
+        if points.len() != colors.len() || !valid_triangle_mesh(points, indices) {
+            return;
+        }
+        let mut mesh = egui::Mesh::default();
+        for (point, color) in points.iter().zip(colors) {
+            let point = self.transform_point(*point);
+            mesh.colored_vertex(egui::pos2(point.x, point.y), to_egui_color(*color));
+        }
+        mesh.indices.extend_from_slice(indices);
+        self.active_painter().add(egui::Shape::mesh(mesh));
+    }
 
     fn begin_frame(&mut self, _viewport: UiRect, _scale_factor: f32) {}
 

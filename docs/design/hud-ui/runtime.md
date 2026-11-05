@@ -61,3 +61,21 @@ The exact API may evolve. Gameplay widgets, layout, event dispatch, style resolu
 Code-first usage has priority. Where practical, make `Theme`, `Style`, `CornerRadius`, design tokens, screen-class overrides, and reusable layout data reflectable and serializable.
 
 Future editor support may include theme assets, inspector-editable style resources, UI documents, and visual layout editing. Do not make visual authoring an MVP blocker.
+
+## Styled text and gradients
+
+`PaintCommand::Label` carries a backend-neutral font face, anchor, optional
+maximum width and outline. The backend measures and truncates using the actual
+font layout; gameplay code never estimates character advances. The egui adapter
+loads bundled Barlow Bold/Bold Italic (OFL license and provenance
+are adjacent to the font assets). An outline dilates the laid-out glyph coverage
+mask and paints one image. A bounded 128-entry texture cache reuses those masks;
+fade and pop apply as image tint and scale instead of rerasterizing each frame.
+
+`ColorMesh` carries indexed vertices with individual colours for gradients,
+including soft occluded radar visibility and team leader highlights. The
+recording backend preserves these primitives for tests.
+
+World HP annotations project `Scene::visual_bound_corners`: transformed local
+bounds of visible enabled static meshes below the actor. They therefore follow
+tank scale, hierarchy and camera distance instead of a fixed world-height guess.

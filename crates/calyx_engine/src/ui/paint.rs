@@ -6,6 +6,13 @@ use super::widgets::UiArena;
 /// Backend-neutral paint command.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaintCommand {
+    Label(super::TextLabel),
+    /// An indexed mesh with a color per vertex, for continuous gradients.
+    ColorMesh {
+        points: Vec<UiPoint>,
+        colors: Vec<UiColor>,
+        indices: Vec<u32>,
+    },
     PushClip(UiRect),
     PopClip,
     PushTransform {

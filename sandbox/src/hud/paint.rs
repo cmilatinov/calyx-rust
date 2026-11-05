@@ -1,5 +1,8 @@
 //! Small vector vocabulary shared by the concept HUD panels and symbols.
-use calyx_engine::ui::{CornerRadius, PaintCommand, UiColor, UiPoint, UiRect, UiSize};
+use calyx_engine::ui::{
+    CornerRadius, PaintCommand, TextAnchor, TextLabel, TextOutline, UiColor, UiFont, UiPoint,
+    UiRect, UiSize,
+};
 
 pub(super) const PANEL: UiColor = UiColor::rgba(18, 25, 33, 245);
 pub(super) const STEEL: UiColor = UiColor::rgba(89, 103, 117, 255);
@@ -18,9 +21,7 @@ impl Painter {
     pub fn new(viewport: UiRect) -> Self {
         Self {
             commands: vec![PaintCommand::PushClip(viewport)],
-            scale: ((viewport.max.x - viewport.min.x) / 1672.0)
-                .min((viewport.max.y - viewport.min.y) / 941.0)
-                .max(0.2),
+            scale: 1.0,
             origin: viewport.min,
         }
     }
@@ -73,29 +74,29 @@ impl Painter {
         );
     }
     pub fn panel(&mut self, x: f32, y: f32, w: f32, h: f32, cut: f32) {
-        self.bevel(x - 2.0, y - 2.0, w + 4.0, h + 4.0, cut + 1.0, BLACK);
+        self.bevel(x - 3.0, y - 3.0, w + 6.0, h + 6.0, cut + 1.0, BLACK);
         self.bevel(x, y, w, h, cut, STEEL);
         self.bevel(
-            x + 2.0,
-            y + 2.0,
-            w - 4.0,
-            h - 4.0,
+            x + 3.0,
+            y + 3.0,
+            w - 6.0,
+            h - 6.0,
             cut - 1.0,
             UiColor::rgba(37, 49, 61, 255),
         );
         self.bevel(
-            x + 5.0,
-            y + 5.0,
-            w - 10.0,
-            h - 10.0,
+            x + 7.0,
+            y + 7.0,
+            w - 14.0,
+            h - 14.0,
             (cut - 3.0).max(1.0),
             BLACK,
         );
         self.bevel(
-            x + 6.0,
-            y + 6.0,
-            w - 12.0,
-            h - 12.0,
+            x + 9.0,
+            y + 9.0,
+            w - 18.0,
+            h - 18.0,
             (cut - 4.0).max(1.0),
             PANEL,
         );
@@ -106,26 +107,121 @@ impl Painter {
             1.0,
         );
     }
-    pub fn text(&mut self, x: f32, y: f32, text: impl Into<String>, size: f32, color: UiColor) {
-        let text = text.into();
-        let width = text_width(&text, size) + 8.0;
-        self.commands.push(PaintCommand::Text {
-            rect: self.rect(x, y, width, size * 1.35),
-            text,
-            color,
+    #[allow(clippy::too_many_arguments)]
+    pub fn label(
+        &mut self,
+        x: f32,
+        y: f32,
+        text: impl Into<String>,
+        size: f32,
+        color: UiColor,
+        anchor: TextAnchor,
+        width: Option<f32>,
+        italic: bool,
+        outline: Option<f32>,
+    ) {
+        self.commands.push(PaintCommand::Label(TextLabel {
+            position: self.point(x, y),
+            text: text.into(),
+            font: if italic {
+                UiFont::BoldItalic
+            } else {
+                UiFont::Bold
+            },
             font_size: size * self.scale,
+            scale: 1.0,
+            color,
+            anchor,
+            max_width: width.map(|w| w * self.scale),
+            outline: outline.map(|width| TextOutline {
+                width: width * self.scale,
+                color: BLACK.with_alpha(color.a as f32 / 255.0),
+            }),
+        }));
+    }
+    pub fn middle(
+        &mut self,
+        x: f32,
+        y: f32,
+        text: impl Into<String>,
+        size: f32,
+        color: UiColor,
+        width: Option<f32>,
+    ) {
+        self.label(
+            x,
+            y,
+            text,
+            size,
+            color,
+            TextAnchor::Center,
+            width,
+            false,
+            None,
+        );
+    }
+    pub fn gradient(&mut self, points: &[(f32, f32)], colors: &[UiColor], indices: &[u32]) {
+        self.commands.push(PaintCommand::ColorMesh {
+            points: points.iter().map(|&(x, y)| self.point(x, y)).collect(),
+            colors: colors.to_vec(),
+            indices: indices.to_vec(),
         });
     }
-    pub fn centered(&mut self, x: f32, y: f32, text: &str, size: f32, color: UiColor) {
-        self.text(x - text_width(text, size) * 0.5, y, text, size, color);
+    pub fn title_plate(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        for (inset, color) in [
+            (0.0, BLACK),
+            (3.0, STEEL),
+            (6.0, UiColor::rgba(137, 153, 165, 255)),
+            (8.0, BLACK),
+            (11.0, PANEL),
+        ] {
+            let x = x + inset;
+            let y = y + inset;
+            let w = w - inset * 2.0;
+            let h = h - inset * 2.0;
+            self.polygon(
+                &[
+                    (x + h * 0.4, y),
+                    (x + w - h * 0.4, y),
+                    (x + w, y + h * 0.5),
+                    (x + w - h * 0.4, y + h),
+                    (x + h * 0.4, y + h),
+                    (x, y + h * 0.5),
+                ],
+                color,
+            );
+        }
     }
-    pub fn bold_centered(&mut self, x: f32, y: f32, text: &str, size: f32, color: UiColor) {
-        self.centered(x, y, text, size, color);
-        self.centered(x + 0.65, y, text, size, color);
-    }
-    pub fn bold_text(&mut self, x: f32, y: f32, text: &str, size: f32, color: UiColor) {
-        self.text(x, y, text, size, color);
-        self.text(x + 0.65, y, text, size, color);
+    pub fn plate(&mut self, x: f32, y: f32, w: f32, h: f32) {
+        for (inset, color) in [
+            (0.0, BLACK),
+            (3.0, STEEL),
+            (6.0, UiColor::rgba(137, 153, 165, 255)),
+            (8.0, BLACK),
+            (11.0, PANEL),
+        ] {
+            let x = x + inset;
+            let y = y + inset;
+            let w = w - 2.0 * inset;
+            let h = h - 2.0 * inset;
+            self.polygon(
+                &[
+                    (x + w * 0.08, y),
+                    (x + w * 0.92, y),
+                    (x + w, y + h * 0.24),
+                    (x + w * 0.87, y + h),
+                    (x + w * 0.13, y + h),
+                    (x, y + h * 0.24),
+                ],
+                color,
+            );
+        }
+        self.line(
+            (x + w * 0.12, y + 6.0),
+            (x + w * 0.88, y + 6.0),
+            UiColor::rgba(188, 210, 222, 160),
+            2.0,
+        );
     }
     pub fn circle(&mut self, x: f32, y: f32, r: f32, color: UiColor) {
         self.fill(x - r, y - r, 2.0 * r, 2.0 * r, color, r);
@@ -143,15 +239,20 @@ impl Painter {
         }
     }
     pub fn tank(&mut self, x: f32, y: f32, s: f32, color: UiColor) {
-        self.bevel(x, y + 5.0 * s, 28.0 * s, 12.0 * s, 3.0 * s, color);
-        self.bevel(x + 6.0 * s, y, 14.0 * s, 10.0 * s, 3.0 * s, color);
-        self.fill(x + 18.0 * s, y + 3.0 * s, 16.0 * s, 3.0 * s, color, 0.0);
-        self.line(
-            (x + 3.0 * s, y + 14.0 * s),
-            (x + 24.0 * s, y + 14.0 * s),
-            PANEL,
-            1.5 * s,
+        // Broad tread/body silhouette, stepped turret, roof hatch, long cannon.
+        self.bevel(x, y + 11.0 * s, 42.0 * s, 13.0 * s, 5.0 * s, color);
+        self.polygon(
+            &[
+                (x + 5.0 * s, y + 12.0 * s),
+                (x + 12.0 * s, y + 4.0 * s),
+                (x + 29.0 * s, y + 4.0 * s),
+                (x + 33.0 * s, y + 12.0 * s),
+            ],
+            color,
         );
+        self.fill(x + 16.0 * s, y, 13.0 * s, 3.0 * s, color, 0.6 * s);
+        self.fill(x + 28.0 * s, y + 7.0 * s, 22.0 * s, 4.0 * s, color, 0.8 * s);
+        self.fill(x + 47.0 * s, y + 5.0 * s, 4.0 * s, 7.0 * s, color, s);
     }
     pub fn skull(&mut self, x: f32, y: f32, s: f32, color: UiColor) {
         self.bevel(x, y, 23.0 * s, 19.0 * s, 6.0 * s, color);
@@ -168,91 +269,61 @@ impl Painter {
         }
     }
     pub fn assist(&mut self, x: f32, y: f32, s: f32, color: UiColor) {
-        self.polygon(
+        let draw = |p: &mut Self, points: &[(f32, f32)], c| {
+            p.polygon(
+                &points
+                    .iter()
+                    .map(|&(a, b)| (x + a * s, y + b * s))
+                    .collect::<Vec<_>>(),
+                c,
+            )
+        };
+        // Two cuffs and palms meeting around a shared thumb, with four fingers.
+        draw(
+            self,
+            &[(0.0, 7.0), (7.0, 0.0), (13.0, 6.0), (6.0, 15.0)],
+            color,
+        );
+        draw(
+            self,
+            &[(33.0, 7.0), (26.0, 0.0), (20.0, 6.0), (27.0, 15.0)],
+            color,
+        );
+        draw(
+            self,
             &[
-                (x, y + 7.0 * s),
-                (x + 7.0 * s, y),
-                (x + 17.0 * s, y + 8.0 * s),
-                (x + 12.0 * s, y + 18.0 * s),
+                (9.0, 7.0),
+                (15.0, 4.0),
+                (23.0, 8.0),
+                (26.0, 15.0),
+                (18.0, 23.0),
+                (7.0, 14.0),
             ],
             color,
         );
-        self.polygon(
-            &[
-                (x + 12.0 * s, y + 8.0 * s),
-                (x + 22.0 * s, y),
-                (x + 31.0 * s, y + 7.0 * s),
-                (x + 18.0 * s, y + 20.0 * s),
-            ],
-            color,
+        self.line(
+            (x + 15.0 * s, y + 5.0 * s),
+            (x + 12.0 * s, y + 11.0 * s),
+            PANEL,
+            2.0 * s,
         );
-        for i in 0..3 {
-            let d = i as f32 * 4.0 * s;
+        self.line(
+            (x + 12.0 * s, y + 11.0 * s),
+            (x + 18.0 * s, y + 13.0 * s),
+            PANEL,
+            2.0 * s,
+        );
+        for i in 0..4 {
+            let d = i as f32 * 3.2;
             self.line(
-                (x + 10.0 * s + d, y + 12.0 * s),
-                (x + 14.0 * s + d, y + 16.0 * s),
+                (x + (10.0 + d) * s, y + (14.0 + d * 0.5) * s),
+                (x + (13.0 + d) * s, y + (17.0 + d * 0.5) * s),
                 PANEL,
-                1.5 * s,
+                1.4 * s,
             );
         }
     }
 }
-pub(super) fn text_width(text: &str, size: f32) -> f32 {
-    text.chars()
-        .map(|c| {
-            if c.is_whitespace() {
-                0.28
-            } else if "ilI1.,:!".contains(c) {
-                0.30
-            } else if "WM@".contains(c) {
-                0.85
-            } else if !c.is_ascii() {
-                1.0
-            } else if c.is_uppercase() {
-                0.64
-            } else {
-                0.53
-            }
-        })
-        .sum::<f32>()
-        * size
-}
 pub(super) fn alpha(color: UiColor, opacity: f32) -> UiColor {
-    UiColor::rgba(
-        color.r,
-        color.g,
-        color.b,
-        (color.a as f32 * opacity.clamp(0.0, 1.0)) as u8,
-    )
-}
-pub(super) fn clipped_name(name: &str, width: f32, size: f32) -> String {
-    if text_width(name, size) <= width {
-        return name.to_string();
-    }
-    let mut result = String::new();
-    for character in name.chars() {
-        let candidate = format!("{result}{character}\u{2026}");
-        if text_width(&candidate, size) > width {
-            break;
-        }
-        result.push(character);
-    }
-    result.push('\u{2026}');
-    result
-}
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn wide_and_unicode_names_fit_their_columns() {
-        for name in [
-            "WWWWWWWWWWWWWWWWWWWWWW",
-            "LONG_UPPERCASE_TANK_NAME",
-            "\u{5766}\u{514b}\u{5766}\u{514b}\u{5766}\u{514b}\u{5766}\u{514b}",
-        ] {
-            let label = clipped_name(name, 180.0, 23.0);
-            assert!(text_width(&label, 23.0) <= 180.0);
-            assert!(label.ends_with('\u{2026}'));
-        }
-    }
+    color.with_alpha(opacity)
 }

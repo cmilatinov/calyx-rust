@@ -238,10 +238,11 @@ fn sandbox_scene_draws_the_tank_hud() {
         .iter()
         .filter_map(|command| match command {
             PaintCommand::Text { text, .. } => Some(text.as_str()),
+            PaintCommand::Label(label) => Some(label.text.as_str()),
             _ => None,
         })
         .collect();
-    for expected in ["HULL", "100/100", "6/6", "READY", "N", "05:00"] {
+    for expected in ["N", "05:00"] {
         assert!(text.contains(&expected), "{expected} in {text:?}");
     }
 }

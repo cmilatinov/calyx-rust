@@ -7,7 +7,7 @@
 
 use crate::sentry::ComponentSentry;
 use crate::spawn::{ComponentRespawnState, SPAWN_TEAM_ANY};
-use crate::tank::{ComponentProjectileTarget, ComponentTankController};
+use crate::tank::ComponentTankController;
 use calyx_engine::component::{
     Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
     ReflectComponentUpdate,
@@ -21,9 +21,23 @@ use nalgebra_glm::Vec3;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
-/// Explicit spawn teams take precedence; unassigned sandbox actors use the two
-/// sides of the local training match. Unknown actors have no implied allegiance.
+/// Scoreboard participants are tanks, including bots using the tank controller.
+/// A Sentry remains a hazard even if an author accidentally gives it a controller.
+pub(crate) fn is_tank_combatant(scene: &Scene, object: GameObject) -> bool {
+    scene
+        .read_component::<ComponentTankController, _, _>(object, |_| ())
+        .is_some()
+        && scene
+            .read_component::<ComponentSentry, _, _>(object, |_| ())
+            .is_none()
+}
+
+/// Explicit tank spawn teams take precedence over stats teams. Unassigned tanks
+/// use the local side; hazards and practice targets have no team allegiance.
 pub fn combat_team(scene: &Scene, object: GameObject) -> Option<u32> {
+    if !is_tank_combatant(scene, object) {
+        return None;
+    }
     scene
         .read_component::<ComponentRespawnState, _, _>(object, |s| s.team)
         .filter(|team| *team != SPAWN_TEAM_ANY)
@@ -32,9 +46,7 @@ pub fn combat_team(scene: &Scene, object: GameObject) -> Option<u32> {
                 .read_component::<ComponentCombatStats, _, _>(object, |s| s.team)
                 .filter(|team| *team != SPAWN_TEAM_ANY)
         })
-        .or_else(|| scene.read_component::<ComponentTankController, _, _>(object, |_| 0))
-        .or_else(|| scene.read_component::<ComponentSentry, _, _>(object, |_| 1))
-        .or_else(|| scene.read_component::<ComponentProjectileTarget, _, _>(object, |_| 1))
+        .or(Some(0))
 }
 
 fn friendly(scene: &Scene, a: GameObject, b: GameObject) -> bool {
@@ -45,11 +57,14 @@ fn friendly(scene: &Scene, a: GameObject, b: GameObject) -> bool {
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct DamageFeedback {
+    pub target: Uuid,
     pub position: Vec3,
     pub amount: f32,
     pub max_health: f32,
     pub age: f32,
 }
+
+pub(crate) const DAMAGE_FEEDBACK_LIFETIME: f32 = 1.4;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Contribution {
@@ -73,8 +88,10 @@ pub(crate) fn record_damage(
         return;
     };
     let position = scene.world_transform(target).position;
+    let target_id = scene.uuid(target);
     let _ = scene.write_component::<ComponentCombatStats, _>(shooter, |stats| {
         stats.feedback.push(DamageFeedback {
+            target: target_id,
             position,
             amount,
             max_health,
@@ -85,7 +102,7 @@ pub(crate) fn record_damage(
             stats.feedback.remove(0);
         }
     });
-    if friendly(scene, shooter, target) {
+    if !is_tank_combatant(scene, shooter) || friendly(scene, shooter, target) {
         return;
     }
     let attacker = scene.uuid(shooter);
@@ -140,27 +157,24 @@ impl KillEvent {
     }
 
     /// The killer when it is not the victim itself.
-    fn credited_killer(&self) -> Option<&Combatant> {
+    fn non_self_killer(&self) -> Option<&Combatant> {
         self.killer
             .as_ref()
             .filter(|killer| killer.id != self.victim.id)
     }
 }
 
-/// Records `event` in the scene: counts the kill and the death on the
-/// combatants' [`ComponentCombatStats`], when they have one, and adds the
-/// event to every [`ComponentKillFeed`].
+/// Records deaths and tank kill credit, then adds the event to every kill feed.
+/// Hazards keep their display identity but award no kill, score or assist.
 pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
     let victim = scene.find(event.victim.id);
     let killer = event
-        .credited_killer()
-        .and_then(|killer| scene.find(killer.id));
+        .non_self_killer()
+        .and_then(|killer| scene.find(killer.id))
+        .filter(|killer| is_tank_combatant(scene, *killer));
     let eligible_kill =
         killer.is_some_and(|killer| victim.is_none_or(|victim| !friendly(scene, killer, victim)));
-    if let Some(killer) = event
-        .credited_killer()
-        .and_then(|killer| scene.find(killer.id))
-    {
+    if let Some(killer) = killer {
         let _ = scene.write_component::<ComponentCombatStats, _>(killer, |stats| {
             stats.kills = stats.kills.saturating_add(1);
             if eligible_kill {
@@ -184,7 +198,7 @@ pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
                     .find(entry.attacker)
                     .filter(|a| Some(*a) != killer && *a != victim)
                 {
-                    if !friendly(scene, attacker, victim) {
+                    if is_tank_combatant(scene, attacker) && !friendly(scene, attacker, victim) {
                         let _ =
                             scene.write_component::<ComponentCombatStats, _>(attacker, |stats| {
                                 stats.assists = stats.assists.saturating_add(1);
@@ -209,8 +223,8 @@ pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
     }
 }
 
-/// Kills and deaths of one combatant. The scoreboard lists every object that
-/// has one.
+/// Combat counters and transient feedback. Only tanks receive kill/score credit
+/// or a scoreboard row; a hazard may retain this component for feedback storage.
 #[derive(Clone, Debug, PartialEq, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f651c577-ddb4-40b5-8d7a-ac2b5ad663f0"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
@@ -260,7 +274,8 @@ impl ComponentCombatStats {
         for entry in &mut self.feedback {
             entry.age += dt;
         }
-        self.feedback.retain(|entry| entry.age < 1.0);
+        self.feedback
+            .retain(|entry| entry.age < DAMAGE_FEEDBACK_LIFETIME);
         for entry in &mut self.contributions {
             entry.age += dt;
         }
@@ -342,9 +357,9 @@ impl ComponentKillFeed {
     /// Adds `event` as the newest entry.
     pub fn push(&mut self, event: &KillEvent) {
         self.entries.push_front(KillFeedEntry {
-            killer: event.credited_killer().map(|killer| killer.name.clone()),
+            killer: event.non_self_killer().map(|killer| killer.name.clone()),
             victim: event.victim.name.clone(),
-            killer_team: event.credited_killer().and_then(|killer| killer.team),
+            killer_team: event.non_self_killer().and_then(|killer| killer.team),
             victim_team: event.victim.team,
             age: 0.0,
         });
@@ -378,7 +393,13 @@ impl ComponentKillFeed {
 
 #[cfg(test)]
 mod tests {
-    use super::{record_kill, Combatant, ComponentCombatStats, ComponentKillFeed, KillEvent};
+    use super::{
+        combat_team, is_tank_combatant, record_damage, record_kill, Combatant,
+        ComponentCombatStats, ComponentKillFeed, KillEvent, DAMAGE_FEEDBACK_LIFETIME,
+    };
+    use crate::sentry::ComponentSentry;
+    use crate::spawn::ComponentRespawnState;
+    use crate::tank::ComponentTankController;
     use calyx_engine::component::ComponentID;
     use calyx_engine::scene::{GameObject, Scene};
     use calyx_engine::test_support::HeadlessSceneRunner;
@@ -507,10 +528,18 @@ mod tests {
     fn recorded_kills_count_kills_and_deaths() {
         let mut scene = calyx_engine::test_support::test_scene();
         let tank = named(&mut scene, "Tank");
-        let sentry = named(&mut scene, "Sentry");
+        let sentry = named(&mut scene, "Enemy Tank");
         let target = named(&mut scene, "Target A");
         scene.add_component(tank, ComponentCombatStats::default());
-        scene.add_component(sentry, ComponentCombatStats::default());
+        scene.add_component(tank, ComponentTankController::default());
+        scene.add_component(sentry, ComponentTankController::default());
+        scene.add_component(
+            sentry,
+            ComponentCombatStats {
+                team: 1,
+                ..Default::default()
+            },
+        );
 
         let tank_kills_target = event(&scene, tank, target);
         let tank_kills_sentry = event(&scene, tank, sentry);
@@ -539,6 +568,7 @@ mod tests {
                 kills: 1,
                 deaths: 1,
                 score: 100,
+                team: 1,
                 ..Default::default()
             }
         );
@@ -550,6 +580,7 @@ mod tests {
         let tank = named(&mut scene, "Tank");
         scene.add_component(tank, ComponentCombatStats::default());
         scene.add_component(tank, ComponentKillFeed::default());
+        scene.add_component(tank, ComponentTankController::default());
 
         let self_kill = event(&scene, tank, tank);
         let environment = KillEvent::new(&scene, None, tank);
@@ -599,6 +630,7 @@ mod tests {
         let helper = named(&mut scene, "Helper");
         let victim = named(&mut scene, "Victim");
         for (object, team) in [(killer, 0), (helper, 0), (victim, 1)] {
+            scene.add_component(object, ComponentTankController::default());
             scene.add_component(
                 object,
                 ComponentCombatStats {
@@ -639,6 +671,10 @@ mod tests {
             (0, 1, 50)
         );
         assert_eq!(stats(victim).deaths, 1);
+        assert!(stats(helper)
+            .feedback
+            .iter()
+            .all(|hit| hit.target == scene.uuid(victim)));
         assert!(stats(victim).contributions.is_empty());
         assert_eq!(
             stats(helper)
@@ -708,9 +744,65 @@ mod tests {
             stats.advance(0.5);
             assert_eq!(stats.feedback[0].age, 0.5);
             stats.advance(0.5);
+            assert_eq!(
+                stats.feedback.len(),
+                1,
+                "damage remains readable after one second"
+            );
+            stats.advance(DAMAGE_FEEDBACK_LIFETIME - 1.0);
             assert!(stats.feedback.is_empty());
         });
     }
+    #[test]
+    fn sentry_kills_are_environmental_but_keep_the_neutral_feed_name() {
+        let (mut scene, player, helper, victim) = combatants();
+        let sentry = named(&mut scene, "Sentry");
+        scene.add_component(sentry, ComponentSentry::default());
+        // Authored stats or teams must never turn a hazard into a player.
+        scene.add_component(
+            sentry,
+            ComponentCombatStats {
+                team: 0,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            sentry,
+            ComponentRespawnState {
+                team: 0,
+                ..Default::default()
+            },
+        );
+        scene.add_component(player, ComponentKillFeed::default());
+        record_damage(&mut scene, victim, Some(helper), 35.0, 100.0);
+        record_damage(&mut scene, victim, Some(sentry), 65.0, 100.0);
+        let event = KillEvent::new(&scene, Some(sentry), victim);
+        record_kill(&mut scene, &event);
+
+        for object in [player, helper, victim, sentry] {
+            let stats = scene
+                .read_component::<ComponentCombatStats, _, _>(object, Clone::clone)
+                .unwrap();
+            assert_eq!((stats.kills, stats.score, stats.assists), (0, 0, 0));
+            assert_eq!(stats.deaths, u32::from(object == victim));
+            assert!(stats.contributions.is_empty());
+        }
+        assert!(!is_tank_combatant(&scene, sentry));
+        assert_eq!(combat_team(&scene, sentry), None);
+        assert!(is_tank_combatant(&scene, player));
+        let target = named(&mut scene, "Target A");
+        scene.add_component(target, crate::tank::ComponentProjectileTarget::default());
+        scene.add_component(target, ComponentCombatStats::default());
+        assert!(!is_tank_combatant(&scene, target));
+        let _ = scene.read_component::<ComponentKillFeed, _, _>(player, |feed| {
+            let entry = feed.entries().next().unwrap();
+            assert_eq!(entry.killer.as_deref(), Some("Sentry"));
+            assert_eq!(entry.killer_team, None);
+            assert_eq!(entry.victim, "Victim");
+            assert_eq!(entry.victim_team, Some(1));
+        });
+    }
+
     #[test]
     fn damageable_actors_join_stats_on_start_without_overwriting_authored_settings() {
         let mut scene = calyx_engine::test_support::test_scene();

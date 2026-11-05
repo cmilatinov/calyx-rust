@@ -1827,6 +1827,7 @@ mod tests {
             }),
             None,
         );
+        scene.add_component(tank, ComponentTankController::default());
         scene.add_component(tank, ComponentCombatStats::default());
         scene.add_component(tank, ComponentKillFeed::default());
         let target = scene.create(
@@ -2021,6 +2022,7 @@ mod tests {
         let mut scene = calyx_engine::test_support::test_scene();
         let shooter = scene.create(None, None);
         let victim = scene.create(None, None);
+        scene.add_component(shooter, ComponentTankController::default());
         scene.add_component(shooter, ComponentCombatStats::default());
         scene.add_component(victim, ComponentHealth::default());
         for amount in [0.0, -2.0, f32::NAN, f32::INFINITY] {
