@@ -59,7 +59,7 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `sandbag_stack` | Three staggered rows of soft bags, 1.27 m total height, with restrained seam bands | Box around the stack |
 | `pickup_yellow`, `pickup_blue` | Green and blue glowing orbs over octagonal pads; legacy yellow name retains stable IDs | Box around pad; collection trigger belongs to gameplay |
 | `sentry` | Anchored circular base with broad mounting pads and exposed yaw bearing; red player-2 head with clipped armor cheeks, pitch hubs, recoil sleeve, open muzzle, roof cooling banks and shaded optic | Cylinder around base, radius 0.57 m and height 0.15 m, plus a box around the solid head if cover collision is desired; visual integration preserves existing gameplay |
-| `explosive_barrel` | Red explosive drum with a broad yellow-and-black lid flame badge, opposing diamond flame plaques, narrow hazard hoops, rolled rims and a slotted bung | Cylinder, radius 0.455 m and height 1.145 m, centered 0.5725 m above the ground pivot; explosion behavior belongs to cover gameplay |
+| `explosive_barrel` | Red explosive drum with a centered yellow-and-black lid flame badge, opposing diamond flame plaques, narrow hazard hoops and rolled rims | Cylinder, radius 0.455 m and height 1.125 m, centered 0.5625 m above the ground pivot; explosion behavior belongs to cover gameplay |
 | `aim_reticle` | Flat open ring and four ticks, light marks over a dark contrast border; 1.66 m overall width | Non-blocking, no collider |
 
 Every opaque prop part material has `outline_style = 1`; pickup signal orbs
@@ -83,7 +83,8 @@ The explosive drum puts its largest warning on the lid, which dominates at
 the Far camera's 68-degree pitch. The black flame and yellow inner lick are
 closed relief meshes, with a yellow field around them; opposing side plaques
 repeat the symbol for lower views. The red body separates this prop from a
-generic utility drum. Rims and bung retain its familiar drum construction.
+generic utility drum. The badge and flame share the lid's center, with no
+offset bung. Rolled rims retain its familiar drum construction.
 The Sentry's red center remains visible between pale cheek armor and paired
 dark cooling banks. The recoil sleeve, lateral pitch hubs and anchor pads
 describe how the machine turns, fires and stays planted. These are broad

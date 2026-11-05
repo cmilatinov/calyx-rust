@@ -245,10 +245,11 @@ camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
 `calyx_model_gen::palette`.
 
 Combat props use the same broad shape language. Explosive barrels are red
-drums with a large yellow lid badge and a black flame silhouette, including
+drums with a centered yellow lid badge and a black flame silhouette, including
 a yellow inner lick. The lid warning must read at the Far camera; side
-diamonds repeat it without relying on text. Narrow hazard hoops, rolled rims
-and a slotted bung retain the drum silhouette. Sentries retain the red
+diamonds repeat it without relying on text. Narrow hazard hoops and rolled
+rims retain the drum silhouette; the lid has no offset bung or other dot.
+Sentries retain the red
 player-2 center, framed by pale armor cheeks, visible pitch/yaw bearings,
 a thick recoil sleeve and open muzzle. Paired roof cooling banks, a hatch
 handle, a shaded cyan optic and broad anchor pads explain the mechanism
@@ -369,3 +370,5 @@ are under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526>.
 The revised explosive drum and detailed Sentry, including the same Far-pitch
 views, lower three-quarter views and live arena checks for all three palettes,
 are under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526/v2>.
+The centered barrel lid warning without a bung is shown in all three palettes
+under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526/v3>.

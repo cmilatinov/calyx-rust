@@ -1,4 +1,4 @@
-# Red explosive drum: broad lid flame badge, opposing warning plaques, rolled rims and bung.
+# Red explosive drum: centered lid flame badge, opposing warning plaques and rolled rims.
 # Visual asset only; explosion behavior belongs to cover gameplay.
 # Metres, Y up, forward +Z; regenerate with calyx_model_gen.
 
@@ -75,26 +75,6 @@ segments = 3
 offset = [0, 1.075, 0]
 
 [[parts]]
-name = "cap"
-kind = "cylinder"
-role = "hazard_black"
-radius = 0.065
-height = 0.045
-vertices = 16
-bevel = 0.00675
-segments = 3
-offset = [0.235, 1.1, -0.21]
-
-[[parts]]
-name = "bung_slot"
-kind = "box"
-role = "metal_caps"
-size = [0.075, 0.012, 0.02]
-bevel = 0.004
-segments = 3
-offset = [0.235, 1.133, -0.21]
-
-[[parts]]
 name = "lid_warning_border"
 kind = "cylinder"
 role = "hazard_black"
@@ -103,7 +83,7 @@ height = 0.007
 vertices = 32
 bevel = 0.001
 segments = 3
-offset = [-0.045, 1.1, 0.025]
+offset = [0, 1.1, 0]
 
 [[parts]]
 name = "lid_warning_field"
@@ -114,7 +94,7 @@ height = 0.007
 vertices = 32
 bevel = 0.001
 segments = 3
-offset = [-0.045, 1.107, 0.025]
+offset = [0, 1.107, 0]
 
 [[parts]]
 name = "lid_flame"
@@ -122,7 +102,7 @@ kind = "prism"
 role = "hazard_black"
 points = [[-0.03, -0.17], [-0.12, -0.14], [-0.17, -0.065], [-0.16, 0.025], [-0.105, 0.11], [-0.1, 0.025], [-0.055, 0.075], [0.015, 0.195], [0.035, 0.095], [0.09, 0.04], [0.115, 0.11], [0.165, 0.015], [0.16, -0.07], [0.1, -0.145], [0.035, -0.17]]
 height = 0.007
-offset = [-0.045, 1.114, 0.025]
+offset = [0, 1.114, 0]
 
 [[parts]]
 name = "lid_flame_core"
@@ -130,7 +110,7 @@ kind = "prism"
 role = "hazard_yellow"
 points = [[-0.035, -0.13], [-0.08, -0.085], [-0.07, -0.035], [-0.015, 0.04], [0.005, -0.015], [0.05, -0.055], [0.055, -0.1], [0.015, -0.13]]
 height = 0.004
-offset = [-0.045, 1.121, 0.025]
+offset = [0, 1.121, 0]
 
 [[parts]]
 name = "front_warning_border"

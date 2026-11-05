@@ -157,9 +157,6 @@ fn barrel_lid_is_recessed_between_the_drum_and_rim_without_coplanar_tops() {
     };
     assert!(top("drum") + 0.01 < top("lid"));
     assert!(top("lid") + 0.01 < top("top_rim"));
-    let (_, cap) = named(&prefab["data"], "cap");
-    let cap_bottom = cap[TRANSFORM]["transform"]["position"][1].as_f64().unwrap();
-    assert!((cap_bottom - top("lid")).abs() < 1e-6);
 }
 
 #[test]
