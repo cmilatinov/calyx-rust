@@ -100,7 +100,7 @@ impl ScoreboardHud<'_> {
         let mut patch = StylePatch::default()
             .padding(EdgeInsets::symmetric(8.0, 4.0))
             .align_items(AlignItems::Center)
-            .radius(CornerRadius::all(2.0))
+            .radius(CornerRadius::all(5.0))
             .pointer_events(PointerEvents::None);
         if let Some(background) = background {
             patch = patch.background(background);
@@ -174,7 +174,7 @@ impl Widget for ScoreboardHud<'_> {
                 style
                     .panel_style()
                     .background(style.panel_strong)
-                    .border(Border::solid(style.outline, 1.0))
+                    .border(Border::solid(style.outline, 2.0))
                     .padding(EdgeInsets::all(PADDING))
                     .gap(GAP),
             )

@@ -134,6 +134,8 @@ fn tank_hud_state(scene: &Scene, game_object: GameObject) -> Option<TankHudState
     })
 }
 
+/// Opaque clay surfaces keep ink and labels legible over all three map palettes.
+/// HUD colours are display-space sRGB, unlike linear scene material colours.
 #[derive(Clone, Copy)]
 struct HudStyle {
     screen_margin: f32,
@@ -151,14 +153,14 @@ impl Default for HudStyle {
     fn default() -> Self {
         Self {
             screen_margin: 28.0,
-            panel: UiColor::rgba(10, 12, 14, 205),
-            panel_strong: UiColor::rgba(8, 10, 12, 235),
-            outline: UiColor::rgba(132, 142, 146, 185),
-            text: UiColor::rgba(244, 244, 238, 245),
-            muted: UiColor::rgba(170, 174, 170, 210),
-            health: UiColor::rgba(92, 205, 110, 245),
-            ammo: UiColor::rgba(238, 217, 132, 245),
-            bar_background: UiColor::rgba(34, 36, 38, 220),
+            panel: UiColor::rgba(240, 230, 210, 255),
+            panel_strong: UiColor::rgba(252, 249, 243, 255),
+            outline: UiColor::rgba(18, 18, 18, 255),
+            text: UiColor::rgba(36, 54, 71, 255),
+            muted: UiColor::rgba(102, 99, 95, 255),
+            health: UiColor::rgba(95, 142, 44, 255),
+            ammo: UiColor::rgba(110, 76, 38, 255),
+            bar_background: UiColor::rgba(232, 221, 201, 255),
         }
     }
 }
@@ -171,8 +173,8 @@ impl HudStyle {
     fn panel_style(self) -> StylePatch {
         StylePatch::default()
             .background(self.panel)
-            .border(Border::solid(self.outline, 1.0))
-            .radius(CornerRadius::all(3.0))
+            .border(Border::solid(self.outline, 2.0))
+            .radius(CornerRadius::all(10.0))
             .padding(EdgeInsets::all(10.0))
             .gap(7.0)
             .pointer_events(PointerEvents::None)
@@ -343,6 +345,7 @@ impl Widget for HealthHud {
         let header = ui
             .row()
             .id(ui, "hud-health-header")
+            .height(ui, UiLength::Px(20.0))
             .justify_content(ui, JustifyContent::SpaceBetween)
             .pointer_events(ui, PointerEvents::None)
             .child(ui, label)
@@ -461,7 +464,7 @@ fn progress_meter(
         .id(ui, id.into())
         .background(ui, background)
         .border(ui, Border::solid(outline, 1.0))
-        .radius(ui, CornerRadius::all(2.0))
+        .radius(ui, CornerRadius::all(5.0))
         .width(ui, UiLength::Fill)
         .height(ui, UiLength::Px(12.0))
         .pointer_events(ui, PointerEvents::None)
@@ -770,6 +773,29 @@ mod tests {
         assert!(
             off_map.iter().all(|index| (start..end).contains(index)),
             "off-map blips at {off_map:?} paint outside the clip {start}..{end}"
+        );
+    }
+
+    #[test]
+    fn hull_meter_keeps_a_readable_thickness() {
+        let (mut scene, tank) = tank_scene(ComponentRespawnState::default());
+        scene.add_component(tank, ComponentTankHud::default());
+        let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+        let frame = SceneHud::default()
+            .frame(&scene, viewport, UiInput::default())
+            .expect("the tank draws its HUD");
+        let health = super::HudStyle::default().health;
+        let fill = frame
+            .paint_commands
+            .iter()
+            .find_map(|command| match command {
+                PaintCommand::FillRect { rect, color, .. } if *color == health => Some(rect),
+                _ => None,
+            })
+            .expect("the hull meter draws its fill");
+        assert!(
+            fill.height() >= 8.0,
+            "the header must not squeeze the meter into a hairline: {fill:?}"
         );
     }
 

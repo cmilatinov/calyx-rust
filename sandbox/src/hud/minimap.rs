@@ -289,7 +289,7 @@ impl Widget for MinimapHud {
             .id(ui, "hud-minimap-map")
             .background(ui, self.style.bar_background)
             .border(ui, calyx_engine::ui::Border::solid(self.style.outline, 1.0))
-            .radius(ui, CornerRadius::all(2.0))
+            .radius(ui, CornerRadius::all(5.0))
             .width(ui, UiLength::Fill)
             .flex_grow(ui, 1.0)
             .pointer_events(ui, PointerEvents::None)
@@ -320,12 +320,12 @@ struct MinimapColors {
 impl From<HudStyle> for MinimapColors {
     fn from(style: HudStyle) -> Self {
         Self {
-            floor: UiColor::rgba(52, 56, 54, 200),
+            floor: UiColor::rgba(135, 188, 108, 255),
             bounds: style.outline,
-            cover: UiColor::rgba(110, 116, 114, 220),
-            player: style.health,
+            cover: UiColor::rgba(191, 185, 174, 255),
+            player: UiColor::rgba(37, 92, 178, 255),
             heading: style.text,
-            enemy: UiColor::rgba(226, 88, 72, 245),
+            enemy: UiColor::rgba(178, 58, 58, 255),
             target: style.ammo,
         }
     }

@@ -105,8 +105,8 @@ impl Widget for KillFeedHud<'_> {
                         ui,
                         StylePatch::default()
                             .background(fade(style.panel))
-                            .border(Border::solid(fade(style.outline), 1.0))
-                            .radius(CornerRadius::all(3.0))
+                            .border(Border::solid(fade(style.outline), 2.0))
+                            .radius(CornerRadius::all(8.0))
                             .padding(EdgeInsets::symmetric(PADDING_X, PADDING_Y))
                             .gap(GAP)
                             .pointer_events(PointerEvents::None),
