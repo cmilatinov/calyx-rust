@@ -1,0 +1,129 @@
+{
+  "source_revision": "660939d6babf54b75feec5bcee1b697511f22900",
+  "files": [
+    {
+      "file": "final_shipped_arena.png",
+      "sha256": "fc746360f907327810b4aab89bbcc0044b6e33b54eebe55f7957b5c98c1999c8"
+    },
+    {
+      "file": "moonlit_aim.json",
+      "sha256": "62d3838f7f1c4466c5a11a361177bb303e66d8f5c88ba1dfc284872b57170ea9"
+    },
+    {
+      "file": "moonlit_barrel.png",
+      "sha256": "7dfcf5720272cc97905e266ea2a8f935552c0ce4e5dd4540d69d8fc5468f96e6"
+    },
+    {
+      "file": "moonlit_barrel_threequarter.png",
+      "sha256": "5f0ce92538b2933b79a3d820391a1297be365c1c2c993c0dede8bfc8a7c2845e"
+    },
+    {
+      "file": "moonlit_far.png",
+      "sha256": "e935853326b6cc4223067348e83e2c81cad2e794e1bf5d304ea3ceda88c5bfd8"
+    },
+    {
+      "file": "moonlit_reticle_aim.png",
+      "sha256": "07cd8d682442cb394f06e33798a392306f943350b6343eff8ba88d78a433d738"
+    },
+    {
+      "file": "moonlit_reticle_ground.png",
+      "sha256": "dfb57cc18a00085b64dfe7c58ed2da702719dfe0ad9287e22e77f43f28ed7a77"
+    },
+    {
+      "file": "moonlit_reticle_road.png",
+      "sha256": "55270d526df3f7d55e008dab404987d64ad2cb43e22a076a379df23fc96cc51a"
+    },
+    {
+      "file": "moonlit_sentry.png",
+      "sha256": "33d677c3eb6d0c699073f95989e51191985e77d289d9f7732a30ff7476ef7418"
+    },
+    {
+      "file": "moonlit_sentry_firing.png",
+      "sha256": "432bb6e93d80100fe9957939929a6af4853233cf04f75c39765bf57f781e3825"
+    },
+    {
+      "file": "moonlit_sentry_threequarter.png",
+      "sha256": "fbd48f799ea7f25ccca174f18016c3a48d0f82e47874dc71acd12adbc59f5418"
+    },
+    {
+      "file": "sunbaked_aim.json",
+      "sha256": "c724296fbaf05f2207bfebf531c5b3caf46bc374cf76878a819517c6e7bfe1d3"
+    },
+    {
+      "file": "sunbaked_barrel.png",
+      "sha256": "3b5789a0697b31d3f74e82336868282c21b66f4b1eed84dc01a5778ce5cd8685"
+    },
+    {
+      "file": "sunbaked_barrel_threequarter.png",
+      "sha256": "e5e362c7f84d3d8388f31317bd74423da448c984f84891eb55ef0db049af755c"
+    },
+    {
+      "file": "sunbaked_far.png",
+      "sha256": "0918472a772a836b4e8aaac6309a1a68d5c4201b714f5723dac5c87b7401dc04"
+    },
+    {
+      "file": "sunbaked_reticle_aim.png",
+      "sha256": "4eca66a12f0c41fec8dd42eb8d92a817d199dc5c4a7b642ed7c1db15029ac8fe"
+    },
+    {
+      "file": "sunbaked_reticle_ground.png",
+      "sha256": "fcb5b730aa6d585ee8c321e19d6dde955feb2ed757cad309e8031526b0a0f98b"
+    },
+    {
+      "file": "sunbaked_reticle_road.png",
+      "sha256": "a7a9309e713093f3fc911d9e48979228960e831c171a994d91505008493acb06"
+    },
+    {
+      "file": "sunbaked_sentry.png",
+      "sha256": "02b9d8793b9a503e5b5bda455bd8d5139156498637530eaa0312355ea69ed8c7"
+    },
+    {
+      "file": "sunbaked_sentry_firing.png",
+      "sha256": "97e1230c90f13b5d57b896fe00d9d1fa1bd1b4a5e823eb2bb7112375e450d654"
+    },
+    {
+      "file": "sunbaked_sentry_threequarter.png",
+      "sha256": "92d4b8dca34f314550a3a1df5accee3cebe1fae6e566a22f7853d3b2b78ac892"
+    },
+    {
+      "file": "sunny_aim.json",
+      "sha256": "5f79b88e4dacbfdc67985a59bbb0347122d58edff00d0267c2908645c86a1bf8"
+    },
+    {
+      "file": "sunny_barrel.png",
+      "sha256": "c3daedc565daedd8cf8ba7883f95f83aa0e6028f52059c9b9ff7bef3dde41a4c"
+    },
+    {
+      "file": "sunny_barrel_threequarter.png",
+      "sha256": "0785671efbef511221d8f3c3257761f0599ed3366a62c43df3db9de60f7fba94"
+    },
+    {
+      "file": "sunny_far.png",
+      "sha256": "d6d56425b73c8908c1f9c11d8b9024d2d47dd93e57ae7253055bf58c1b05a01a"
+    },
+    {
+      "file": "sunny_reticle_aim.png",
+      "sha256": "0cb6b7f5cbb547356f8c42b9f1931c88a4e8575131c965740481afbb6067aa19"
+    },
+    {
+      "file": "sunny_reticle_ground.png",
+      "sha256": "7ede5342200b9bd5433cf71e553db3815c4ff613c8bb6818c438bb033dc55d0b"
+    },
+    {
+      "file": "sunny_reticle_road.png",
+      "sha256": "74090045999b4b7130a36a9581925e7b4be695248b931b0fe6dafd059a397688"
+    },
+    {
+      "file": "sunny_sentry.png",
+      "sha256": "818b8102a3b3d77b9d9308fd3627d41459b4582e0a997b3da3d9172de98dbdd4"
+    },
+    {
+      "file": "sunny_sentry_firing.png",
+      "sha256": "cbb2842042233d6f494bb2fb503a02077586d6679e465a345dcd091cc92bdd50"
+    },
+    {
+      "file": "sunny_sentry_threequarter.png",
+      "sha256": "51b34a171b4625ccd3879475b145233288099f24085f6059d50a15143df64a8c"
+    }
+  ]
+}
