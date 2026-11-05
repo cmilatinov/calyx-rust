@@ -81,7 +81,10 @@ pub struct EditorApp {
     // Drop runtime/editor state before the project manager so assembly-backed
     // scene components and registry trait objects are destroyed while the
     // project assembly is still loaded.
-    state: EditorAppState,
+    // Keep the state off the caller's stack while its renderers compile shaders.
+    // In debug builds, moving it by value through the app constructor leaves
+    // too little of the Windows main-thread stack for WGSL expression lowering.
+    state: Box<EditorAppState>,
     project_manager: Ref<ProjectManager>,
     _log: Log<DefaultLogger>,
 }
@@ -165,7 +168,7 @@ impl EditorAppState {
         game: GameContext,
         initial_render_size: (u32, u32),
         project_path: PathBuf,
-    ) -> Result<Self, SceneRendererError> {
+    ) -> Result<Box<Self>, SceneRendererError> {
         let asset_context = game.assets.lock_read();
         let inspector_registry = InspectorRegistry::new(&asset_context.registries.types.read());
         let asset_openers = AssetOpenerRegistry::new(&asset_context.registries.types.read());
@@ -193,7 +196,7 @@ impl EditorAppState {
         drop(asset_context);
         let thumbnails = ThumbnailService::default();
         let scene_document = SceneDocument::new(&project_path).with_thumbnails(thumbnails.handle());
-        Ok(Self {
+        Ok(Box::new(Self {
             game,
             camera: Default::default(),
             game_aspect: None,
@@ -220,7 +223,7 @@ impl EditorAppState {
             game_renderer,
             inspector_registry,
             asset_openers,
-        })
+        }))
     }
 
     /// Records `edit` as one undo step.
@@ -597,28 +600,27 @@ impl EditorApp {
     fn render_views(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let Self {
             physics_debug_pipeline,
-            state:
-                EditorAppState {
-                    game:
-                        GameContext {
-                            scenes, particles, ..
-                        },
-                    selection,
-                    scene_renderer,
-                    game_renderer,
-                    game_size,
-                    prefab_mode,
-                    camera:
-                        EditorCamera {
-                            camera, transform, ..
-                        },
-                    ..
-                },
+            state,
             ..
         } = self;
+        let EditorAppState {
+            game: GameContext {
+                scenes, particles, ..
+            },
+            selection,
+            scene_renderer,
+            game_renderer,
+            game_size,
+            prefab_mode,
+            camera: EditorCamera {
+                camera, transform, ..
+            },
+            viewport_size,
+            ..
+        } = state.as_mut();
 
         let render_state = frame.wgpu_render_state().unwrap();
-        let (width, height) = Self::get_physical_size(ctx, self.state.viewport_size);
+        let (width, height) = Self::get_physical_size(ctx, *viewport_size);
         if width != 0 && height != 0 {
             scene_renderer.resize_textures(width, height);
             camera.aspect = width as f32 / height as f32;
