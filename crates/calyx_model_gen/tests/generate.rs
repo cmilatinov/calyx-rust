@@ -115,13 +115,13 @@ fn the_fixture_folder_holds_three_models_sorted_by_name() {
 }
 
 #[test]
-fn a_run_writes_each_model_its_hull_and_the_used_roles_materials_on_both_maps() {
+fn a_run_writes_each_model_its_hull_and_the_used_roles_materials_on_all_three_maps() {
     let out = out_dir("layout");
     let layout = Layout::new(&out).unwrap();
     let report = generate(&layout, &fixture_models(), fake_blender).unwrap();
     assert_eq!(
         (report.models, report.outlines, report.materials),
-        (3, 1, 8)
+        (3, 1, 12)
     );
     let mut expected: BTreeSet<String> = [
         "README.md",
@@ -136,7 +136,7 @@ fn a_run_writes_each_model_its_hull_and_the_used_roles_materials_on_both_maps() 
     ]
     .map(String::from)
     .into();
-    for map in ["sunny", "sunbaked"] {
+    for map in ["sunny", "sunbaked", "moonlit"] {
         // Ink because the crate has a hull.
         for role in ["barriers", "crates", "rocks", "ink"] {
             expected.insert(format!("materials/{map}/{role}.cxmat"));
@@ -210,8 +210,8 @@ fn a_rerun_removes_what_it_no_longer_writes() {
     assert!(!files.contains("materials/sunny/ink.cxmat"));
     assert!(files.contains("materials/sunbaked/barriers.cxmat"));
     // Crate, its hull and rock: 2 files each; crates, rocks and ink
-    // materials on both maps: 2 files each.
-    assert_eq!(report.removed.len(), 3 * 2 + 3 * 2 * 2);
+    // materials on all three maps: 2 files each.
+    assert_eq!(report.removed.len(), 3 * 2 + 3 * 3 * 2);
 }
 
 #[test]
@@ -250,4 +250,67 @@ fn a_hull_that_is_not_inverted_is_refused() {
     })
     .unwrap_err();
     assert!(err.contains("not inverted"), "{err}");
+}
+
+#[test]
+fn assemblies_write_stable_prefabs_and_remove_stale_parts_on_regeneration() {
+    let text = r#"
+[[parts]]
+name = "body"
+kind = "box"
+role = "crate_panel"
+size = [1, 1, 1]
+
+[[parts]]
+name = "frame"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 1.2, 0.2]
+offset = [0.4, 0, 0.4]
+rotation = [0, 45, 0]
+"#;
+    let out = out_dir("assembly");
+    let layout = Layout::new(&out).unwrap();
+    let model = params::Model::parse("framed", text, Path::new("")).unwrap();
+    let report = generate(&layout, std::slice::from_ref(&model), fake_blender).unwrap();
+    assert_eq!((report.models, report.materials), (1, 6));
+    let prefab = out.join("prefabs/sunny/framed.cxprefab");
+    let first = std::fs::read_to_string(&prefab).unwrap();
+    assert_eq!(
+        meta(&prefab.with_extension("meta"))["main"]["type_uuid"],
+        calyx_model_gen::layout::TYPE_PREFAB
+    );
+    generate(&layout, &[model], fake_blender).unwrap();
+    assert_eq!(std::fs::read_to_string(&prefab).unwrap(), first);
+    let single = params::Model::parse(
+        "framed",
+        "kind = \"box\"\nrole = \"crates\"\nsize = [1, 1, 1]",
+        Path::new(""),
+    )
+    .unwrap();
+    generate(&layout, &[single], fake_blender).unwrap();
+    assert!(!prefab.exists());
+    assert!(!out.join("models/framed__frame.obj").exists());
+    assert!(out.join("models/framed.obj").exists());
+}
+
+#[test]
+fn a_part_name_collision_is_refused_before_blender() {
+    let models = [
+        params::Model::parse(
+            "a",
+            "[[parts]]\nname = \"b\"\nkind = \"box\"\nrole = \"crates\"\nsize = [1,1,1]",
+            Path::new(""),
+        )
+        .unwrap(),
+        params::Model::parse(
+            "a__b",
+            "kind = \"box\"\nrole = \"crates\"\nsize = [1,1,1]",
+            Path::new(""),
+        )
+        .unwrap(),
+    ];
+    let layout = Layout::new(&out_dir("collision")).unwrap();
+    let error = generate(&layout, &models, |_| panic!("must fail before building")).unwrap_err();
+    assert!(error.contains("same mesh name"), "{error}");
 }

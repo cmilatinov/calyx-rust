@@ -41,7 +41,13 @@ import bpy
 
 
 def reset():
-    bpy.ops.wm.read_factory_settings(use_empty=True)
+    # A kit has hundreds of named parts. Reloading factory settings for
+    # every small mesh repeatedly reloads Blender's whole scene/UI state.
+    for obj in list(bpy.data.objects):
+        bpy.data.objects.remove(obj, do_unlink=True)
+    for mesh in list(bpy.data.meshes):
+        if mesh.users == 0:
+            bpy.data.meshes.remove(mesh)
 
 
 def bevel(obj, width, segments, angle=None):
@@ -135,6 +141,12 @@ def build_cylinder(shape):
             shape["radius"], shape["height"], shape["vertices"], shape["bevel"], shape["segments"]
         )
     ]
+    if shape.get("top_radius") is not None:
+        ratio = shape["top_radius"] / shape["radius"]
+        for vertex in parts[0].data.vertices:
+            factor = 1 + (ratio - 1) * (vertex.co.z / shape["height"] + 0.5)
+            vertex.co.x *= factor
+            vertex.co.y *= factor
     flare = shape.get("flare")
     if flare:
         rounding = min(shape["bevel"] * 1.5, flare["height"] * 0.45, flare["radius"] * 0.45)
@@ -145,11 +157,46 @@ def build_cylinder(shape):
 
 
 def build_blob(shape):
-    return [
+    parts = [
         ico(lobe["radius"], (lobe["center"][0], lobe["center"][2], lobe["center"][1]),
             shape["subdivisions"])
         for lobe in shape["lobes"]
     ]
+    if shape.get("fuse", 0) > 0:
+        bpy.ops.object.select_all(action="DESELECT")
+        for obj in parts:
+            obj.select_set(True)
+        bpy.context.view_layer.objects.active = parts[0]
+        bpy.ops.object.join()
+        obj = bpy.context.active_object
+        remesh = obj.modifiers.new("join canopy lobes", "REMESH")
+        remesh.mode = "VOXEL"
+        remesh.voxel_size = shape["fuse"]
+        smooth = obj.modifiers.new("soft clay surface", "SMOOTH")
+        smooth.factor = 0.8
+        smooth.iterations = 4
+        decimate = obj.modifiers.new("low poly silhouette", "DECIMATE")
+        decimate.ratio = 0.3
+        return [obj]
+    return parts
+
+
+def build_prism(shape):
+    points = shape["points"]
+    area = sum(a[0]*b[1]-b[0]*a[1] for a,b in zip(points,points[1:]+points[:1]))
+    if area < 0:
+        points = list(reversed(points))
+    count = len(points)
+    vertices = [(x,z,y) for y in (0,shape["height"]) for x,z in points]
+    faces = [list(reversed(range(count))), list(range(count,2*count))]
+    faces += [(i,(i+1)%count,(i+1)%count+count,i+count) for i in range(count)]
+    mesh = bpy.data.meshes.new("extruded footprint")
+    mesh.from_pydata(vertices,[],faces)
+    mesh.update()
+    obj = bpy.data.objects.new("Prism",mesh)
+    bpy.context.collection.objects.link(obj)
+    bevel(obj,shape["bevel"],shape["segments"])
+    return [obj]
 
 
 def build_import(shape):
@@ -192,6 +239,7 @@ def build_import(shape):
 
 
 BUILDERS = {
+    "prism": build_prism,
     "box": build_box,
     "rock": build_rock,
     "cylinder": build_cylinder,

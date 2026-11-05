@@ -2,7 +2,7 @@
 //!
 //! ```toml
 //! # crate.toml
-//! kind = "box"            # box, rock, cylinder, blob or import
+//! kind = "box"            # box, rock, cylinder, blob, prism or import
 //! role = "crates"         # a palette role; gives the model's material
 //! shading = "smooth"      # "smooth" (the default) or "flat"
 //! smooth_angle = 60       # degrees; smooth shading only
@@ -43,7 +43,7 @@ pub struct Model {
     pub shape: Shape,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "mode", rename_all = "snake_case")]
 pub enum Shading {
     /// Each corner's normal averages the faces around it that lie within
@@ -57,6 +57,19 @@ pub enum Shading {
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Shape {
+    /// Named pieces, assembled by a generated prefab per map. Transforms
+    /// are local to the model root; meshes keep their ordinary ground origin.
+    Parts { parts: Vec<Part> },
+    /// A closed footprint extruded upwards. Used for clipped paint stripes,
+    /// Jersey barrier sections and matching modular wall junctions.
+    Prism {
+        points: Vec<[f64; 2]>,
+        height: f64,
+        #[serde(default)]
+        bevel: f64,
+        #[serde(default = "default_segments")]
+        segments: u32,
+    },
     /// A rounded block: a crate, a barrier, a wall.
     Box {
         size: [f64; 3],
@@ -83,6 +96,8 @@ pub enum Shape {
     /// An upright rounded cylinder: a trunk, a post.
     Cylinder {
         radius: f64,
+        #[serde(default)]
+        top_radius: Option<f64>,
         height: f64,
         #[serde(default = "default_vertices")]
         vertices: u32,
@@ -96,6 +111,10 @@ pub enum Shape {
     /// Overlapping spheres: a tree canopy, a bush.
     Blob {
         lobes: Vec<Lobe>,
+        /// Voxel size for joining overlapping lobes into one organic surface.
+        /// Zero retains the original independent-lobe output.
+        #[serde(default)]
+        fuse: f64,
         #[serde(default = "default_subdivisions")]
         subdivisions: u32,
     },
@@ -115,6 +134,17 @@ pub enum Shape {
         segments: u32,
         credit: Credit,
     },
+}
+
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub struct Part {
+    pub name: String,
+    pub role: String,
+    pub shape: Shape,
+    pub shading: Shading,
+    pub offset: [f64; 3],
+    /// XYZ Euler angles, in degrees, matching the editor's transform command.
+    pub rotation: [f64; 3],
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
@@ -201,6 +231,93 @@ impl Model {
             ));
         }
         let mut table: toml::Table = toml::from_str(text).map_err(|err| err.to_string())?;
+        if let Some(parts) = table.remove("parts") {
+            for key in table.keys() {
+                if !["shading", "smooth_angle", "outline"].contains(&key.as_str()) {
+                    return Err(format!(
+                        "unknown assembly key {key:?}; shapes and roles belong to each part"
+                    ));
+                }
+            }
+            let parts = parts.as_array().ok_or("parts must be an array of tables")?;
+            if parts.is_empty() {
+                return Err("a model needs at least one part".into());
+            }
+            let mut names = std::collections::BTreeSet::new();
+            let mut parsed = Vec::new();
+            for part in parts {
+                let mut part = part.as_table().ok_or("each part must be a table")?.clone();
+                let name = part
+                    .remove("name")
+                    .and_then(|v| v.as_str().map(str::to_owned))
+                    .ok_or("each part needs a stable name")?;
+                if !names.insert(name.clone()) {
+                    return Err(format!("duplicate part name {name:?}"));
+                }
+                let vector = |table: &mut toml::Table, key: &str| -> Result<[f64; 3], String> {
+                    match table.remove(key) {
+                        None => Ok([0.0; 3]),
+                        Some(value) => {
+                            let values: [f64; 3] = value
+                                .try_into()
+                                .map_err(|e: toml::de::Error| e.to_string())?;
+                            if values.iter().all(|v| v.is_finite()) {
+                                Ok(values)
+                            } else {
+                                Err(format!("{key} must be finite"))
+                            }
+                        }
+                    }
+                };
+                let offset = vector(&mut part, "offset")?;
+                let rotation = vector(&mut part, "rotation")?;
+                for key in ["shading", "smooth_angle"] {
+                    if key == "smooth_angle"
+                        && part.get("shading").and_then(toml::Value::as_str) == Some("flat")
+                    {
+                        continue;
+                    }
+                    if !part.contains_key(key) {
+                        if let Some(value) = table.get(key) {
+                            part.insert(key.into(), value.clone());
+                        }
+                    }
+                }
+                if part.contains_key("parts") || part.contains_key("outline") {
+                    return Err(
+                        "parts cannot nest or set an outline; set outline on the model".into(),
+                    );
+                }
+                let model = Model::parse(
+                    &name,
+                    &toml::to_string(&part).map_err(|e| e.to_string())?,
+                    dir,
+                )?;
+                if matches!(model.shape, Shape::Import { .. } | Shape::Parts { .. }) {
+                    return Err("parts use box, rock, cylinder, blob or prism shapes".into());
+                }
+                parsed.push(Part {
+                    name,
+                    role: model.role,
+                    shape: model.shape,
+                    shading: model.shading,
+                    offset,
+                    rotation,
+                });
+            }
+            // Reuse common-key validation, rejecting kind/role and unknown keys
+            // on an assembly rather than silently ignoring them.
+            table.insert("kind".into(), "box".into());
+            table.insert("role".into(), parsed[0].role.clone().into());
+            table.insert("size".into(), toml::Value::Array(vec![1.into(); 3]));
+            let mut model = Model::parse(
+                name,
+                &toml::to_string(&table).map_err(|e| e.to_string())?,
+                dir,
+            )?;
+            model.shape = Shape::Parts { parts: parsed };
+            return Ok(model);
+        }
         let mut common = toml::Table::new();
         for key in COMMON_KEYS {
             if let Some(value) = table.remove(*key) {
@@ -284,6 +401,30 @@ impl Model {
             }
         };
         match &self.shape {
+            Shape::Prism {
+                points,
+                height,
+                bevel,
+                segments: s,
+            } => {
+                positive("height", *height)?;
+                segments(*s)?;
+                if points.len() < 3 || points.iter().flatten().any(|v| !v.is_finite()) {
+                    return Err("a prism needs at least three finite footprint points".into());
+                }
+                let area: f64 = points
+                    .iter()
+                    .zip(points.iter().cycle().skip(1))
+                    .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+                    .sum();
+                if area.abs() < 1e-8 {
+                    return Err("prism footprint has zero area".into());
+                }
+                if !bevel.is_finite() || *bevel < 0.0 || *bevel * 2.0 >= *height {
+                    return Err("prism bevel must fit its height".into());
+                }
+            }
+            Shape::Parts { .. } => return Err("list parts without a top-level kind".into()),
             Shape::Box {
                 size,
                 bevel,
@@ -322,6 +463,7 @@ impl Model {
             }
             Shape::Cylinder {
                 radius,
+                top_radius,
                 height,
                 vertices,
                 bevel,
@@ -329,6 +471,9 @@ impl Model {
                 flare,
             } => {
                 positive("radius", *radius)?;
+                if let Some(radius) = top_radius {
+                    positive("top_radius", *radius)?;
+                }
                 positive("height", *height)?;
                 segments(*s)?;
                 if !(3..=64).contains(vertices) {
@@ -346,11 +491,13 @@ impl Model {
             }
             Shape::Blob {
                 lobes,
+                fuse,
                 subdivisions: d,
             } => {
                 if lobes.is_empty() {
                     return Err("a blob needs at least one lobe".into());
                 }
+                in_range("fuse", *fuse, 0.0, 0.5)?;
                 for lobe in lobes {
                     positive("lobe radius", lobe.radius)?;
                 }

@@ -1,0 +1,83 @@
+# Plain rounded Jersey barrier with metal lifting loops.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "body"
+kind = "prism"
+role = "barriers"
+points = [[-0.0, -0.5], [-0.16, -0.5], [-0.3, -0.46], [-0.92, -0.22], [-1.05, -0.22], [-1.05, 0.22], [-0.92, 0.22], [-0.3, 0.46], [-0.16, 0.5], [-0.0, 0.5]]
+height = 2.4
+offset = [-1.2, 0, 0]
+rotation = [0, 0, -90]
+bevel = 0.045
+segments = 3
+
+[[parts]]
+name = "foot"
+kind = "box"
+role = "barriers"
+size = [2.55, 0.16, 1.12]
+offset = [0.0, 0.0, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.055
+segments = 3
+
+[[parts]]
+name = "loop_lefta"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [-0.9, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_leftb"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [-0.64, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_left_top"
+kind = "box"
+role = "metal"
+size = [0.325, 0.065, 0.065]
+offset = [-0.77, 1.1825, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.024
+segments = 3
+
+[[parts]]
+name = "loop_righta"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [0.64, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_rightb"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [0.9, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_right_top"
+kind = "box"
+role = "metal"
+size = [0.325, 0.065, 0.065]
+offset = [0.77, 1.1825, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.024
+segments = 3

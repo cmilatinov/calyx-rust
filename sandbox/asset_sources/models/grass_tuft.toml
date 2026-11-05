@@ -1,0 +1,57 @@
+# Five tapered clay grass leaves with distinct fan silhouette.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "leaf_0"
+kind = "prism"
+role = "grass"
+points = [[0, 0], [-0.18, -0.369], [-0.099, -0.7051999999999999], [0, -0.82], [0.072, -0.49199999999999994], [0.108, -0.164]]
+height = 0.025
+offset = [0, 0, 0]
+rotation = [115, 0, 0]
+bevel = 0.006
+segments = 3
+
+[[parts]]
+name = "leaf_1"
+kind = "prism"
+role = "grass"
+points = [[0, 0], [-0.18, -0.279], [-0.099, -0.5332], [0, -0.62], [0.072, -0.372], [0.108, -0.124]]
+height = 0.025
+offset = [0, 0, 0]
+rotation = [115, 72, 0]
+bevel = 0.006
+segments = 3
+
+[[parts]]
+name = "leaf_2"
+kind = "prism"
+role = "grass"
+points = [[0, 0], [-0.18, -0.369], [-0.099, -0.7051999999999999], [0, -0.82], [0.072, -0.49199999999999994], [0.108, -0.164]]
+height = 0.025
+offset = [0, 0, 0]
+rotation = [115, 144, 0]
+bevel = 0.006
+segments = 3
+
+[[parts]]
+name = "leaf_3"
+kind = "prism"
+role = "grass"
+points = [[0, 0], [-0.18, -0.279], [-0.099, -0.5332], [0, -0.62], [0.072, -0.372], [0.108, -0.124]]
+height = 0.025
+offset = [0, 0, 0]
+rotation = [115, 216, 0]
+bevel = 0.006
+segments = 3
+
+[[parts]]
+name = "leaf_4"
+kind = "prism"
+role = "grass"
+points = [[0, 0], [-0.18, -0.369], [-0.099, -0.7051999999999999], [0, -0.82], [0.072, -0.49199999999999994], [0.108, -0.164]]
+height = 0.025
+offset = [0, 0, 0]
+rotation = [115, 288, 0]
+bevel = 0.006
+segments = 3

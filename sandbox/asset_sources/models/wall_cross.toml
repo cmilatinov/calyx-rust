@@ -1,0 +1,13 @@
+# Tileable wall module; open end profiles 1.2m thick by1.6m high;1m root placement grid.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "body"
+kind = "prism"
+role = "walls"
+points = [[-0.6, -3], [0.6, -3], [0.6, -0.6], [3, -0.6], [3, 0.6], [0.6, 0.6], [0.6, 3], [-0.6, 3], [-0.6, 0.6], [-3, 0.6], [-3, -0.6], [-0.6, -0.6]]
+height = 1.6
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+bevel = 0.12
+segments = 3

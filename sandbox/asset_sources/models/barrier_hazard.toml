@@ -1,0 +1,237 @@
+# Jersey barrier with lifting loops; clipped diagonal paint spans visible top and sloping shoulders.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "body"
+kind = "prism"
+role = "barriers"
+points = [[-0.0, -0.5], [-0.16, -0.5], [-0.3, -0.46], [-0.92, -0.22], [-1.05, -0.22], [-1.05, 0.22], [-0.92, 0.22], [-0.3, 0.46], [-0.16, 0.5], [-0.0, 0.5]]
+height = 2.4
+offset = [-1.2, 0, 0]
+rotation = [0, 0, -90]
+bevel = 0.045
+segments = 3
+
+[[parts]]
+name = "foot"
+kind = "box"
+role = "barriers"
+size = [2.55, 0.16, 1.12]
+offset = [0.0, 0.0, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.055
+segments = 3
+
+[[parts]]
+name = "loop_lefta"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [-0.9, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_leftb"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [-0.64, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_left_top"
+kind = "box"
+role = "metal"
+size = [0.325, 0.065, 0.065]
+offset = [-0.77, 1.1825, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.024
+segments = 3
+
+[[parts]]
+name = "loop_righta"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [0.64, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_rightb"
+kind = "box"
+role = "metal"
+size = [0.065, 0.16, 0.065]
+offset = [0.9, 1.04, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.022
+segments = 3
+
+[[parts]]
+name = "loop_right_top"
+kind = "box"
+role = "metal"
+size = [0.325, 0.065, 0.065]
+offset = [0.77, 1.1825, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.024
+segments = 3
+
+[[parts]]
+name = "front_yellow"
+kind = "prism"
+role = "hazard_yellow"
+points = [[-1.1, -0.265], [1.1, -0.265], [1.1, 0.265], [-1.1, 0.265]]
+height = 0.008
+offset = [0, 0.61, -0.352]
+rotation = [-68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "front_stripe_0"
+kind = "prism"
+role = "hazard_black"
+points = [[-1.1, -0.265], [-0.9099999999999997, -0.265], [-1.1, -0.07499999999999962]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, -0.3603931843201256]
+rotation = [-68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "front_stripe_1"
+kind = "prism"
+role = "hazard_black"
+points = [[-0.6749999999999998, -0.265], [-0.43999999999999984, -0.265], [-0.9700000000000002, 0.265], [-1.1, 0.265], [-1.1, 0.16000000000000017]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, -0.3603931843201256]
+rotation = [-68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "front_stripe_2"
+kind = "prism"
+role = "hazard_black"
+points = [[-0.20499999999999985, -0.265], [0.03000000000000025, -0.265], [-0.5, 0.265], [-0.735, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, -0.3603931843201256]
+rotation = [-68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "front_stripe_3"
+kind = "prism"
+role = "hazard_black"
+points = [[0.2650000000000001, -0.265], [0.5, -0.265], [-0.03000000000000025, 0.265], [-0.265, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, -0.3603931843201256]
+rotation = [-68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "front_stripe_4"
+kind = "prism"
+role = "hazard_black"
+points = [[0.7350000000000001, -0.265], [0.9700000000000002, -0.265], [0.43999999999999984, 0.265], [0.20499999999999996, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, -0.3603931843201256]
+rotation = [-68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "front_stripe_5"
+kind = "prism"
+role = "hazard_black"
+points = [[1.1, -0.1600000000000002], [1.1, 0.07499999999999962], [0.9099999999999997, 0.265], [0.6749999999999998, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, -0.3603931843201256]
+rotation = [-68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "back_yellow"
+kind = "prism"
+role = "hazard_yellow"
+points = [[-1.1, -0.265], [1.1, -0.265], [1.1, 0.265], [-1.1, 0.265]]
+height = 0.008
+offset = [0, 0.61, 0.352]
+rotation = [68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "back_stripe_0"
+kind = "prism"
+role = "hazard_black"
+points = [[-1.1, -0.265], [-0.9099999999999997, -0.265], [-1.1, -0.07499999999999962]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, 0.3603931843201256]
+rotation = [68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "back_stripe_1"
+kind = "prism"
+role = "hazard_black"
+points = [[-0.6749999999999998, -0.265], [-0.43999999999999984, -0.265], [-0.9700000000000002, 0.265], [-1.1, 0.265], [-1.1, 0.16000000000000017]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, 0.3603931843201256]
+rotation = [68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "back_stripe_2"
+kind = "prism"
+role = "hazard_black"
+points = [[-0.20499999999999985, -0.265], [0.03000000000000025, -0.265], [-0.5, 0.265], [-0.735, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, 0.3603931843201256]
+rotation = [68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "back_stripe_3"
+kind = "prism"
+role = "hazard_black"
+points = [[0.2650000000000001, -0.265], [0.5, -0.265], [-0.03000000000000025, 0.265], [-0.265, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, 0.3603931843201256]
+rotation = [68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "back_stripe_4"
+kind = "prism"
+role = "hazard_black"
+points = [[0.7350000000000001, -0.265], [0.9700000000000002, -0.265], [0.43999999999999984, 0.265], [0.20499999999999996, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, 0.3603931843201256]
+rotation = [68.84, 0, 0]
+bevel = 0
+segments = 3
+
+[[parts]]
+name = "back_stripe_5"
+kind = "prism"
+role = "hazard_black"
+points = [[1.1, -0.1600000000000002], [1.1, 0.07499999999999962], [0.9099999999999997, 0.265], [0.6749999999999998, 0.265]]
+height = 0.008
+offset = [0.0, 0.6132487623748739, 0.3603931843201256]
+rotation = [68.84, 0, 0]
+bevel = 0
+segments = 3

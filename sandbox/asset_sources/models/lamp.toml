@@ -1,0 +1,109 @@
+# Tall post and warm lantern with dark open frame and pyramidal cap.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "base"
+kind = "cylinder"
+role = "metal"
+radius = 0.23
+height = 0.13
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+vertices = 12
+bevel = 0.015
+segments = 3
+
+[[parts]]
+name = "pole"
+kind = "cylinder"
+role = "metal"
+radius = 0.055
+height = 1.8
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+vertices = 12
+bevel = 0.014
+segments = 3
+
+[[parts]]
+name = "lantern_glass"
+kind = "box"
+role = "signals"
+size = [0.4, 0.45, 0.4]
+offset = [0.0, 1.725, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.035
+segments = 3
+
+[[parts]]
+name = "lantern_frame_0_0"
+kind = "box"
+role = "metal"
+size = [0.045, 0.5, 0.045]
+offset = [-0.18, 1.7, -0.18]
+rotation = [0, 0, 0]
+bevel = 0.012
+segments = 3
+
+[[parts]]
+name = "lantern_frame_0_1"
+kind = "box"
+role = "metal"
+size = [0.045, 0.5, 0.045]
+offset = [-0.18, 1.7, 0.18]
+rotation = [0, 0, 0]
+bevel = 0.012
+segments = 3
+
+[[parts]]
+name = "lantern_frame_1_0"
+kind = "box"
+role = "metal"
+size = [0.045, 0.5, 0.045]
+offset = [0.18, 1.7, -0.18]
+rotation = [0, 0, 0]
+bevel = 0.012
+segments = 3
+
+[[parts]]
+name = "lantern_frame_1_1"
+kind = "box"
+role = "metal"
+size = [0.045, 0.5, 0.045]
+offset = [0.18, 1.7, 0.18]
+rotation = [0, 0, 0]
+bevel = 0.012
+segments = 3
+
+[[parts]]
+name = "lantern_warm_rim"
+kind = "box"
+role = "signals"
+size = [0.5, 0.075, 0.5]
+offset = [0.0, 2.1425, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "lantern_floor"
+kind = "box"
+role = "metal"
+size = [0.43, 0.08, 0.43]
+offset = [0.0, 1.64, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.025
+segments = 3
+
+[[parts]]
+name = "roof"
+kind = "cylinder"
+role = "metal"
+radius = 0.34
+height = 0.24
+offset = [0, 2.2, 0]
+rotation = [0, 45, 0]
+vertices = 4
+bevel = 0.012
+segments = 3
+top_radius = 0.025

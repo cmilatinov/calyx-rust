@@ -1,0 +1,122 @@
+# Three staggered rows of soft rounded sandbags with restrained stitched bands.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "bag_0_0"
+kind = "box"
+role = "sandbags"
+size = [0.68, 0.4785, 0.42]
+offset = [-0.62, 0.0, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "seam_0_0"
+kind = "box"
+role = "sandbag_seams"
+size = [0.7, 0.025, 0.43]
+offset = [-0.62, 0.21862499999999999, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.009
+segments = 3
+
+[[parts]]
+name = "bag_0_1"
+kind = "box"
+role = "sandbags"
+size = [0.68, 0.4785, 0.42]
+offset = [0.0, 0.0, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "seam_0_1"
+kind = "box"
+role = "sandbag_seams"
+size = [0.7, 0.025, 0.43]
+offset = [0.0, 0.21862499999999999, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.009
+segments = 3
+
+[[parts]]
+name = "bag_0_2"
+kind = "box"
+role = "sandbags"
+size = [0.68, 0.4785, 0.42]
+offset = [0.62, 0.0, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "seam_0_2"
+kind = "box"
+role = "sandbag_seams"
+size = [0.7, 0.025, 0.43]
+offset = [0.62, 0.21862499999999999, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.009
+segments = 3
+
+[[parts]]
+name = "bag_1_0"
+kind = "box"
+role = "sandbags"
+size = [0.68, 0.4785, 0.42]
+offset = [-0.31, 0.39599999999999996, 0.03]
+rotation = [0, 0, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "seam_1_0"
+kind = "box"
+role = "sandbag_seams"
+size = [0.7, 0.025, 0.43]
+offset = [-0.31, 0.614625, 0.03]
+rotation = [0, 0, 0]
+bevel = 0.009
+segments = 3
+
+[[parts]]
+name = "bag_1_1"
+kind = "box"
+role = "sandbags"
+size = [0.68, 0.4785, 0.42]
+offset = [0.31, 0.39599999999999996, 0.03]
+rotation = [0, 0, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "seam_1_1"
+kind = "box"
+role = "sandbag_seams"
+size = [0.7, 0.025, 0.43]
+offset = [0.31, 0.614625, 0.03]
+rotation = [0, 0, 0]
+bevel = 0.009
+segments = 3
+
+[[parts]]
+name = "bag_2_0"
+kind = "box"
+role = "sandbags"
+size = [0.68, 0.4785, 0.42]
+offset = [0.0, 0.7919999999999999, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "seam_2_0"
+kind = "box"
+role = "sandbag_seams"
+size = [0.7, 0.025, 0.43]
+offset = [0.0, 1.010625, 0.0]
+rotation = [0, 0, 0]
+bevel = 0.009
+segments = 3

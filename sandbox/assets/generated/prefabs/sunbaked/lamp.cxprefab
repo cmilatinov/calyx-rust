@@ -1,0 +1,361 @@
+{
+  "data": {
+    "components": {
+      "0335de77-1b16-5e7e-862b-0fb7a798696a": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "0335de77-1b16-5e7e-862b-0fb7a798696a",
+          "name": "lantern_frame_0_0",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "39468725-6c0a-5588-a0ec-a6b6b9ddd88b"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -0.18,
+              1.7,
+              -0.18
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "10967a8d-202f-5ef7-88b3-26d7fa84bab1": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "10967a8d-202f-5ef7-88b3-26d7fa84bab1",
+          "name": "lamp",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "1ad2b2b6-ff1e-5697-9191-a002c2d94f4b": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "1ad2b2b6-ff1e-5697-9191-a002c2d94f4b",
+          "name": "lantern_glass",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "102cc2a7-7a40-51df-9aa8-5eb81e4b3a16",
+          "mesh": "1350fb8d-b6c6-51e7-bb7f-97bacd22ec44"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              1.725,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "37b47460-05fc-58fd-b3a3-419629e9ceae": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "37b47460-05fc-58fd-b3a3-419629e9ceae",
+          "name": "lantern_floor",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "dc68cc1a-b2a3-525a-9ed4-571c74cab4ab"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              1.64,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "661e1205-ef63-5a30-897d-401a3dfdd9f5": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "661e1205-ef63-5a30-897d-401a3dfdd9f5",
+          "name": "lantern_warm_rim",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "102cc2a7-7a40-51df-9aa8-5eb81e4b3a16",
+          "mesh": "0e85e437-d854-5103-8801-a3689c89afe7"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              2.1425,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "718a4f52-7eb2-53fe-b3d0-8c58d09642d1": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "718a4f52-7eb2-53fe-b3d0-8c58d09642d1",
+          "name": "base",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "bf903aa7-5c47-5b68-87d6-b79c356b7aae"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "86e977be-1c33-5fad-8ecb-80ab7f113b9d": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "86e977be-1c33-5fad-8ecb-80ab7f113b9d",
+          "name": "lantern_frame_0_1",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "23ea9c2a-4978-5bf6-8080-0f7ae2c162f8"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -0.18,
+              1.7,
+              0.18
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "9d86979a-8a03-5c8e-bc87-b574de895f9a": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "9d86979a-8a03-5c8e-bc87-b574de895f9a",
+          "name": "lantern_frame_1_0",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "6a56b6cd-74a2-5ad2-a756-08d39a32684d"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.18,
+              1.7,
+              -0.18
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "d456fbe5-9bef-5fa9-8fa1-0be519b8caa5": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "d456fbe5-9bef-5fa9-8fa1-0be519b8caa5",
+          "name": "roof",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "26168ba7-4458-54a3-ba06-cf64f54affdc"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              2.2,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.3826834323650898,
+              0.0,
+              0.9238795325112867
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "d9d8fb2f-0985-5860-a80a-508bae802cdd": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "d9d8fb2f-0985-5860-a80a-508bae802cdd",
+          "name": "pole",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "3f3f2555-1c4c-5679-9b77-f9fe5c879509"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "f061cd38-aa3e-5c73-b7e4-b80db56b0d17": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "f061cd38-aa3e-5c73-b7e4-b80db56b0d17",
+          "name": "lantern_frame_1_1",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "6e5a11e9-0d1f-5a15-91c0-34f120bf8d7e",
+          "mesh": "60843f27-073d-5292-80ec-3a95b37efe86"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.18,
+              1.7,
+              0.18
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "10967a8d-202f-5ef7-88b3-26d7fa84bab1": [
+        "718a4f52-7eb2-53fe-b3d0-8c58d09642d1",
+        "d9d8fb2f-0985-5860-a80a-508bae802cdd",
+        "1ad2b2b6-ff1e-5697-9191-a002c2d94f4b",
+        "0335de77-1b16-5e7e-862b-0fb7a798696a",
+        "86e977be-1c33-5fad-8ecb-80ab7f113b9d",
+        "9d86979a-8a03-5c8e-bc87-b574de895f9a",
+        "f061cd38-aa3e-5c73-b7e4-b80db56b0d17",
+        "661e1205-ef63-5a30-897d-401a3dfdd9f5",
+        "37b47460-05fc-58fd-b3a3-419629e9ceae",
+        "d456fbe5-9bef-5fa9-8fa1-0be519b8caa5"
+      ]
+    },
+    "roots": [
+      "10967a8d-202f-5ef7-88b3-26d7fa84bab1"
+    ]
+  },
+  "root": "10967a8d-202f-5ef7-88b3-26d7fa84bab1"
+}

@@ -7,6 +7,10 @@ palette, each with its rig (sun, sky, post-process volume), a Far camera, a
 showcase corner (palette swatches, sample materials, the four player tanks)
 and a match scenario.
 
+The [concept sheet](concept-sheet.png) defines the modular props, trees and cover.
+Palette A Green maps to Sunny Battlefield; Palette B Sand maps to Sunbaked.
+Its tank drawings are references only: the existing Tank_002 model stays.
+
 ## The style
 
 **Clay materials with ink outlines, solid team colours, read from a high
@@ -72,12 +76,19 @@ convention.
 | --- | --- | --- | --- |
 | Ground | grass `#87BC6C` | sand `#B9AD97` | blue slate `#44525B` |
 | Road / lane | sand `#D0C292` | packed earth `#B1A289` | moon dust `#657179` |
-| Perimeter walls | cliff `#C9AA7A` | terracotta `#B18665` | bluestone `#5E6F81` |
+| Perimeter walls | warm tan `#D6B275` | grey stone `#AAA59D` | bluestone `#5E6F81` |
 | Barriers | stone `#BFB9AE` | bone concrete `#C0BCB6` | pale concrete `#9FA7AF` |
 | Crates | bark `#A2855E` | gunmetal `#66635F` | weathered steel `#6B8086` |
-| Rocks | stone `#BFB9AE` | dune shadow `#A9957A` | granite `#848C96` |
+| Crate frame | timber `#986128` | timber `#79572E` | weathered steel `#465D65` |
+| Crate inset panel | honey timber `#C28B3C` | muted timber `#B99863` | weathered steel `#6B8086` |
+| Hazard yellow | yellow `#F3C84B` | ochre yellow `#E6B84C` | muted gold `#CDA559` |
+| Hazard black | charcoal `#303038` | graphite `#303030` | charcoal `#30373F` |
+| Grass tufts | grass `#83AC38` | scrub green `#9AAB61` | night grass `#507165` |
+| Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` | granite `#848C96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` | night bark `#4C4541` |
-| Tree canopies | leaf `#62B07D` | scrub green `#92A374` | pine `#3E6564` |
+| Tree lower foliage | dark leaf `#5F8E2C` | dark sage `#7F8C57` | deep pine `#2E4D4C` |
+| Tree middle foliage | leaf `#83B942` | sage `#A4B479` | pine `#3E6564` |
+| Tree upper foliage | light leaf `#AACF58` | light sage `#C1C989` | moonlit pine `#62817B` |
 | Tank tracks and guns | tread dark `#6C6C74` | gunmetal `#66635F` | dark steel `#3D4348` |
 | Road wheels | cream `#D4D2CD` | bone concrete `#C0BCB6` | pale concrete `#9FA7AF` |
 | Emissive signals | ember `#FFB000`, strength 30 | amber `#FFB547`, strength 40 | lamps: sodium `#FF9330`, strength 4; shells and muzzle flashes: amber `#FFA640`, strength 2 |
@@ -172,7 +183,7 @@ Adding a player colour, or changing one:
 
 | Style | Ink | Silhouette | Inner lines | Used by |
 | --- | --- | --- | --- | --- |
-| 1, ink | `#121212`, opacity 1 | 2 px | 1 px at 0.55 | tanks (hull, turret, pivot, tracks, guns, wheels), walls, barriers, crates, rocks, trees, sample materials |
+| 1, ink | `#121212`, opacity 1 | 2 px | 2 px at 0.55 | tanks (hull, turret, pivot, tracks, guns, wheels), walls, barriers, crates, rocks, trees, sample materials |
 
 - Ground, roads and the emissive signals (projectiles, muzzle flashes,
   lamps) use style 0: the ground draws no lines across its lanes, and the
@@ -220,6 +231,16 @@ halo.
 Shadow distance 70 m covers the Far framing. Keep vignette at or below 0.2:
 the game view is very wide and the vignette is round.
 
+The concept sheet controls kit construction as well as colour: timber crates
+have visible slats, diagonal braces and silver corner hardware on all three maps;
+Jersey barriers have lifting loops, a plain concrete roof and diagonal paint
+on both sloped side panels; trees have irregular scalloped dark/middle/light foliage
+tiers and a broad organic root flare. Close-ups cannot substitute for the Far
+camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
+`metal`, `metal_caps`, `flag_red`, `berries`, `sandbags`, `sandbag_seams`,
+`pickup_yellow`, `pickup_blue`) are defined alongside these roles in
+`calyx_model_gen::palette`.
+
 ## Silhouette and scale
 
 - Chunky, softly rounded shapes; generous bevels (0.12–0.35 m), no thin
@@ -239,10 +260,9 @@ the game view is very wide and the vignette is round.
   `calyx_model_gen` from one parameter file per model in
   `sandbox/asset_sources/models/`, into `sandbox/assets/generated/`. Smooth
   shading for the clay look; `shading = "flat"` for a faceted prop.
-- The generator writes each palette role's material for the day maps from
+- The generator writes each palette role's material for all three maps from
   the table above, sRGB-decoded, so props take their colour from their
-  role, never from a hand-typed colour. Moonlit's roles join it in #518;
-  until then Moonlit's look-dev group has no generated-crate sample.
+  role, never from a hand-typed colour.
 - Bought or downloaded assets must be CC0 or CC-BY (credited in
   `sandbox/THIRD_PARTY_ASSETS.md`); Unity Asset Store packs cannot be
   committed. They come in as `import` models, restyled in a palette role
@@ -251,6 +271,29 @@ the game view is very wide and the vignette is round.
 - Outline hulls are generated with `outline = <thickness>`. Once the
   screen-space outline pass replaces the hulls, drop `outline` from the
   parameter files and regenerate: the hulls and the ink material go.
+- Multi-part models use named `[[parts]]` tables in the parameter file. Each
+  part has its own `kind`, shape keys, `role`, optional `shading`, `offset`
+  (XYZ metres) and `rotation` (XYZ Euler degrees). Omitted transforms are zero.
+  A `prism` extrudes a closed XZ footprint: clipped stripe polygons, Jersey
+  cross-sections and wall junctions. A cylinder may set `top_radius` for a
+  tapered trunk. A blob may set `fuse` (voxel size) to join overlapping lobes
+  into one organic surface rather than intersecting spheres.
+  Model-level `shading`, `smooth_angle` and optional `outline` apply to all
+  parts; a part may override shading. The five generated shapes are supported;
+  sourced models remain in the single-shape format.
+- Each part becomes `generated/models/<model>__<part>.obj`. The generator
+  assembles them under one root in `generated/prefabs/<map>/<model>.cxprefab`,
+  with the map's material per part. Mesh, object and prefab ids derive from
+  names, so reordering the parts keeps the ids. Instantiate the prefab to
+  place the complete model. Existing single-shape files and ids stay the same.
+- Generated opaque prop materials set `outline_style = 1`; ground, road,
+  signals and legacy hull ink use 0. New parts need no inverted hull.
+- The complete 23-piece concept-sheet kit is shown on all three maps in the
+  look-dev scene: six tileable wall modules, two barriers, two crates, three
+  tree sizes, three rock sizes and seven props. The Scenario camera shows a
+  pen with repeated wall joins, cover clusters and the existing player tanks.
+  [Arena kit layout and collider handoff](../../../sandbox/asset_sources/arena-kit.md)
+  records the one-metre root placement grid and collider choices.
 - No textures are needed for the style itself.
 
 ## Evidence
@@ -259,7 +302,23 @@ Final look-dev captures (Far and the match scenario at Far):
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-492/final>, with
 inverted-hull outlines; the outline pass against them (`v2_*` for the
 styled pass): <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-509>.
+The complete concept-sheet arena kit, Far gallery, repeated-join pen and all
+23 isolated model close-ups on the day maps:
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v2>.
+The initial asymmetric tree revision and complete Moonlit kit, with Far frames
+for all three maps, are under
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v3>.
+Compare their shapes and material breaks with the [concept sheet](concept-sheet.png).
+
 Earlier rounds, including the dropped candidates and pattern experiments,
 are beside them under `et-492/`. Moonlit against the two day maps, at Far,
 the match scenario at Far and a close-up of the shells:
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-524>.
+
+The final kit refinement restores the approved small and medium tree crowns;
+the large tree has a broad unequal overlapping crown and visible tapered branch
+forks. Sandbags stand 1.27 m high. Pickup signals are blue and green (the green
+pickup retains the legacy `pickup_yellow` asset/role name for stable IDs), with
+palette-specific emission chosen to bloom visibly at Far. Final 2 px inner-ink
+views of every model and all three Far galleries/pens are under
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v4>.

@@ -20,7 +20,7 @@ use uuid::Uuid;
 
 use crate::ids;
 use crate::palette::{self, Map};
-use crate::params::Model;
+use crate::params::{Model, Part, Shape};
 
 /// The namespace of every generated asset's id.
 pub const NAMESPACE: Uuid = Uuid::from_u128(0xe6b60a1c_4e82_4a6f_9275_a09402916599);
@@ -28,6 +28,7 @@ pub const NAMESPACE: Uuid = Uuid::from_u128(0xe6b60a1c_4e82_4a6f_9275_a094029165
 /// The asset type ids `.meta` files carry.
 pub const TYPE_MESH: &str = "792d264b-de6f-4431-b59f-76f18fdb3bfe";
 pub const TYPE_MATERIAL: &str = "f98a7f41-84d4-482d-b7af-a670b07035ae";
+pub const TYPE_PREFAB: &str = "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7";
 
 /// The output folder and the asset-name prefix it maps to.
 #[derive(Clone, Debug)]
@@ -102,6 +103,23 @@ pub struct MaterialPlan {
 pub struct Plan {
     pub meshes: Vec<MeshPlan>,
     pub materials: Vec<MaterialPlan>,
+    pub prefabs: Vec<PrefabPlan>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrefabPlan {
+    pub asset: Asset,
+    pub map: Map,
+    pub name: String,
+    pub parts: Vec<PrefabPart>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct PrefabPart {
+    pub part: Part,
+    pub mesh: Asset,
+    pub material: Asset,
+    pub outline: Option<Asset>,
 }
 
 impl Plan {
@@ -112,6 +130,7 @@ impl Plan {
             .iter()
             .flat_map(|m| std::iter::once(&m.mesh).chain(m.outline.as_ref()))
             .chain(self.materials.iter().map(|m| &m.asset));
+        let assets = assets.chain(self.prefabs.iter().map(|p| &p.asset));
         assets
             .flat_map(|asset| [asset.path.clone(), asset.meta_path()])
             .collect()
@@ -182,7 +201,23 @@ impl Layout {
     /// What generating `models` writes. Materials come per map, in palette
     /// order, for each role a model uses, and ink when a model has a hull.
     pub fn plan(&self, models: &[Model]) -> Plan {
-        let meshes: Vec<MeshPlan> = models
+        let expanded: Vec<Model> = models
+            .iter()
+            .flat_map(|model| match &model.shape {
+                Shape::Parts { parts } => parts
+                    .iter()
+                    .map(|part| Model {
+                        name: format!("{}__{}", model.name, part.name),
+                        role: part.role.clone(),
+                        shape: part.shape.clone(),
+                        shading: part.shading,
+                        outline: model.outline,
+                    })
+                    .collect(),
+                _ => vec![model.clone()],
+            })
+            .collect();
+        let meshes: Vec<MeshPlan> = expanded
             .iter()
             .map(|model| MeshPlan {
                 model: model.clone(),
@@ -193,7 +228,7 @@ impl Layout {
             })
             .collect();
         let used = |role: &palette::Role| {
-            models.iter().any(|m| m.role == role.name)
+            expanded.iter().any(|m| m.role == role.name)
                 || (role.name == palette::INK && models.iter().any(|m| m.outline.is_some()))
         };
         let materials = Map::ALL
@@ -205,7 +240,46 @@ impl Layout {
                     .map(|role| self.material(*map, role))
             })
             .collect();
-        Plan { meshes, materials }
+        let mut prefabs = Vec::new();
+        for model in models {
+            let Shape::Parts { parts } = &model.shape else {
+                continue;
+            };
+            for map in Map::ALL {
+                prefabs.push(PrefabPlan {
+                    asset: self.asset(
+                        &["prefabs", map.folder(), &model.name],
+                        "cxprefab",
+                        TYPE_PREFAB,
+                    ),
+                    map,
+                    name: model.name.clone(),
+                    parts: parts
+                        .iter()
+                        .map(|part| {
+                            let name = format!("{}__{}", model.name, part.name);
+                            let mesh = meshes
+                                .iter()
+                                .find(|mesh| mesh.model.name == name)
+                                .expect("expanded part");
+                            PrefabPart {
+                                part: part.clone(),
+                                mesh: mesh.mesh.clone(),
+                                material: self
+                                    .material(map, palette::find(&part.role).expect("validated"))
+                                    .asset,
+                                outline: mesh.outline.clone(),
+                            }
+                        })
+                        .collect(),
+                });
+            }
+        }
+        Plan {
+            meshes,
+            materials,
+            prefabs,
+        }
     }
 
     /// The folders the generator owns: it removes files in them that a run
@@ -219,6 +293,11 @@ impl Layout {
             Map::ALL
                 .iter()
                 .map(|map| self.root.join("materials").join(map.folder())),
+        );
+        dirs.extend(
+            Map::ALL
+                .iter()
+                .map(|map| self.root.join("prefabs").join(map.folder())),
         );
         dirs
     }

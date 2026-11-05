@@ -17,7 +17,7 @@ const DEFAULT_BLENDER: &str = r"C:\Program Files\Blender Foundation\Blender 4.0\
 
 /// Builds every model in the parameter folder with headless Blender into
 /// the output folder, with its outline hull and the palette materials of
-/// both maps, keeping every asset id across runs.
+/// all three maps, keeping every asset id across runs.
 #[derive(Parser)]
 #[command(name = "calyx_model_gen")]
 struct Cli {

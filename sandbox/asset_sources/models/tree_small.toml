@@ -1,0 +1,77 @@
+# Organic layered cloud canopy fused into one surface; tapered forked trunk and radial roots.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "trunk"
+kind = "cylinder"
+role = "tree_trunks"
+radius = 0.22619999999999998
+height = 1.287
+offset = [0, 0, 0]
+rotation = [0, 0, 0]
+vertices = 12
+bevel = 0.019500000000000003
+segments = 3
+top_radius = 0.0897
+
+[[parts]]
+name = "root_flare"
+kind = "blob"
+role = "tree_trunks"
+lobes = [{center = [0, 0.1404, 0], radius = 0.2574}, {center = [0.2574, 0.07800000000000001, 0.0], radius = 0.1716}, {center = [0.07954097435211148, 0.07800000000000001, 0.24480194729437255], radius = 0.1716}, {center = [-0.20824097435211145, 0.07800000000000001, 0.15129592394008262], radius = 0.1716}, {center = [-0.2082409743521115, 0.07800000000000001, -0.15129592394008257], radius = 0.1716}, {center = [0.07954097435211142, 0.07800000000000001, -0.24480194729437257], radius = 0.1716}]
+subdivisions = 3
+fuse = 0.027300000000000005
+offset = [0, 0, 0]
+
+[[parts]]
+name = "fork_0"
+kind = "cylinder"
+role = "tree_trunks"
+radius = 0.0936
+height = 0.5616
+offset = [0, 0.663, 0]
+rotation = [0, 0, -32]
+vertices = 12
+bevel = 0.0117
+segments = 3
+top_radius = 0.0507
+
+[[parts]]
+name = "fork_1"
+kind = "cylinder"
+role = "tree_trunks"
+radius = 0.0936
+height = 0.5616
+offset = [0, 0.663, 0]
+rotation = [0, 0, 29]
+vertices = 12
+bevel = 0.0117
+segments = 3
+top_radius = 0.0507
+
+[[parts]]
+name = "canopy_lower"
+kind = "blob"
+role = "tree_canopies_dark"
+lobes = [{center = [-0.4429727882267494, 1.2509166527887552, -0.0484245906442325], radius = 0.45950929162306253}, {center = [0.5385040424893747, 1.254486790976814, 0.08093455983727213], radius = 0.4877066063554201}, {center = [0.014874560861256122, 1.2111966422687825, 0.39886747866863076], radius = 0.47125552109318536}, {center = [0.021466017496894124, 1.1678345783712227, -0.36564708072886876], radius = 0.5040522177661785}]
+subdivisions = 3
+fuse = 0.0429
+offset = [0, 0, 0]
+
+[[parts]]
+name = "canopy"
+kind = "blob"
+role = "tree_canopies"
+lobes = [{center = [-0.2879048755777086, 1.6031349716393843, 0.032978077408863216], radius = 0.48531669338776134}, {center = [0.2624437758467572, 1.5937688386237008, 0.011766409741026482], radius = 0.47306516829960465}, {center = [-0.016845904965140088, 1.6200714932527276, -0.30918779760925375], radius = 0.43997171108356503}, {center = [-0.037048273641045286, 1.5154331162075774, 0.2929056078207187], radius = 0.4102971817909433}]
+subdivisions = 3
+fuse = 0.0429
+offset = [0, 0, 0]
+
+[[parts]]
+name = "canopy_crown"
+kind = "blob"
+role = "tree_canopies_light"
+lobes = [{center = [-0.17016457204445695, 2.0356767819828225, 0.05805318295016902], radius = 0.3601058646252702}, {center = [0.23465744373625158, 1.9621767286450655, 0.08799666475482237], radius = 0.3763062961899894}, {center = [0.03690912193016317, 1.961520378866421, -0.2109664620196969], radius = 0.36300853918540243}]
+subdivisions = 3
+fuse = 0.0351
+offset = [0, 0, 0]

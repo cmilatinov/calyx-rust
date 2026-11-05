@@ -81,11 +81,21 @@
       "span": 16,
       "value": {
         "Color": [
-          0.28744,
-          0.36625,
-          0.17465,
+          0.37124,
+          0.45641,
+          0.1912,
           1.0
         ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "outline_style",
+      "offset": 60,
+      "span": 4,
+      "value": {
+        "Uint": 1
       }
     }
   ]
