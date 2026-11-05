@@ -1,0 +1,37 @@
+# Four inset paving stones on one metre of clay ground.
+
+[[parts]]
+name = "nw"
+kind = "box"
+role = "ground_paving"
+size = [0.49, 0.1, 0.49]
+offset = [-0.25, 0.0, -0.25]
+bevel = 0.012
+segments = 2
+
+[[parts]]
+name = "ne"
+kind = "box"
+role = "ground_paving"
+size = [0.49, 0.1, 0.49]
+offset = [0.25, 0.0, -0.25]
+bevel = 0.012
+segments = 2
+
+[[parts]]
+name = "sw"
+kind = "box"
+role = "ground_paving"
+size = [0.49, 0.1, 0.49]
+offset = [-0.25, 0.0, 0.25]
+bevel = 0.012
+segments = 2
+
+[[parts]]
+name = "se"
+kind = "box"
+role = "ground_paving"
+size = [0.49, 0.1, 0.49]
+offset = [0.25, 0.0, 0.25]
+bevel = 0.012
+segments = 2

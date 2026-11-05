@@ -1,0 +1,73 @@
+{
+  "data": {
+    "components": {
+      "16824493-1c40-513f-ad6b-12acaecf0798": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "16824493-1c40-513f-ad6b-12acaecf0798",
+          "name": "surface",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "31c17075-f638-5c0a-8c3c-b711af5882c2",
+          "mesh": "70268b77-b717-586f-aed2-dea9cb04a98a"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "e98dd9a2-fed6-5740-b7fa-65bade57a3bc": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "e98dd9a2-fed6-5740-b7fa-65bade57a3bc",
+          "name": "ground_dirt",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "e98dd9a2-fed6-5740-b7fa-65bade57a3bc": [
+        "16824493-1c40-513f-ad6b-12acaecf0798"
+      ]
+    },
+    "roots": [
+      "e98dd9a2-fed6-5740-b7fa-65bade57a3bc"
+    ]
+  },
+  "root": "e98dd9a2-fed6-5740-b7fa-65bade57a3bc"
+}

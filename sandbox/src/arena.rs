@@ -21,6 +21,9 @@ const COVER_ROWS: [u32; 3] = [6, 8, 12];
 #[reflect_attr(name = "Arena Generator")]
 #[serde(default)]
 pub struct ComponentArena {
+    /// Generate the simple grid when Play starts. Authored kit scenes turn
+    /// this off and keep this component only for their arena bounds.
+    pub generate_on_start: bool,
     pub mesh: AssetRef<Mesh>,
     pub material: AssetRef<Material>,
     pub columns: u32,
@@ -31,6 +34,7 @@ pub struct ComponentArena {
 impl Default for ComponentArena {
     fn default() -> Self {
         Self {
+            generate_on_start: true,
             mesh: Default::default(),
             material: Default::default(),
             columns: 15,
@@ -86,7 +90,7 @@ impl ComponentStart for ComponentArena {
 }
 
 fn generate_arena(scene: &mut Scene, parent: GameObject, arena: &ComponentArena) {
-    if !arena.is_valid() {
+    if !arena.generate_on_start || !arena.is_valid() {
         return;
     }
 
@@ -237,7 +241,9 @@ mod tests {
     fn generator_creates_independent_fixed_grid_cubes() {
         let mut scene = calyx_engine::test_support::test_scene();
         let arena_object = scene.create(None, None);
-        generate_arena(&mut scene, arena_object, &ComponentArena::default());
+        scene.add_component(arena_object, ComponentArena::default());
+        scene.start();
+        scene.start();
 
         let children: Vec<_> = scene.children(arena_object).collect();
         let wall_count = children
@@ -272,55 +278,65 @@ mod tests {
     }
 
     #[test]
-    fn sandbox_scene_generates_arena_when_started() {
-        let assets = calyx_engine::test_support::test_asset_context_with_assets(vec![
-            std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("assets"),
-        ]);
+    fn authored_scene_keeps_its_layout_when_started_and_reloaded() {
+        let copy = calyx_engine::test_support::TestAssets::game();
+        let assets = copy.asset_context();
         let scene_ref = assets
             .registries
             .assets
             .read()
             .reload_by_path::<calyx_engine::scene::Scene>(
-                &std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                    .join("assets/game/scenes/arena.cxscene"),
+                &copy.sandbox_root().join("game/scenes/arena.cxscene"),
             )
-            .expect("sandbox scene should load");
+            .expect("arena should load");
         let mut scene = scene_ref.read().clone();
         let arena = scene
             .objects()
             .find(|object| scene.name(*object) == "Arena")
-            .expect("sandbox scene should contain an Arena generator");
-        assert_eq!(scene.children(arena).count(), 0);
-
-        scene.start();
-        assert_eq!(scene.children(arena).count(), 68);
+            .unwrap();
+        assert_eq!(
+            scene.read_component::<ComponentArena, _, _>(arena, |arena| arena.generate_on_start),
+            Some(false)
+        );
+        let count = scene.objects().count();
+        let colliders = scene.descendants_with::<ComponentCollider>(arena).count();
+        assert!(colliders > 50, "the authored pen and cover have collision");
         let registries = assets.registries.lock_read();
-        for object in scene.children(arena) {
-            let (mesh_id, material_id, mesh_resolves, material_resolves) = scene
-                .read_component::<ComponentMesh, _, _>(object, |renderer| {
-                    (
-                        renderer.mesh.id(),
-                        renderer.material.id(),
+        let mut checked = HashSet::new();
+        for object in scene.descendants_with::<ComponentMesh>(arena) {
+            scene.read_component::<ComponentMesh, _, _>(object, |renderer| {
+                if checked.insert((renderer.mesh.id(), renderer.material.id())) {
+                    assert!(
                         renderer.mesh.get_ref(&registries).is_some(),
+                        "missing mesh {}",
+                        renderer.mesh.id()
+                    );
+                    assert!(
                         renderer.material.get_ref(&registries).is_some(),
-                    )
-                })
-                .expect("generated arena object should have a mesh renderer");
-            assert!(!mesh_id.is_nil());
-            assert!(!material_id.is_nil());
-            assert_eq!(mesh_id.to_string(), "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9");
-            assert_eq!(
-                material_id.to_string(),
-                "0b90da62-df89-b912-f547-aeb5b1ca08a1"
-            );
-            assert!(mesh_resolves, "mesh asset {mesh_id} should resolve");
-            assert!(
-                material_resolves,
-                "material asset {material_id} should resolve"
-            );
+                        "missing material {}",
+                        renderer.material.id()
+                    );
+                }
+            });
         }
-
         scene.start();
-        assert_eq!(scene.children(arena).count(), 68);
+        scene.start();
+        assert_eq!(scene.objects().count(), count);
+        assert_eq!(
+            scene.descendants_with::<ComponentCollider>(arena).count(),
+            colliders
+        );
+        let mut reloaded = scene.restore_snapshot(scene.snapshot());
+        reloaded.start();
+        assert_eq!(reloaded.objects().count(), count);
+    }
+
+    #[test]
+    fn a_decorative_child_does_not_disable_the_grid_generator() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let arena = scene.create(None, None);
+        scene.create(None, Some(arena));
+        generate_arena(&mut scene, arena, &ComponentArena::default());
+        assert_eq!(scene.children(arena).count(), 69);
     }
 }

@@ -52,6 +52,9 @@ The tank's `Camera` object carries it as a Tank Camera component
 (`sandbox/src/tank_camera.rs`), which also leads the view towards the aim
 point and zooms in with the scroll wheel to 0.6 of the Far framing.
 
+Kit prop scales stay the same as the showcase; the playable arena is 60 by
+64 m, with a larger visible ground apron beyond its walls.
+
 ## Colour convention
 
 - A material's solid `Color` is read as **linear**. Store each palette hex

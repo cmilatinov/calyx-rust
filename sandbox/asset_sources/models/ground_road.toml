@@ -1,0 +1,8 @@
+# One-metre tile, with a level top at 0.1 m. Place at y=-0.1.
+[[parts]]
+name = "surface"
+kind = "box"
+role = "ground_asphalt"
+size = [1.0, 0.1, 1.0]
+bevel = 0.0
+segments = 1
