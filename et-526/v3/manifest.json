@@ -1,0 +1,41 @@
+{
+  "source_revision": "020b77f8203bab13f4f3185a5567953fcc0eca62",
+  "files": [
+    {
+      "file": "moonlit_barrel.png",
+      "sha256": "00cad56d2aab717f29f92c90c19101680850bbd6352a51e5f960a5a54bbe9488"
+    },
+    {
+      "file": "moonlit_barrel_threequarter.png",
+      "sha256": "80576e281a7c8ee59860900a647be0945e1e4c927f3559ecdc3521aca0861f8a"
+    },
+    {
+      "file": "moonlit_far.png",
+      "sha256": "b802a9880c7bb8a70eabbe96f09577201a4bf878169a5101e3044909a81a84b2"
+    },
+    {
+      "file": "sunbaked_barrel.png",
+      "sha256": "a09f5e1ebb842cbe8d796b036008e3fe2da07cb1dd246616119801dd8c616a14"
+    },
+    {
+      "file": "sunbaked_barrel_threequarter.png",
+      "sha256": "abc54ea73fb2c6f415099d5defd8f9cda5140ea007d1ec0c3d9ce881995b9ed9"
+    },
+    {
+      "file": "sunbaked_far.png",
+      "sha256": "6a4be3050a08aaa91d3b2a8e0cf5135e1c972c85b129c5d5e82da06f7ffffe4c"
+    },
+    {
+      "file": "sunny_barrel.png",
+      "sha256": "61257865f65c6345d988681c3df91c97e78b129c645667d2aac551cd07d0e6f4"
+    },
+    {
+      "file": "sunny_barrel_threequarter.png",
+      "sha256": "cf681c8d034d34c74e65205612a9612aba25d446cfd1ca2cbd4c59b571f77159"
+    },
+    {
+      "file": "sunny_far.png",
+      "sha256": "46d8dcaf5ef3344667ff69194a67ce2dce4ca2e9f666dcc995a7836b3518650b"
+    }
+  ]
+}
