@@ -79,8 +79,24 @@ impl PostProcessEffects {
     pub fn from_game_object(scene: &Scene, game_object: GameObject) -> Self {
         let components = Self::components(scene, game_object);
         match PostProcessProfile::of_volume(scene, game_object) {
-            Some(profile) => profile.read().effects().overlaid_by(&components),
+            Some(profile) => Self::from_profile(&profile.read()).overlaid_by(&components),
             None => components,
+        }
+    }
+
+    /// Temporary adapter for the renderer's fixed settings, until #519 migrates
+    /// resolution to persistent UUID-keyed slots. Profile access stays generic.
+    pub fn from_profile(profile: &PostProcessProfile) -> Self {
+        Self {
+            tonemapping: profile.effect().cloned(),
+            ambient_occlusion: profile.effect().cloned(),
+            fog: profile.effect().cloned(),
+            depth_of_field: profile.effect().cloned(),
+            bloom: profile.effect().cloned(),
+            color_grading: profile.effect().cloned(),
+            vignette: profile.effect().cloned(),
+            outline: profile.effect().cloned(),
+            anti_aliasing: profile.effect().cloned(),
         }
     }
 

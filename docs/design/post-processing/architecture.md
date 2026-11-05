@@ -420,10 +420,14 @@ A local volume changes part of the look in a region and fades it in and out as t
 pub struct PostProcessProfile { entries: Vec<ProfileEntry> }  // at most one entry per effect type
 pub struct ProfileEntry { pub enabled: bool, pub settings: Box<dyn PostProcessEffect> }
 
-// component/post_process/: the marker every effect component implements and
+// component/post_process/: the API every effect component implements and
 // lists in its #[reflect(...)], so the type registry knows the effect types.
 #[reflect_trait]
-pub trait PostProcessEffect: Component {}
+pub trait PostProcessEffect: Component {
+    fn copy_from(&mut self, source: &dyn PostProcessEffect);
+    fn blend_into(&mut self, target: &dyn PostProcessEffect, factor: f32);
+    fn reset_neutral(&mut self) -> bool;
+}
 
 // Both volumes gain:
 pub profile: AssetRef<PostProcessProfile>,  // nil: no profile
@@ -444,7 +448,9 @@ A profile is a look saved as an asset, which any number of global and local volu
 
 - **Entries**: a list of entries, at most one per effect, each keyed in the file by its effect component's type UUID (`type`), with its own `enabled` flag and the component's serialized fields (`settings`), as a scene saves the component. The settings are a value of the effect component itself, so the passes read profile values exactly as component values. A missing `enabled` is on, and missing settings fields take the component's defaults. An empty profile saves as `{ "entries": [] }`.
 - **Effect types**: the components registered with the `PostProcessEffect` reflect trait (`PostProcessProfile::effect_types`, from the type registry); a project component can be one too. Loading deserializes each entry through the component registry's prototype for its type, as a scene loads components, then through `ReflectPostProcessEffect`. An entry whose type is unknown or not an effect, whose settings do not deserialize, or whose type an earlier entry has, is skipped with a warning, and the rest of the profile loads. Adding an effect therefore needs no change to the profile or its file format.
-- **Gathering**: `PostProcessProfile::effects` maps the enabled entries onto `PostProcessEffects`, one line per effect. That mapping, and `PostProcessEffects`' fixed fields, go away with #477, which keys the resolved settings by type UUID too.
+- **Borrowed access**: `PostProcessProfile::enabled_effects` iterates enabled entries as `&dyn PostProcessEffect`; `effect::<T>()` borrows one enabled entry by its registered type UUID. Neither copies settings or names individual effect types. The renderer's temporary `PostProcessEffects::from_profile` adapter maps these to its fixed settings; #519 replaces that adapter and the fixed fields with persistent UUID-keyed slots.
+- **In-place API**: `PostProcessEffect::copy_from` copies matching concrete effects into existing storage. `blend_into` clamps its factor to 0..1 and uses the same float, colour and discrete-field rules as `BlendEffect`; a mismatched concrete type is a programming error and panics. `reset_neutral` preserves the effect's non-strength settings while resetting its strengths, returning `false` without changing FXAA because it has no neutral value. A resolver copies the target, resets it to neutral and blends toward it to fade an inactive effect in; when reset returns `false`, it switches on at half weight. Tone mapping retains its always-on default handling in the resolver. Each built-in component registers the reflected trait and derives `PostProcessEffect` (reexported beside the trait) to dispatch to its typed `BlendEffect` operations. Outlines specialize those operations to copy, blend and reset their style list in existing capacity instead of allocating a new list each time.
+- **Staged migration**: #477 supplies this shared effect API and generic profile access. #519 owns generic scene gathering, persistent per-view settings, typed pass readers and allocation-free steady-state resolution. Until it lands, adding an effect also requires the renderer-side fixed fields and adapter; after it lands only the effect's component/registration and pass need changes.
 - **Precedence** (`PostProcessEffects::from_game_object`): the volume's profile entries, each enabled entry on and each disabled one off, then each effect component present and enabled on the volume's object replaces its effect's entry whole. A component the object lacks or holds disabled leaves the profile's entry; to switch off a profile's effect on one volume, give it the component and switch its entry off in the profile, or override the effect with neutral values. A volume without a profile, or whose profile does not load (warned once), reads its components alone, as before profiles. Tone mapping still falls back to its defaults when neither sets it. An object with both a global and a local volume uses the global volume's profile.
 - **No blending or layering**: a profile never layers over another. Local volumes blend the settings each volume resolves to (Local Volumes), so a profile reaches the blend as that volume's effects.
 - **Live edits**: `resolve` reads the loaded profile every frame through the asset registry, so an edit in the profile's inspector, a change of a volume's `profile` field and a hot reload of the file all show on the next frame, in every view and every volume that uses it. Saving the profile writes its file; an external change to the file hot reloads it in place.

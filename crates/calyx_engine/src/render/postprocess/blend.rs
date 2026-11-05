@@ -22,6 +22,26 @@ pub trait BlendEffect: Clone {
     /// at its neutral value. `None` for an effect with no neutral value,
     /// which switches on at a factor of 0.5 instead.
     fn neutral(target: &Self) -> Option<Self>;
+
+    /// Copies into this effect's existing storage.
+    fn copy_in_place(&mut self, source: &Self) {
+        self.clone_from(source);
+    }
+
+    /// Blends into this effect's existing storage with the rules of `blend`.
+    fn blend_in_place(&mut self, target: &Self, factor: f32) {
+        *self = self.blend(target, factor);
+    }
+
+    /// Resets to `neutral`, or leaves the effect alone when it has no neutral.
+    fn reset_neutral_in_place(&mut self) -> bool {
+        if let Some(neutral) = Self::neutral(self) {
+            *self = neutral;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 /// `below` with a volume's `effect` blended over it by `factor`.
@@ -197,6 +217,39 @@ impl BlendEffect for ComponentVignette {
 }
 
 impl BlendEffect for ComponentOutline {
+    fn copy_in_place(&mut self, source: &Self) {
+        self.styles.clone_from(&source.styles);
+        self.depth_threshold = source.depth_threshold;
+        self.silhouette_threshold = source.silhouette_threshold;
+        self.normal_threshold = source.normal_threshold;
+    }
+
+    fn blend_in_place(&mut self, target: &Self, factor: f32) {
+        let count = self.styles.len().max(target.styles.len());
+        for index in 0..count {
+            match (self.styles.get_mut(index), target.styles.get(index)) {
+                (Some(from), Some(to)) => *from = from.blend(to, factor),
+                (Some(from), None) => *from = from.blend(&from.invisible(), factor),
+                (None, Some(to)) => self.styles.push(to.invisible().blend(to, factor)),
+                (None, None) => unreachable!("index is below the longer list's length"),
+            }
+        }
+        self.depth_threshold = lerp(self.depth_threshold, target.depth_threshold, factor);
+        self.silhouette_threshold = lerp(
+            self.silhouette_threshold,
+            target.silhouette_threshold,
+            factor,
+        );
+        self.normal_threshold = lerp(self.normal_threshold, target.normal_threshold, factor);
+    }
+
+    fn reset_neutral_in_place(&mut self) -> bool {
+        for style in &mut self.styles {
+            style.opacity = 0.0;
+        }
+        true
+    }
+
     /// The thresholds interpolate, and the styles blend entry by entry, by
     /// index, over the longer of the two lists: an entry one side lacks
     /// blends from, or to, an invisible copy of the other side's entry (its

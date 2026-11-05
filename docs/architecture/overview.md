@@ -49,6 +49,7 @@ egui + eframe editor application.
 ### `calyx_engine_derive` (proc-macro)
 Derive macros:
 - `#[derive(Component)]` — Generates ComponentInstance impl (Legion type bridging, serialize/deserialize).
+- `#[derive(PostProcessEffect)]` — Bridges a component's in-place `BlendEffect` operations to the reflected post-process effect trait.
 - `#[derive(Reflect)]` — Generates runtime reflection with field info, attributes, TypeName. Reflected values downcast through `Any` (`TypeId`); the type UUID identifies the type in saved data and registry lookups only.
 - `#[derive(TypeUuid)]` — Static UUID from `#[uuid = "..."]` attribute.
 - `#[derive(Resource)]` — Marker impl for ResourceMap storage.
