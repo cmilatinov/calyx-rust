@@ -129,6 +129,15 @@ fn expected_extent(shape: &Shape) -> Option<[(f64, f64); 3]> {
             let height = flare.map_or(*height, |f| f.height.max(*height));
             Some([(low, 2.0 * r), (height, height), (low, 2.0 * r)])
         }
+        Shape::Ring {
+            radius,
+            height,
+            vertices,
+            ..
+        } => {
+            let low = 2.0 * radius * (std::f64::consts::PI / *vertices as f64).cos();
+            Some([(low, 2.0 * radius), (*height, *height), (low, 2.0 * radius)])
+        }
         _ => None,
     }
 }

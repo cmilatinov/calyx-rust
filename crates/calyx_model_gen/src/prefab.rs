@@ -39,7 +39,8 @@ impl PrefabPlan {
         };
         let mut components = Map::new();
         components.insert(root.clone(), object(&root, &self.name, [0.0; 3], [0.0; 3]));
-        let mut children = Vec::new();
+        let mut hierarchy = Map::new();
+        hierarchy.insert(root.clone(), json!([]));
         for entry in &self.parts {
             let crate::layout::PrefabPart {
                 part,
@@ -50,8 +51,20 @@ impl PrefabPlan {
             let id = object_id(&format!("parts/{}", part.name));
             let mut value = object(&id, &part.name, part.offset, part.rotation);
             value[MESH] = json!({"mesh": mesh.id, "material": material.id});
+            if !part.cast_shadows {
+                value[MESH]["cast_shadows"] = json!(false);
+            }
             components.insert(id.clone(), value);
-            children.push(id);
+            let parent = part.parent.as_ref().map_or_else(
+                || root.clone(),
+                |parent| object_id(&format!("parts/{parent}")),
+            );
+            hierarchy
+                .entry(parent.clone())
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .expect("child list")
+                .push(json!(id));
             if let Some(outline) = outline {
                 let id = object_id(&format!("parts/{}/outline", part.name));
                 let mut value = object(
@@ -62,11 +75,17 @@ impl PrefabPlan {
                 );
                 let ink = layout.material(self.map, palette::find(palette::INK).expect("ink role"));
                 value[MESH] = json!({"mesh": outline.id, "material": ink.asset.id});
+                if !part.cast_shadows {
+                    value[MESH]["cast_shadows"] = json!(false);
+                }
                 components.insert(id.clone(), value);
-                children.push(id);
+                hierarchy[&parent]
+                    .as_array_mut()
+                    .expect("child list")
+                    .push(json!(id));
             }
         }
-        json!({"root": root, "data": {"components": components, "hierarchy": {root.clone(): children}, "roots": [root]}})
+        json!({"root": root, "data": {"components": components, "hierarchy": hierarchy, "roots": [root]}})
     }
 }
 

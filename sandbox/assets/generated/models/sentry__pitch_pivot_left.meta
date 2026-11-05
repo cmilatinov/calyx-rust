@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "e6167e2d-c2bf-5f18-aae0-9d5892ff0ded",
+    "name": "generated/models/sentry__pitch_pivot_left",
+    "display_name": "sentry__pitch_pivot_left",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

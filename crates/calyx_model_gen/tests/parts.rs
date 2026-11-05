@@ -52,12 +52,56 @@ fn invalid_parts_fail_before_building() {
         PARTS.replace("radius = 0.2", "radius = -1"),
         format!("kind = \"box\"\n{PARTS}"),
         format!("typo = true\n{PARTS}"),
+        PARTS.replace(
+            "name = \"canopy\"",
+            "name = \"canopy\"\nparent = \"missing\"",
+        ),
+        PARTS.replace(
+            "name = \"canopy\"",
+            "name = \"canopy\"\nparent = \"canopy\"",
+        ),
+        PARTS
+            .replace("name = \"canopy\"", "name = \"canopy\"\nparent = \"trunk\"")
+            .replace("name = \"trunk\"", "name = \"trunk\"\nparent = \"canopy\""),
     ] {
         assert!(
             Model::parse("tree", &text, Path::new("")).is_err(),
             "{text}"
         );
     }
+}
+
+#[test]
+fn a_named_parent_carries_its_children_independently_of_source_order() {
+    let text = PARTS.replace("name = \"canopy\"", "name = \"canopy\"\nparent = \"trunk\"");
+    let reordered = text
+        .split("[[parts]]")
+        .skip(1)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|part| format!("[[parts]]{part}"))
+        .collect::<String>();
+    let layout = Layout::new(Path::new("sandbox/assets/generated")).unwrap();
+    let data = |source: &str| {
+        layout
+            .plan(&[Model::parse("tree", source, Path::new("")).unwrap()])
+            .prefabs[0]
+            .data(&layout)
+    };
+    let first = data(&text);
+    assert_eq!(first, data(&reordered));
+    let root = first["root"].as_str().unwrap();
+    let trunk = first["data"]["hierarchy"][root][0].as_str().unwrap();
+    let canopy = first["data"]["hierarchy"][trunk][0].as_str().unwrap();
+    assert_eq!(
+        first["data"]["components"][canopy]["02289c92-3412-406e-a7e5-3bbb15d7041e"]["name"],
+        "canopy"
+    );
+    assert_eq!(
+        first["data"]["hierarchy"][root].as_array().unwrap().len(),
+        1
+    );
 }
 
 #[test]

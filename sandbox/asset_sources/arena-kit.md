@@ -1,12 +1,12 @@
 # Concept-sheet arena kit
 
-The 23 models below follow [the concept sheet](../../docs/design/art/concept-sheet.png).
+The 26 models below follow [the concept sheet](../../docs/design/art/concept-sheet.png).
 Each has one named-part parameter file in `models/`, shared generated part meshes,
 and one prefab for each map under `assets/generated/prefabs/{sunny,sunbaked,moonlit}/`.
 Regenerate meshes, materials and prefabs from the repository root with
 `cargo run -p calyx_model_gen --` (Blender 4.0 at its default path).
 
-The look-dev `Showcase` lays out every model on all three maps. The `Scenario`
+The look-dev `Showcase` lays out the original 23 kit models on all three maps. The `Scenario`
 contains a U-shaped wall pen, repeated straight joins, cover clusters, trees,
 rocks, props and the existing four player tanks. All retain the Far camera
 framing and the map's original lighting/post-processing rig.
@@ -58,15 +58,52 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `grass_tuft` | Five tapered leaves in a fan | Normally non-blocking; a bounds box is available if an interaction needs one |
 | `sandbag_stack` | Three staggered rows of soft bags, 1.27 m total height, with restrained seam bands | Box around the stack |
 | `pickup_yellow`, `pickup_blue` | Green and blue glowing orbs over octagonal pads; legacy yellow name retains stable IDs | Box around pad; collection trigger belongs to gameplay |
+| `sentry` | Anchored circular base with broad mounting pads and exposed yaw bearing; red player-2 head with clipped armor cheeks, pitch hubs, recoil sleeve, open muzzle, roof cooling banks and shaded optic | Cylinder around base, radius 0.57 m and height 0.15 m, plus a box around the solid head if cover collision is desired; visual integration preserves existing gameplay |
+| `explosive_barrel` | Red explosive drum with a centered yellow-and-black lid flame badge, opposing diamond flame plaques, narrow hazard hoops and rolled rims | Cylinder, radius 0.455 m and height 1.125 m, centered 0.5625 m above the ground pivot; explosion behavior belongs to cover gameplay |
+| `aim_reticle` | Flat open ring and four ticks, light marks over a dark contrast border; 1.66 m overall width | Non-blocking, no collider |
 
-Every opaque part material has `outline_style = 1`; pickup signal orbs use 0
-to retain their glow. Palette roles and construction rules are in
+Every opaque prop part material has `outline_style = 1`; pickup signal orbs
+and both reticle materials use 0. The reticle's explicit dark border stays
+readable on light ground without the screen-space ink thickening its marks.
+Palette roles and construction rules are in
 [the direction guide](../../docs/design/art/tank-game-direction.md).
+
+The Sentry faces +Z. Its ground pivot is at the foot of the base, the `head`
+part starts at `(0, 0.3, 0)`, and its muzzle ends at `(0, 0.5, 1.2)` relative
+to that pivot. The gameplay Sentry root stays at its original height of
+0.5 m; its generated visual root sits 0.5 m below it, and `ComponentSentry.head`
+references the head child. Thus `muzzle_offset = 1.2` still fires exactly at
+the visible muzzle, with the same projectile height, range and shooter identity.
+The barrel, muzzle, mantlet, hatch, armor, pitch hubs, cooling banks and optic
+name `parent = "head"` in the source; their offsets are local to that part.
+The pedestal, yaw bearing and mounting pads stay fixed. Part names, not source order, identify
+parents, meshes and prefab objects. A missing parent or cycle is rejected.
+
+The explosive drum puts its largest warning on the lid, which dominates at
+the Far camera's 68-degree pitch. The black flame and yellow inner lick are
+closed relief meshes, with a yellow field around them; opposing side plaques
+repeat the symbol for lower views. The red body separates this prop from a
+generic utility drum. The badge and flame share the lid's center, with no
+offset bung. Rolled rims retain its familiar drum construction.
+The Sentry's red center remains visible between pale cheek armor and paired
+dark cooling banks. The recoil sleeve, lateral pitch hubs and anchor pads
+describe how the machine turns, fires and stays planted. These are broad
+mechanical forms rather than a field of small bolts. Its cyan optic is matte
+and non-emissive, so it cannot compete with combat signals on Moonlit.
+
+The arena contains a linked Sunny Sentry prefab under its gameplay root and
+the Sunny reticle geometry. The player prefab carries the same reticle under
+its Player root, so prefab instances
+remap the controller's crosshair reference. `spawn.rs` only moves the existing
+player rig during respawn and creates no crosshair visual. All three map
+prefabs are available for arena authoring. The barrel is intentionally absent
+from the live arena until cover gameplay places it.
 
 Moonlit retains the authored night lighting and bloom (moon strength 7, sky 1,
 bloom 4.5 / threshold 2.5 / knee 0.1 / radius 6). Its primary kit roles match
 the direction reference; additional timber/foliage details stay in cool steel
 and pine shades. The lantern uses sodium `#FF9330` at strength 4. Pickup
 emission (Sunny/Sunbaked/Moonlit) is 12/12/6 for green and 24/24/16 for blue,
-with distinct colored halos at Far. Non-pickup material colors remain unchanged.
+with distinct colored halos at Far. The combat props add `explosive_red`,
+`sentry_armor` and `sentry_optic` roles; existing kit material colors remain unchanged.
 All three look-dev rigs use 2 px inner ink; outer ink and thresholds are unchanged.
