@@ -378,8 +378,9 @@ fn paint_world(
             continue;
         };
         let (x, y, w) = hp_anchor(bounds);
-        let h = ((w * 0.115).clamp(12.0, 20.0) + 6.0) * 0.82 - 6.0;
-        // Preserve projected width, slim the track and reclaim the inner border.
+        // Keep the fill thin relative to its projected width, including in
+        // small game views where a fixed minimum height made it look chunky.
+        let h = ((w + 2.0) * 0.14).clamp(4.0, 16.0) - 2.0;
         let outer_radius = (h * 0.5 + 3.0) * 0.78;
         p.fill(
             x - w * 0.5 - 3.0,
