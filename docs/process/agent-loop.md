@@ -104,6 +104,11 @@ has been delivered.
   `query_panels` reports); `game`/`viewport` = 0..1 normalized inside that
   panel's image. Screenshots are physical pixels: multiply points by
   `pixels_per_point` from `query_panels`.
+- The Game tab keeps the chosen aspect ratio (Play initially uses the
+  project's window aspect). Its input rect and HUD cover the drawn image,
+  excluding any letterbox bars; the render texture uses that rect's size in
+  physical pixels. With aspect set to None, the image fills the tab. Resuming
+  or stepping an existing play session keeps this selection.
 - `input raw` takes an `InputEventSpec` array for scripted sequences, e.g.
   `[{"type":"key_down","key":"W"},{"type":"wait","frames":30},{"type":"key_up","key":"W"}]`.
   Key names are egui names (`W`, `Space`, `Escape`, `ArrowLeft`).

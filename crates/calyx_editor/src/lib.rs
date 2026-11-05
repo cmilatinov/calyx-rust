@@ -32,7 +32,7 @@ use calyx_engine::render::{
     GizmoOptions, ParticleSimulation, SceneRenderer, SceneRendererError, SceneRendererOptions,
 };
 use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
-use calyx_engine::scene::Scene;
+use calyx_engine::scene::{Scene, SceneManager};
 use eframe::{wgpu, NativeOptions};
 use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui, Vec2};
 use egui::{Align, Layout};
@@ -100,7 +100,8 @@ pub struct EditorAppState {
     pub viewport_size: (f32, f32),
     pub viewport_response: Option<egui::Response>,
     pub game_response: Option<egui::Response>,
-    pub game_size: (f32, f32),
+    /// Last Game image size in logical points, shared by the HUD and input.
+    pub game_size: Vec2,
     pub gizmo_modes: EnumSet<GizmoMode>,
     pub gizmo_orientation: GizmoOrientation,
     /// Whether the edit scene's particles simulate while play is stopped,
@@ -620,7 +621,7 @@ impl EditorApp {
         }
         camera.update_projection();
         prefab_mode.dress_scene_view(scene_renderer.options_mut());
-        let game_view_size = Self::get_physical_size(ctx, *game_size);
+        let game_view_size = Self::game_physical_size(ctx, *game_size);
         // Gizmos that only draw for the selection, such as a camera path's,
         // see it while the scene renders; the outline gets it afterwards.
         scene_renderer.options_mut().gizmos = Some(GizmoOptions {
@@ -693,6 +694,11 @@ impl EditorApp {
         let width = window_size.width() * viewport_size.0 * pixels_per_point;
         let height = window_size.height() * viewport_size.1 * pixels_per_point;
         (width as u32, height as u32)
+    }
+
+    fn game_physical_size(ctx: &egui::Context, size: Vec2) -> (u32, u32) {
+        let pixels = (size * ctx.pixels_per_point()).round();
+        (pixels.x as u32, pixels.y as u32)
     }
 
     fn has_renderable_size(width: u32, height: u32) -> bool {
@@ -997,9 +1003,8 @@ impl EditorApp {
             .runtime_settings()
             .window
             .non_zero_size();
-        if let Some(size) = window_size {
-            self.state.game_aspect = Some(size);
-        }
+        self.state.game_aspect =
+            game_aspect_for_start(&self.state.game.scenes, self.state.game_aspect, window_size);
         match self
             .project_manager
             .read()
@@ -1015,6 +1020,20 @@ impl EditorApp {
 
     fn is_simulating(&self) -> bool {
         self.state.game.scenes.is_simulating()
+    }
+}
+
+/// A new play session adopts the project's window aspect. Resuming or
+/// stepping its existing play copy keeps the user's Game tab selection.
+fn game_aspect_for_start(
+    scenes: &SceneManager,
+    selected: Option<(u32, u32)>,
+    project_size: Option<(u32, u32)>,
+) -> Option<(u32, u32)> {
+    if scenes.has_simulation_scene() {
+        selected
+    } else {
+        project_size.or(selected)
     }
 }
 
@@ -1059,7 +1078,7 @@ impl EditorApp {
 
 #[cfg(test)]
 mod tests {
-    use super::{press_ends_inspector_edits, ActiveSceneState, EditorApp};
+    use super::{game_aspect_for_start, press_ends_inspector_edits, ActiveSceneState, EditorApp};
     use std::path::PathBuf;
 
     #[test]
@@ -1132,5 +1151,41 @@ mod tests {
         assert!(!EditorApp::has_renderable_size(0, 720));
         assert!(!EditorApp::has_renderable_size(1280, 0));
         assert!(EditorApp::has_renderable_size(1280, 720));
+    }
+
+    #[test]
+    fn resuming_and_stepping_a_play_copy_keep_the_selected_game_aspect() {
+        let mut game = calyx_engine::test_support::test_game_context();
+        let project_size = Some((1920, 1080));
+        assert_eq!(
+            game_aspect_for_start(&game.scenes, None, project_size),
+            project_size
+        );
+        game.scenes.start_simulation();
+
+        for selected in [None, Some((4, 3)), Some((21, 9))] {
+            game.scenes.pause_simulation();
+            assert!(!game.scenes.is_simulating());
+            assert_eq!(
+                game_aspect_for_start(&game.scenes, selected, project_size),
+                selected
+            );
+            game.scenes.start_simulation();
+            assert!(game.scenes.is_simulating());
+            assert_eq!(
+                game_aspect_for_start(&game.scenes, selected, project_size),
+                selected
+            );
+        }
+
+        game.scenes.stop_simulation();
+        assert_eq!(
+            game_aspect_for_start(&game.scenes, Some((4, 3)), project_size),
+            project_size
+        );
+        assert_eq!(
+            game_aspect_for_start(&game.scenes, Some((4, 3)), None),
+            Some((4, 3))
+        );
     }
 }
