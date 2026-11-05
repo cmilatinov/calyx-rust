@@ -74,37 +74,14 @@ impl Painter {
         );
     }
     pub fn panel(&mut self, x: f32, y: f32, w: f32, h: f32, cut: f32) {
-        self.bevel(x - 3.0, y - 3.0, w + 6.0, h + 6.0, cut + 1.0, BLACK);
         self.bevel(x, y, w, h, cut, STEEL);
         self.bevel(
             x + 3.0,
             y + 3.0,
             w - 6.0,
             h - 6.0,
-            cut - 1.0,
-            UiColor::rgba(37, 49, 61, 255),
-        );
-        self.bevel(
-            x + 7.0,
-            y + 7.0,
-            w - 14.0,
-            h - 14.0,
-            (cut - 3.0).max(1.0),
-            BLACK,
-        );
-        self.bevel(
-            x + 9.0,
-            y + 9.0,
-            w - 18.0,
-            h - 18.0,
-            (cut - 4.0).max(1.0),
+            (cut - 2.0).max(1.0),
             PANEL,
-        );
-        self.line(
-            (x + cut, y + 3.0),
-            (x + w - cut, y + 3.0),
-            UiColor::rgba(136, 151, 164, 100),
-            1.0,
         );
     }
     #[allow(clippy::too_many_arguments)]
@@ -168,13 +145,7 @@ impl Painter {
         });
     }
     pub fn title_plate(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        for (inset, color) in [
-            (0.0, BLACK),
-            (3.0, STEEL),
-            (6.0, UiColor::rgba(137, 153, 165, 255)),
-            (8.0, BLACK),
-            (11.0, PANEL),
-        ] {
+        for (inset, color) in [(0.0, STEEL), (3.0, PANEL)] {
             let x = x + inset;
             let y = y + inset;
             let w = w - inset * 2.0;
@@ -193,50 +164,26 @@ impl Painter {
         }
     }
     pub fn plate(&mut self, x: f32, y: f32, w: f32, h: f32) {
-        for (inset, color) in [
-            (0.0, BLACK),
-            (3.0, STEEL),
-            (6.0, UiColor::rgba(137, 153, 165, 255)),
-            (8.0, BLACK),
-            (11.0, PANEL),
-        ] {
+        for (inset, color) in [(0.0, STEEL), (3.0, PANEL)] {
             let x = x + inset;
             let y = y + inset;
             let w = w - 2.0 * inset;
             let h = h - 2.0 * inset;
             self.polygon(
                 &[
-                    (x + w * 0.08, y),
-                    (x + w * 0.92, y),
-                    (x + w, y + h * 0.24),
-                    (x + w * 0.87, y + h),
-                    (x + w * 0.13, y + h),
-                    (x, y + h * 0.24),
+                    (x + w * 0.07, y),
+                    (x + w * 0.93, y),
+                    (x + w, y + h * 0.20),
+                    (x + w * 0.88, y + h),
+                    (x + w * 0.12, y + h),
+                    (x, y + h * 0.20),
                 ],
                 color,
             );
         }
-        self.line(
-            (x + w * 0.12, y + 6.0),
-            (x + w * 0.88, y + 6.0),
-            UiColor::rgba(188, 210, 222, 160),
-            2.0,
-        );
     }
     pub fn circle(&mut self, x: f32, y: f32, r: f32, color: UiColor) {
         self.fill(x - r, y - r, 2.0 * r, 2.0 * r, color, r);
-    }
-    pub fn ring(&mut self, x: f32, y: f32, r: f32, color: UiColor, width: f32) {
-        for i in 0..96 {
-            let a = i as f32 * std::f32::consts::TAU / 96.0;
-            let b = (i + 1) as f32 * std::f32::consts::TAU / 96.0;
-            self.line(
-                (x + r * a.cos(), y + r * a.sin()),
-                (x + r * b.cos(), y + r * b.sin()),
-                color,
-                width,
-            );
-        }
     }
     pub fn tank(&mut self, x: f32, y: f32, s: f32, color: UiColor) {
         // Broad tread/body silhouette, stepped turret, roof hatch, long cannon.

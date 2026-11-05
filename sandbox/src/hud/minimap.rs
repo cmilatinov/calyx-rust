@@ -325,54 +325,139 @@ impl MinimapState {
 
 /// Clip convex geometry against a polygonal circle before sending it to the UI.
 /// This avoids square map corners and contacts bleeding over its steel rim.
-fn clip_circle(mut points: Vec<(f32, f32)>, center: (f32, f32), radius: f32) -> Vec<(f32, f32)> {
-    for i in 0..64 {
-        let angle = (i as f32 + 0.5) * std::f32::consts::TAU / 64.0;
-        let normal = (angle.cos(), angle.sin());
-        let distance =
-            |p: (f32, f32)| (p.0 - center.0) * normal.0 + (p.1 - center.1) * normal.1 - radius;
-        let old = std::mem::take(&mut points);
-        if old.is_empty() {
-            break;
+/// Retains only the current geometry, independent of player/camera movement.
+#[derive(Default)]
+pub(super) struct BoundaryCache {
+    floor: Option<GroundRect>,
+    cover: Vec<GroundRect>,
+    edges: Vec<(Vec2, Vec2)>,
+}
+impl BoundaryCache {
+    fn edges(&mut self, floor: Option<GroundRect>, cover: &[GroundRect]) -> &[(Vec2, Vec2)] {
+        if self.floor != floor || self.cover != cover {
+            self.edges = playable_boundary(floor, cover);
+            self.floor = floor;
+            self.cover.clear();
+            self.cover.extend_from_slice(cover);
         }
-        let mut previous = *old.last().unwrap();
-        let mut d_previous = distance(previous);
-        for current in old {
-            let d = distance(current);
-            if (d <= 0.0) != (d_previous <= 0.0) {
-                let t = d_previous / (d_previous - d);
-                points.push((
-                    previous.0 + (current.0 - previous.0) * t,
-                    previous.1 + (current.1 - previous.1) * t,
-                ));
+        &self.edges
+    }
+}
+
+fn corners(area: GroundRect) -> [Vec2; 4] {
+    let [a, b] = area.half_axes;
+    [
+        area.center - a - b,
+        area.center + a - b,
+        area.center + a + b,
+        area.center - a + b,
+    ]
+}
+fn contains(area: GroundRect, point: Vec2) -> bool {
+    cover_entry(point, point, area).is_some()
+}
+/// Boundary of floor minus solid cover. Splitting intersections and checking the
+/// free-space side removes shared tile edges without assuming an axis-aligned grid.
+fn playable_boundary(floor: Option<GroundRect>, cover: &[GroundRect]) -> Vec<(Vec2, Vec2)> {
+    let mut result = Vec::new();
+    let mut areas = cover
+        .iter()
+        .copied()
+        .map(|a| (a, false))
+        .collect::<Vec<_>>();
+    if let Some(floor) = floor {
+        areas.push((floor, true));
+    }
+    let cross = |a: Vec2, b: Vec2| a.x * b.y - a.y * b.x;
+    for &(area, is_floor) in &areas {
+        let vertices = corners(area);
+        for i in 0..4 {
+            let a = vertices[i];
+            let b = vertices[(i + 1) % 4];
+            let d = b - a;
+            let Some(mut side) = vec2(-d.y, d.x).try_normalize(1e-6) else {
+                continue;
+            };
+            if side.dot(&((a + b) * 0.5 - area.center)) < 0.0 {
+                side = -side;
             }
-            if d <= 0.0 {
-                points.push(current);
+            if is_floor {
+                side = -side;
             }
-            previous = current;
-            d_previous = d;
+            let mut cuts = vec![0.0, 1.0];
+            for &(other, _) in &areas {
+                let other = corners(other);
+                for j in 0..4 {
+                    let c = other[j];
+                    let e = other[(j + 1) % 4] - c;
+                    let denom = cross(d, e);
+                    if denom.abs() > 1e-6 {
+                        let t = cross(c - a, e) / denom;
+                        let u = cross(c - a, d) / denom;
+                        if t > 0.0 && t < 1.0 && (-1e-5..=1.00001).contains(&u) {
+                            cuts.push(t);
+                        }
+                    } else if cross(c - a, d).abs() < 1e-4 {
+                        let t = (c - a).dot(&d) / d.norm_squared();
+                        if t > 0.0 && t < 1.0 {
+                            cuts.push(t);
+                        }
+                    }
+                }
+            }
+            cuts.sort_by(f32::total_cmp);
+            cuts.dedup_by(|a, b| (*a - *b).abs() < 1e-5);
+            for span in cuts.windows(2) {
+                let mid = a + d * ((span[0] + span[1]) * 0.5) + side * 0.002;
+                if floor.is_none_or(|f| contains(f, mid))
+                    && !cover.iter().any(|&c| contains(c, mid))
+                {
+                    result.push((a + d * span[0], a + d * span[1]));
+                }
+            }
         }
     }
-    points
+    result
+}
+fn clip_line_circle(
+    a: (f32, f32),
+    b: (f32, f32),
+    center: (f32, f32),
+    radius: f32,
+) -> Option<((f32, f32), (f32, f32))> {
+    let start = vec2(a.0 - center.0, a.1 - center.1);
+    let d = vec2(b.0 - a.0, b.1 - a.1);
+    let len = d.norm_squared();
+    if len < 1e-8 {
+        return None;
+    }
+    let k = start.dot(&d);
+    let disc = k * k - len * (start.norm_squared() - radius * radius);
+    if disc < 0.0 {
+        return None;
+    }
+    let near = ((-k - disc.sqrt()) / len).max(0.0);
+    let far = ((-k + disc.sqrt()) / len).min(1.0);
+    if near >= far {
+        return None;
+    }
+    Some((
+        (a.0 + d.x * near, a.1 + d.y * near),
+        (a.0 + d.x * far, a.1 + d.y * far),
+    ))
 }
 
 pub(super) fn paint_map(
     p: &mut Painter,
     state: &MinimapState,
+    cache: &std::sync::Mutex<BoundaryCache>,
     x: f32,
     y: f32,
     radius: f32,
     vision: f32,
 ) {
-    for (extra, color) in [
-        (12.0, BLACK),
-        (9.0, STEEL),
-        (5.0, UiColor::rgba(139, 158, 169, 255)),
-        (2.0, BLACK),
-        (0.0, UiColor::rgba(3, 8, 12, 255)),
-    ] {
-        p.circle(x, y, radius + extra, color);
-    }
+    p.circle(x, y, radius + 4.0, STEEL);
+    p.circle(x, y, radius, UiColor::rgba(3, 8, 12, 255));
     let rect = UiRect::from_min_size(
         UiPoint::new(x - radius, y - radius),
         UiSize::new(radius * 2.0, radius * 2.0),
@@ -387,28 +472,6 @@ pub(super) fn paint_map(
         let point = view.map_point(world, rect);
         (point.x, point.y)
     };
-    let polygon = |p: &mut Painter, points: Vec<(f32, f32)>, color| {
-        let points = clip_circle(points, (x, y), radius - 3.0);
-        if points.len() >= 3 {
-            p.polygon(&points, color);
-        }
-    };
-    let world_corners = |area: GroundRect| {
-        let [a, b] = area.half_axes;
-        [
-            area.center - a - b,
-            area.center + a - b,
-            area.center + a + b,
-            area.center - a + b,
-        ]
-    };
-    if let Some(floor) = state.floor {
-        polygon(
-            p,
-            world_corners(floor).into_iter().map(mapped).collect(),
-            UiColor::rgba(8, 15, 21, 255),
-        );
-    }
     // Concentric, vertex-coloured rays produce a soft radial falloff, with
     // every ray terminated by actual live cover. Nothing lights behind a wall.
     let mut points = Vec::new();
@@ -437,29 +500,24 @@ pub(super) fn paint_map(
         }
     }
     p.gradient(&points, &colors, &indices);
-    for &cover in &state.cover {
-        let corners = world_corners(cover);
-        let seen = corners.iter().any(|&point| state.visible(point, vision));
-        polygon(
-            p,
-            corners.into_iter().map(mapped).collect(),
-            if seen {
-                UiColor::rgba(72, 97, 110, 255)
-            } else {
-                UiColor::rgba(11, 19, 26, 255)
-            },
-        );
-        if seen {
-            let points = corners.map(mapped);
-            for i in 0..4 {
-                let a = points[i];
-                let b = points[(i + 1) % 4];
-                if (a.0 - x).hypot(a.1 - y) < radius - 4.0
-                    && (b.0 - x).hypot(b.1 - y) < radius - 4.0
-                {
-                    p.line(a, b, UiColor::rgba(101, 133, 146, 230), 1.5);
-                }
-            }
+    let mut boundary = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
+    for &(a, b) in boundary.edges(state.floor, &state.cover) {
+        let seen = state.visible(a, vision)
+            || state.visible(b, vision)
+            || state.visible((a + b) * 0.5, vision);
+        if let Some((a, b)) = clip_line_circle(mapped(a), mapped(b), (x, y), radius - 2.0) {
+            p.line(
+                a,
+                b,
+                if seen {
+                    UiColor::rgba(107, 161, 164, 255)
+                } else {
+                    UiColor::rgba(40, 61, 65, 255)
+                },
+                1.8,
+            );
         }
     }
     for blip in &state.blips {
@@ -489,31 +547,29 @@ pub(super) fn paint_map(
                 }
             }
         } else {
-            p.circle(point.0, point.1, 8.5, BLACK);
+            p.circle(point.0, point.1, 6.5, BLACK);
             p.circle(
                 point.0,
                 point.1,
-                6.5,
+                5.0,
                 if blip.friendly { CYAN } else { RED },
             );
         }
     }
-    p.ring(x, y, radius - 2.0, BLACK.with_alpha(0.75), 5.0);
     for i in 0..24 {
         let a = i as f32 * std::f32::consts::TAU / 24.0;
         let major = i % 6 == 0;
-        let inside = radius + if major { 2.0 } else { 5.0 };
+        let inside = radius + if major { 0.0 } else { 2.0 };
         p.line(
             (x + a.cos() * inside, y + a.sin() * inside),
-            (x + a.cos() * (radius + 9.0), y + a.sin() * (radius + 9.0)),
+            (x + a.cos() * (radius + 4.0), y + a.sin() * (radius + 4.0)),
             MUTED.with_alpha(if major { 0.8 } else { 0.4 }),
             if major { 2.5 } else { 1.5 },
         );
     }
     let north = view.map_direction(vec2(0.0, 1.0));
-    let nx = x + north.x * (radius + 5.0);
-    let ny = y + north.y * (radius + 5.0);
-    p.circle(nx, ny, 19.0, BLACK);
+    let nx = x + north.x * (radius + 2.0);
+    let ny = y + north.y * (radius + 2.0);
     p.circle(nx, ny, 17.0, STEEL);
     p.circle(nx, ny, 14.5, BLACK);
     p.middle(nx, ny, "N", 24.0, LIGHT, None);
@@ -530,6 +586,29 @@ mod tests {
             blips: Vec::new(),
             player_position: Vec2::zeros(),
         }
+    }
+    #[test]
+    fn playable_contours_remove_shared_tile_seams_and_keep_obstacle_edges() {
+        let floor = GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(20.0, 20.0));
+        let cover = [
+            GroundRect::axis_aligned(vec2(-1.0, 0.0), vec2(2.0, 2.0)),
+            GroundRect::axis_aligned(vec2(1.0, 0.0), vec2(2.0, 2.0)),
+        ];
+        let edges = playable_boundary(Some(floor), &cover);
+        assert!(!edges
+            .iter()
+            .any(|(a, b)| a.x.abs() < 1e-4 && b.x.abs() < 1e-4));
+        let length: f32 = edges.iter().map(|(a, b)| (b - a).norm()).sum();
+        assert!(
+            (length - 92.0).abs() < 1e-3,
+            "floor80 + obstacle12, got{length}"
+        );
+        let wall = [GroundRect::axis_aligned(vec2(0.0, -9.0), vec2(20.0, 2.0))];
+        let edges = playable_boundary(Some(floor), &wall);
+        assert!(!edges.iter().any(|(a, b)| a.y < -9.9 && b.y < -9.9));
+        assert!(edges
+            .iter()
+            .any(|(a, b)| (a.y + 8.0).abs() < 1e-4 && (b.y + 8.0).abs() < 1e-4));
     }
     #[test]
     fn vision_hides_behind_cover_and_beyond_range() {
@@ -555,19 +634,30 @@ mod tests {
         assert_eq!(view.map_point(cover.center, rect), UiPoint::new(50.0, 50.0));
     }
     #[test]
-    fn circular_clip_never_leaks_geometry_over_rim() {
-        let points = clip_circle(
-            vec![
-                (-200.0, -200.0),
-                (200.0, -200.0),
-                (200.0, 200.0),
-                (-200.0, 200.0),
-            ],
-            (0.0, 0.0),
-            100.0,
+    fn contour_clipping_handles_crossings_outside_and_tangents() {
+        assert_eq!(
+            clip_line_circle((-20.0, 0.0), (20.0, 0.0), (0.0, 0.0), 10.0),
+            Some(((-10.0, 0.0), (10.0, 0.0)))
         );
-        assert!(points.len() >= 64);
-        assert!(points.iter().all(|&(x, y)| x.hypot(y) <= 100.2));
+        assert!(clip_line_circle((-20.0, 11.0), (20.0, 11.0), (0.0, 0.0), 10.0).is_none());
+        assert!(clip_line_circle((-20.0, 10.0), (20.0, 10.0), (0.0, 0.0), 10.0).is_none());
+        assert_eq!(
+            clip_line_circle((0.0, 0.0), (5.0, 0.0), (0.0, 0.0), 10.0),
+            Some(((0.0, 0.0), (5.0, 0.0)))
+        );
+    }
+    #[test]
+    fn contour_cache_reuses_geometry_and_invalidates_moved_cover() {
+        let floor = Some(GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(20.0, 20.0)));
+        let mut cover = [GroundRect::axis_aligned(vec2(2.0, 0.0), vec2(2.0, 2.0))];
+        let mut cache = BoundaryCache::default();
+        let original = cache.edges(floor, &cover).to_vec();
+        let allocation = cache.edges.as_ptr();
+        assert_eq!(cache.edges(floor, &cover), original);
+        assert_eq!(cache.edges.as_ptr(), allocation);
+        cover[0].center.x = 4.0;
+        assert_ne!(cache.edges(floor, &cover), original);
+        assert_eq!(cache.edges(None, &[]).len(), 0);
     }
     #[test]
     fn live_cover_moves_and_visibility_changes_follow_generated_children() {

@@ -1,8 +1,9 @@
 # HUD Visual Direction
 
 The supplied gameplay and scoreboard concepts are the visual reference for the
-tank game's HUD. Match their shapes, colour hierarchy, typography, proportions
-and placement. This direction replaces the earlier cream-panel HUD treatment;
+tank game's HUD. Match their shapes, colour hierarchy and typography. The
+placement and single-edge treatment below incorporate the subsequent approved
+iteration. This direction replaces the earlier cream-panel HUD treatment;
 the world keeps its [tank-game art direction](../art/tank-game-direction.md).
 
 ## References
@@ -22,19 +23,23 @@ The original images are preserved without alteration:
 ## Visual rules
 
 - Near-black, subtly blue-grey surfaces with angular, clipped corners and
-  layered steel-grey borders. Reserve bright accents for information and state.
+  one clean steel-grey edge. Reserve bright accents for information and state.
 - Cyan identifies the friendly side; red identifies the opposing side. Text
   and symbols are crisp off-white, with quieter grey for secondary information.
 - Use the concepts' tank, skull and assist symbols and strong sans-serif type
   hierarchy. Keep symbols legible at gameplay size and align numeric columns.
-- Anchor the kill feed at the upper left, with the circular minimap below it.
-  Place the double-bevelled hexagonal timer at the upper right. Size elements
-  against the rendered playfield, not the concept image pixels. The radar
-  diameter is about 15% of the view width, including compact layouts.
+- Anchor the smaller circular minimap at the upper left and the compact kill
+  feed at the upper right. Centre the timer at the top: a broad flat top, short
+  upper shoulders and long sides tapering to a narrower flat bottom; reduce
+  the plate and digits together by 18% from the previous iteration. Use one
+  clean edge throughout the HUD and scoreboard. Size elements against the rendered playfield, not the concept image pixels. The radar
+  diameter is about 13.6% of the view width, including compact layouts.
 - Show rounded black HP tracks above combatants, filled with their side colour.
   Width follows 90% of each tank's projected visible mesh bounds (48px minimum);
-  anchor the pill 32px above the projected top. Keep enemy arrows between it
-  and the tank. The existing scene crosshair stays visible until #526 supplies
+  anchor the pill 32px above the projected top. Preserve its projected width
+  and reduce the outer height by 18%; use slightly less rounded corners and
+  expand the coloured fill into the removed inner border. Keep enemy arrows
+  between it and the tank. The existing scene crosshair stays visible until #526 supplies
   its ground model; the HUD must not draw a substitute ground reticle. Four
   filled, tapered blades confirm damage at the aim point for 0.25 seconds.
 - Float damage values near their target: large red emphasis for high
@@ -62,10 +67,13 @@ time printed in the concepts illustrate the layout and are not fixed content.
 Hit markers respond to the local player's confirmed damage. Damage numbers
 follow actual hits, age and disappear. The scoreboard counts real kills,
 deaths, assists and score. The timer advances with simulation time. The minimap
-shows terrain and cover with a circular visibility area, occlusion and friendly
+shows continuous playable-area and obstacle contours, without filled tiles or
+shared tile seams, with a circular visibility area, occlusion and friendly
 or detected hostile contacts. The map follows the player, with vision covering
 70% of its radius. Near-black fog surrounds a soft cyan falloff clipped by
-live cover; visible cover is brighter and contacts have dark outlines. Keep
+live cover; visible contours are brighter. Compact contact dots keep a dark
+outline (6.5px outer radius, 5px fill); preserve the larger player chevron. Keep
+the cached contours current when floor or cover geometry changes. Keep
 these presentation rules separate from
 configurable scoring, timing and damage rules.
 
@@ -78,6 +86,13 @@ a fixed hazard: its kill increments the tank victim's death but gives nobody
 a kill, score or assist, even when another tank contributed damage. Its name
 remains in the kill feed in neutral grey. Explicit spawn teams take precedence
 over a tank's configured or inferred team; hazards have no tank team.
+
+Each health bar owns a white recent-damage segment, including incoming damage
+to the local tank. Accepted damage immediately exposes the removed segment; it
+holds for 0.35 seconds then drains to current health over 0.60 seconds. Further
+hits restart from the current white edge. Invalid or nonpositive damage does
+not restart it. Healing, maximum-health changes, death and respawn snap the
+segment to current health. This transient state is not serialized.
 
 Damage labels show health actually removed, including the overkill clamp.
 The red exclamation mark identifies a hit removing at least half the target's

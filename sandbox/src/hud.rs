@@ -19,12 +19,12 @@ use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
 use calyx_engine::ui::{PaintCommand, PointerEvents, UiArena, UiLength, UiNodeHandle, UiRect};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::{vec2, vec4, Mat4, Vec3};
-use paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED, STEEL};
+use paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED};
 use serde::{Deserialize, Serialize};
 
 /// Concept-driven presentation over real scene combat state. No input is
 /// captured by the HUD; the scoreboard follows the existing held action.
-#[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "b7f3a8d2-5c41-4e8b-9a6f-0d2e7c1b4f93"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentHud)]
 #[reflect_attr(name = "Tank HUD")]
@@ -49,6 +49,9 @@ pub struct ComponentTankHud {
     #[serde(skip)]
     #[reflect_skip]
     scoreboard_blur: GameObjectRef,
+    #[serde(skip)]
+    #[reflect_skip]
+    map_boundary: std::sync::Arc<std::sync::Mutex<minimap::BoundaryCache>>,
 }
 impl Default for ComponentTankHud {
     fn default() -> Self {
@@ -62,6 +65,7 @@ impl Default for ComponentTankHud {
             elapsed: 0.0,
             scoreboard_page: 0,
             scoreboard_blur: Default::default(),
+            map_boundary: Default::default(),
         }
     }
 }
@@ -196,31 +200,32 @@ impl ComponentHud for ComponentTankHud {
         let map = minimap::minimap_state(scene, player);
         if !hud.scoreboard_open {
             paint_world(&mut p, scene, player, hud, &map, width, height);
-            let feed_width = (width * 0.30).clamp(300.0, 490.0);
-            let feed_height = (height * 0.056).clamp(36.0, 54.0);
+            let feed_width = (width * 0.24).clamp(230.0, 390.0);
+            let feed_height = (height * 0.043).clamp(28.0, 42.0);
             kill_feed::paint_feed(
                 &mut p,
                 scene,
                 player,
-                margin,
+                width - margin - feed_width,
                 margin,
                 feed_width,
                 feed_height,
             );
-            let radius = (width * 0.077).clamp(76.0, 145.0).min(height * 0.20);
+            let radius = (width * 0.068).clamp(66.0, 128.0).min(height * 0.18);
             minimap::paint_map(
                 &mut p,
                 &map,
-                margin + radius + 10.0,
-                margin + feed_height * 2.0 + 38.0 + radius,
+                &hud.map_boundary,
+                margin + radius + 4.0,
+                margin + radius + 14.0,
                 radius,
                 hud.vision_range,
             );
-            let tw = (width * 0.16).clamp(160.0, 270.0);
-            let th = (height * 0.09).clamp(60.0, 88.0);
-            p.plate(width - margin - tw, margin, tw, th);
+            let tw = (width * 0.16).clamp(160.0, 270.0) * 0.82;
+            let th = (height * 0.09).clamp(60.0, 88.0) * 0.82;
+            p.plate((width - tw) * 0.5, margin, tw, th);
             p.middle(
-                width - margin - tw * 0.5,
+                width * 0.5,
                 margin + th * 0.51,
                 format_time(hud.time(scene)),
                 th * 0.61,
@@ -373,40 +378,52 @@ fn paint_world(
             continue;
         };
         let (x, y, w) = hp_anchor(bounds);
-        let h = (w * 0.115).clamp(12.0, 20.0);
+        let h = ((w * 0.115).clamp(12.0, 20.0) + 6.0) * 0.82 - 6.0;
+        // Preserve projected width, slim the track and reclaim the inner border.
+        let outer_radius = (h * 0.5 + 3.0) * 0.78;
         p.fill(
             x - w * 0.5 - 3.0,
             y - h * 0.5 - 3.0,
             w + 6.0,
             h + 6.0,
             BLACK,
-            h * 0.5 + 3.0,
+            outer_radius,
         );
+        let left = x - w * 0.5 - 1.0;
+        let top = y - h * 0.5 - 1.0;
+        let inner_w = w + 2.0;
+        let inner_h = h + 2.0;
         p.fill(
-            x - w * 0.5 - 1.0,
-            y - h * 0.5 - 1.0,
-            w + 2.0,
-            h + 2.0,
-            STEEL,
-            h * 0.5 + 1.0,
+            left,
+            top,
+            inner_w,
+            inner_h,
+            paint::PANEL,
+            outer_radius - 2.0,
         );
-        p.fill(
-            x - w * 0.5 + 1.0,
-            y - h * 0.5 + 1.0,
-            w - 2.0,
-            h - 2.0,
-            BLACK,
-            h * 0.5 - 1.0,
-        );
-        let fill = (w - 6.0) * health_ratio(health.current_health, health.max_health);
+        let trail = health
+            .damage_trail
+            .edge(health.current_health, health.max_health, health.dead);
+        let trailing_width = inner_w * health_ratio(trail, health.max_health);
+        let fill = inner_w * health_ratio(health.current_health, health.max_health);
+        if trailing_width > fill {
+            p.fill(
+                left,
+                top,
+                trailing_width,
+                inner_h,
+                LIGHT,
+                outer_radius - 2.0,
+            );
+        }
         if fill > 0.0 {
             p.fill(
-                x - w * 0.5 + 3.0,
-                y - h * 0.5 + 3.0,
+                left,
+                top,
                 fill,
-                h - 6.0,
+                inner_h,
                 if friendly { CYAN } else { RED },
-                (h - 6.0) * 0.5,
+                outer_radius - 2.0,
             );
         }
         if !friendly {
@@ -619,7 +636,7 @@ mod tests {
         hud.advance(f32::NAN);
         assert!((hud.time(&scene) - 298.8).abs() < 0.001);
         let restored: ComponentTankHud =
-            serde_json::from_value(serde_json::to_value(hud).unwrap()).unwrap();
+            serde_json::from_value(serde_json::to_value(&hud).unwrap()).unwrap();
         assert_eq!(restored.elapsed, 0.0);
         hud.timer_duration = 0.0;
         assert_eq!(format_time(hud.time(&scene)), "00:01");

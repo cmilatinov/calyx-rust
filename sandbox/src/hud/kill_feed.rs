@@ -1,5 +1,5 @@
 //! Confirmed kills: team colours for tanks, neutral attribution for hazards.
-use super::paint::{alpha, Painter, BLACK, CYAN, LIGHT, MUTED, RED, STEEL};
+use super::paint::{alpha, Painter, CYAN, LIGHT, MUTED, RED, STEEL};
 use crate::combat::{combat_team, ComponentKillFeed};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::UiColor;
@@ -27,11 +27,7 @@ pub(super) fn paint_feed(
             let kc = color(entry.killer_team);
             let vc = color(entry.victim_team);
             let slant = h * 0.23;
-            for (inset, c) in [
-                (0.0, BLACK),
-                (2.5, STEEL),
-                (5.0, UiColor::rgba(10, 19, 28, 225)),
-            ] {
+            for (inset, c) in [(0.0, STEEL), (2.0, UiColor::rgba(10, 19, 28, 225))] {
                 p.polygon(
                     &[
                         (x + slant + inset, y + inset),
