@@ -51,6 +51,12 @@ struct RenderParams {
     // module's gradient in `particle_gradient_keys`.
     size_curve: CurveRange,
     color_gradient: GradientRange,
+    intensity: f32,
+    min_screen_size: f32,
+    length_scale: f32,
+    billboard_mode: u32,
+    direction: vec3f,
+    _render_padding: f32,
 };
 
 struct SortParams {
@@ -69,6 +75,7 @@ struct SortKey {
 struct Instance {
     position_size: vec4f,
     color: vec4f,
+    direction_min_size: vec4f,
 };
 
 // Simulation.
@@ -165,7 +172,7 @@ fn evaluate_main(
         // slot's entry is cleared rather than left from an earlier frame.
         // Padding has no `evaluated` entry: the buffer holds `slot_count`.
         if !is_padding {
-            evaluated[index] = Instance(vec4f(0.0), vec4f(0.0));
+            evaluated[index] = Instance(vec4f(0.0), vec4f(0.0), vec4f(0.0));
         }
         return;
     }
@@ -181,9 +188,30 @@ fn evaluate_main(
         position = (view.emitter * vec4f(position, 1.0)).xyz;
     }
     let color = gradient_evaluate(view.color_gradient, t);
+    var direction = vec3f(0.0);
+    if view.billboard_mode == 1u {
+        direction = particle.velocity;
+        if view.local_space != 0u {
+            direction = (view.emitter * vec4f(direction, 0.0)).xyz;
+        }
+    } else if view.billboard_mode == 2u {
+        direction = (view.emitter * vec4f(view.direction, 0.0)).xyz;
+    }
+    if view.billboard_mode != 0u {
+        if dot(direction, direction) < 1e-10 {
+            direction = (view.emitter * vec4f(0.0, 0.0, 1.0, 0.0)).xyz;
+        }
+        if dot(direction, direction) < 1e-10 {
+            direction = vec3f(0.0, 0.0, 1.0);
+        }
+        direction = normalize(direction) * view.length_scale;
+    }
     let offset = position - view.camera_position;
     keys[index] = SortKey(-dot(offset, offset), index);
-    evaluated[index] = Instance(vec4f(position, size), color);
+    evaluated[index] = Instance(
+        vec4f(position, size), vec4f(color.rgb * view.intensity, color.a),
+        vec4f(direction, view.min_screen_size),
+    );
 }
 
 fn key_greater(a: SortKey, b: SortKey) -> bool {

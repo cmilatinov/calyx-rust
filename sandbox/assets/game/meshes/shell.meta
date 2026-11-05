@@ -1,9 +1,0 @@
-{
-  "main": {
-    "id": "d0a185fe-7d04-5130-929e-c01d1b36786b",
-    "name": "game/meshes/shell",
-    "display_name": "shell",
-    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
-  },
-  "inner": []
-}

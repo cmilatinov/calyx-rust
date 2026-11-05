@@ -3,12 +3,13 @@
 use calyx_engine::assets::{texture::Texture, AssetRef};
 use calyx_engine::component::{
     Component, ComponentEventContext, ComponentID, ComponentMesh, ComponentParticleSystem,
-    ComponentRef, ComponentUpdate, ParticleBlendMode, ParticleColorOverLifetime, ParticleEmission,
-    ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape,
-    ParticleVelocity, ReflectComponent, ReflectComponentUpdate,
+    ComponentPointLight, ComponentRef, ComponentUpdate, ParticleBillboard, ParticleBlendMode,
+    ParticleColorOverLifetime, ParticleEmission, ParticleForces, ParticleScalarRange,
+    ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity, ReflectComponent,
+    ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
-use calyx_engine::math::Transform;
+use calyx_engine::math::{Gradient, Transform};
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
@@ -19,6 +20,57 @@ use nalgebra_glm::{vec3, Vec3};
 use serde::{Deserialize, Serialize};
 
 const SMOKE_LIFETIME: f32 = 0.45;
+
+/// The map's combat signals use the same palette as its look-dev rig.
+#[derive(Clone, Copy, Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[uuid = "0c190930-9a40-49c8-84a0-c35a48c57c0e"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Combat Palette")]
+#[serde(default)]
+pub struct ComponentCombatPalette {
+    pub sunbaked: bool,
+}
+
+impl Component for ComponentCombatPalette {}
+
+impl ComponentCombatPalette {
+    fn in_scene(scene: &Scene) -> Self {
+        scene
+            .objects()
+            .find_map(|object| scene.read_component::<Self, _, _>(object, |palette| *palette))
+            .unwrap_or_default()
+    }
+
+    fn material(self) -> &'static str {
+        if self.sunbaked {
+            "b8f3abdd-57c2-56a0-8178-3aae785d9351"
+        } else {
+            "38769fe0-eb3a-543a-bfc5-9ad1ce971c3d"
+        }
+    }
+
+    fn intensity(self) -> f32 {
+        if self.sunbaked {
+            40.0
+        } else {
+            30.0
+        }
+    }
+
+    fn color(self) -> ParticleColorOverLifetime {
+        let rgb = if self.sunbaked {
+            [1.0, 0.46208, 0.06301]
+        } else {
+            [1.0, 0.43415, 0.0]
+        };
+        ParticleColorOverLifetime {
+            gradient: Gradient::linear(
+                [rgb[0], rgb[1], rgb[2], 1.0],
+                [rgb[0], rgb[1], rgb[2], 0.0],
+            ),
+        }
+    }
+}
 
 /// Deletes a transient emitter after emission and its final particles end.
 #[derive(Clone, Copy, Default, TypeUuid, Serialize, Deserialize, Component, Reflect)]
@@ -74,21 +126,63 @@ fn update_effect(scene: &mut Scene, object: GameObject, dt: f32) {
     }
 }
 
-pub(crate) fn shell_visual() -> ComponentMesh {
-    // The stable ids in game/{meshes,materials}/shell.meta. AssetRef resolves
-    // them through the view's registry, as authored component references do.
+fn shell_visual(palette: ComponentCombatPalette) -> ComponentMesh {
+    // The same sphere and emissive material as the approved look-dev rounds.
     ComponentMesh {
         mesh: AssetRef::from_id(
-            "d0a185fe-7d04-5130-929e-c01d1b36786b"
+            "52c056b4-6dfb-1859-6023-23693f3ff263"
                 .parse()
                 .expect("shell mesh id"),
         ),
-        material: AssetRef::from_id(
-            "57b8503a-cc31-5e36-b9af-757c1c346681"
-                .parse()
-                .expect("shell material id"),
-        ),
+        material: AssetRef::from_id(palette.material().parse().expect("shell material id")),
         cast_shadows: false,
+    }
+}
+
+pub(crate) fn spawn_round_visual(scene: &mut Scene, projectile: GameObject) {
+    // Keep the physics transform and radius untouched. Visual dimensions are
+    // in metres, exactly as authored in tank_direction.cxscene, independently
+    // of the firing tank's collision radius.
+    let parent_scale = scene.world_transform(projectile).scale.x.max(f32::EPSILON);
+    let palette = ComponentCombatPalette::in_scene(scene);
+    for (name, position, scale) in [
+        ("Round", Vec3::zeros(), vec3(0.2, 0.2, 0.2)),
+        ("Luminous Tail", vec3(0.0, 0.0, -0.8), vec3(0.09, 0.09, 0.8)),
+    ] {
+        let part = scene.create(
+            Some(ComponentID {
+                name: name.into(),
+                ..Default::default()
+            }),
+            Some(projectile),
+        );
+        scene.set_transform(
+            part,
+            &Transform::from_components(
+                position / parent_scale,
+                UnitQuaternion::identity(),
+                scale / parent_scale,
+            )
+            .matrix(),
+        );
+        scene.add_component(part, shell_visual(palette));
+    }
+    scene.add_component(projectile, signal_light(palette, 1.5, 3.0));
+}
+
+fn signal_light(
+    palette: ComponentCombatPalette,
+    intensity: f32,
+    radius: f32,
+) -> ComponentPointLight {
+    ComponentPointLight {
+        color: if palette.sunbaked {
+            Color32::from_rgb(255, 181, 71)
+        } else {
+            Color32::from_rgb(255, 176, 0)
+        },
+        intensity,
+        radius,
     }
 }
 
@@ -158,29 +252,39 @@ pub(crate) fn spawn_shot(
     rotation: UnitQuaternion<f32>,
     flight_time: f32,
 ) {
-    let mut flash = burst(7, 0.12);
+    let palette = ComponentCombatPalette::in_scene(scene);
+    let mut flash = burst(1, 0.1);
+    flash.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
+    flash.lifetime = ParticleScalarRange { min: 0.1, max: 0.1 };
     flash.velocity = ParticleVelocity {
-        initial: rotation * vec3(0.0, 0.0, 2.0),
-        randomness: vec3(0.6, 0.6, 0.6),
+        initial: Vec3::zeros(),
+        randomness: Vec3::zeros(),
     };
-    flash.size = ParticleSizeOverLifetime::linear(0.85, 0.0, 0.2);
-    flash.color =
-        ParticleColorOverLifetime::linear(Color32::from_rgb(255, 220, 130), Color32::TRANSPARENT);
-    emitter(
+    flash.size = ParticleSizeOverLifetime::linear(0.64, 0.32, 0.0);
+    flash.color = palette.color();
+    flash.rendering.texture = Default::default();
+    flash.rendering.intensity = palette.intensity();
+    flash.rendering.min_screen_size = 0.0;
+    flash.rendering.billboard = ParticleBillboard::Directional {
+        direction: rotation * vec3(0.0, 0.0, 1.0),
+        length_scale: 1.5625,
+    };
+    let muzzle = emitter(
         scene,
         "Muzzle Flash",
-        position,
+        position + rotation * vec3(0.0, 0.0, 0.25),
         flash,
-        0.15,
+        0.1,
         Default::default(),
     );
+    scene.add_component(muzzle, signal_light(palette, 3.0, 4.0));
 
     let mut smoke = burst(1, SMOKE_LIFETIME);
     smoke.emission = ParticleEmission {
         looping: false,
-        rate: 80.0,
+        rate: 40.0,
         burst_count: 1,
-        max_particles: 40,
+        max_particles: 24,
         duration: flight_time.max(0.0),
     };
     smoke.shape = ParticleSpawnShape::Sphere { radius: 0.045 };
@@ -188,12 +292,13 @@ pub(crate) fn spawn_shot(
         initial: vec3(0.0, 0.15, 0.0),
         randomness: vec3(0.12, 0.12, 0.12),
     };
-    smoke.size = ParticleSizeOverLifetime::linear(0.15, 0.55, 0.035);
+    smoke.size = ParticleSizeOverLifetime::linear(0.10, 0.32, 0.025);
     smoke.color = ParticleColorOverLifetime::linear(
-        Color32::from_rgba_unmultiplied(170, 164, 148, 165),
+        Color32::from_rgba_unmultiplied(170, 164, 148, 65),
         Color32::from_rgba_unmultiplied(170, 164, 148, 0),
     );
     smoke.rendering.blend_mode = ParticleBlendMode::Alpha;
+    smoke.rendering.min_screen_size = 0.0;
     let source = GameObjectRef::new(scene.uuid(projectile));
     emitter(
         scene,
@@ -239,6 +344,14 @@ pub(crate) fn spawn_impact(scene: &mut Scene, position: Vec3, tank: bool) {
     } else {
         ParticleBlendMode::Alpha
     };
+    system.rendering.min_screen_size = 0.0;
+    if tank {
+        system.rendering.texture = Default::default();
+        system.rendering.intensity = 12.0;
+        system.rendering.billboard = ParticleBillboard::VelocityAligned { length_scale: 4.0 };
+        system.size = ParticleSizeOverLifetime::linear(0.09, 0.0, 0.025);
+        system.color = ComponentCombatPalette::in_scene(scene).color();
+    }
     emitter(
         scene,
         if tank {

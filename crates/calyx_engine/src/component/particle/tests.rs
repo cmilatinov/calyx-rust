@@ -16,6 +16,8 @@ use std::collections::HashSet;
 use std::ops::Range;
 use uuid::Uuid;
 
+mod rendering;
+
 /// Id of the object the golden scenarios were recorded with, which seeds
 /// their random generator.
 const GOLDEN_SEED: Uuid = Uuid::from_u128(0x1234_5678_9abc_def0_0fed_cba9_8765_4321);
@@ -362,6 +364,7 @@ fn reference_instances(
                     system.size.evaluate(particle, t),
                 ],
                 color: system.color.evaluate(t),
+                direction_min_size: [0.0, 0.0, 0.0, system.rendering.min_screen_size],
             };
             (offset.dot(&offset), slot, instance)
         })
@@ -391,6 +394,7 @@ fn assert_instances_match(
     let close = |a: &ParticleRenderInstance, b: &ParticleRenderInstance| {
         (0..4).all(|i| (a.position_size[i] - b.position_size[i]).abs() <= 1e-3)
             && (0..4).all(|i| (a.color[i] - b.color[i]).abs() <= 1e-4)
+            && (0..4).all(|i| (a.direction_min_size[i] - b.direction_min_size[i]).abs() <= 1e-4)
     };
     let mut matched = vec![false; expected.len()];
     for (index, instance) in actual.iter().enumerate() {

@@ -1,5 +1,6 @@
 use super::*;
 use crate::tank::{spawn_round, ComponentProjectile};
+use calyx_engine::assets::AssetAccess;
 use calyx_engine::test_support::{HeadlessSceneRunner, TestAssets};
 
 fn effect_scene() -> (TestAssets, Scene) {
@@ -14,7 +15,7 @@ fn effect_scene() -> (TestAssets, Scene) {
 fn shell_mesh_and_signal_material_resolve_from_the_project_assets() {
     let copy = calyx_engine::test_support::TestAssets::game();
     let assets = copy.asset_context();
-    let visual = shell_visual();
+    let visual = shell_visual(ComponentCombatPalette::default());
     assert!(visual
         .mesh
         .get_ref(&assets.registries.lock_read())
@@ -24,6 +25,33 @@ fn shell_mesh_and_signal_material_resolve_from_the_project_assets() {
         .get_ref(&assets.registries.lock_read())
         .is_some());
     assert!(!visual.cast_shadows);
+}
+
+#[test]
+fn sunbaked_scene_uses_its_showcase_signal_for_mesh_particles_and_lights() {
+    let (_assets, mut scene) = effect_scene();
+    let palette_object = scene.create(None, None);
+    scene.add_component(palette_object, ComponentCombatPalette { sunbaked: true });
+    shot(&mut scene);
+    let round = named(&scene, "Round");
+    let projectile = named(&scene, "Projectile");
+    let flash = named(&scene, "Muzzle Flash");
+    assert_eq!(
+        scene.read_component::<ComponentMesh, _, _>(round, |mesh| mesh.material.id()),
+        Some("b8f3abdd-57c2-56a0-8178-3aae785d9351".parse().unwrap())
+    );
+    assert_eq!(
+        scene.read_component::<ComponentParticleSystem, _, _>(flash, |system| system
+            .rendering
+            .intensity),
+        Some(40.0)
+    );
+    for object in [projectile, flash] {
+        assert_eq!(
+            scene.read_component::<ComponentPointLight, _, _>(object, |light| light.color),
+            Some(Color32::from_rgb(255, 181, 71))
+        );
+    }
 }
 
 #[test]
@@ -120,7 +148,7 @@ fn firing_emits_flash_and_world_space_smoke_then_drains_on_expiry() {
     let mut runner = HeadlessSceneRunner::from_scene(scene).with_particles();
     runner.step();
     let particles = runner.particles().unwrap();
-    assert_eq!(particles.live_count(flash), Some(7));
+    assert_eq!(particles.live_count(flash), Some(1));
     assert!(particles.live_count(trail).unwrap() > 0);
     assert!(!runner
         .scene()
@@ -198,4 +226,42 @@ fn repeated_firing_and_impacts_keep_emitters_bounded_and_release_gpu_systems() {
     runner.step_many(90);
     assert_eq!(runner.scene().objects().count(), 0);
     assert_eq!(runner.particles().unwrap().systems().count(), 0);
+}
+
+#[test]
+fn projectile_visual_matches_showcase_dimensions_independently_of_collision_radius() {
+    for radius in [0.18, 0.2, 0.4] {
+        let (_assets, mut scene) = effect_scene();
+        let rotation = UnitQuaternion::from_euler_angles(0.0, 0.7, 0.0);
+        let position = vec3(2.0, 1.6, 3.0);
+        spawn_round(
+            &mut scene,
+            position,
+            rotation,
+            ComponentProjectile {
+                radius,
+                ..Default::default()
+            },
+        );
+        let round = named(&scene, "Round");
+        let tail = named(&scene, "Luminous Tail");
+        let head_transform = scene.world_transform(round);
+        let tail_transform = scene.world_transform(tail);
+        assert!((head_transform.scale - vec3(0.2, 0.2, 0.2)).norm() < 1e-5);
+        assert!((head_transform.position - position).norm() < 1e-5);
+        assert!((tail_transform.scale - vec3(0.09, 0.09, 0.8)).norm() < 1e-5);
+        assert!(
+            (tail_transform.position - (position + rotation * vec3(0.0, 0.0, -0.8))).norm() < 1e-5
+        );
+        let projectile = named(&scene, "Projectile");
+        assert_eq!(
+            scene.read_component::<ComponentProjectile, _, _>(projectile, |p| p.radius),
+            Some(radius)
+        );
+        scene.delete(projectile);
+        scene.flush_deletes();
+        assert!(!scene
+            .objects()
+            .any(|o| ["Round", "Luminous Tail"].contains(&scene.name(o).as_str())));
+    }
 }

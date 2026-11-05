@@ -719,7 +719,7 @@ fn spawn_projectile(
 }
 
 /// Spawns a "Projectile" object at `position` that flies as `projectile`
-/// says, drawn with the dedicated signal-amber shell scaled to its diameter.
+/// says, with the round head and luminous tail from the approved showcase.
 pub(crate) fn spawn_round(
     scene: &mut Scene,
     position: Vec3,
@@ -755,7 +755,7 @@ pub(crate) fn spawn_round(
             ..Default::default()
         },
     );
-    scene.add_component(projectile_object, crate::combat_vfx::shell_visual());
+    crate::combat_vfx::spawn_round_visual(scene, projectile_object);
     crate::combat_vfx::spawn_shot(
         scene,
         projectile_object,

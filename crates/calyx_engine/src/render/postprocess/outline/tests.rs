@@ -351,7 +351,7 @@ fn style_zero_draws_nothing_and_a_style_past_the_list_draws_nothing_and_warns() 
 }
 
 #[test]
-fn an_edge_takes_the_nearer_surfaces_style_or_the_farther_ones_when_it_has_none() {
+fn an_edge_takes_the_nearer_surfaces_style_and_style_zero_hides_farther_ink() {
     let assets = TestAssets::engine();
     let context = assets.asset_context();
     let context = context.lock_read();
@@ -388,17 +388,89 @@ fn an_edge_takes_the_nearer_surfaces_style_or_the_farther_ones_when_it_has_none(
             "{samples} samples: the cube's silhouette draws in the cube's style"
         );
 
-        let fallback = render(
+        let unoutlined = render(
             &context,
             &[unit_cube(&context, 0), wall(2)],
             &camera,
             samples,
             Some(outline(styles.clone())),
         );
-        assert_eq!(
-            inks(&fallback),
-            [BLUE_INK],
-            "{samples} samples: a cube of style 0 is outlined in the wall's style"
+        assert!(
+            inks(&unoutlined).is_empty(),
+            "{samples} samples: foreground style 0 does not inherit the wall's ink"
+        );
+    }
+}
+
+#[test]
+fn an_unoutlined_emissive_streak_occludes_cover_ink_including_its_reach() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context().lock_read();
+    let camera = camera_at(vec3(0.0, 0.0, -4.0), Vec3::zeros());
+    let streak = || Shape {
+        mesh: context
+            .registries
+            .assets
+            .read()
+            .sphere()
+            .expect("sphere mesh"),
+        position: Vec3::zeros(),
+        scale: vec3(0.12, 0.8, 0.12),
+        style: 0,
+    };
+    let cover = || Shape {
+        mesh: cube(&context),
+        position: vec3(0.0, 0.0, 0.8),
+        scale: vec3(1.4, 1.2, 0.3),
+        style: 1,
+    };
+    for samples in sample_counts(&context) {
+        let signal_mask = render(&context, &[streak()], &camera, samples, None);
+        for width in [2.0, 4.0] {
+            let image = render(
+                &context,
+                &[streak(), cover()],
+                &camera,
+                samples,
+                Some(outline(vec![style(INK, width)])),
+            );
+            assert!(
+                inked_count(&image) > 0,
+                "the cover keeps its own silhouette"
+            );
+            let mut covered_signal = 0;
+            for (x, y, _) in signal_mask.enumerate_pixels() {
+                if is_red(&signal_mask, (x, y)) {
+                    covered_signal += 1;
+                    assert!(!is_inked(&image, (x, y)),
+                        "{samples} samples, width {width}: cover ink leaked onto the signal at {x},{y}");
+                }
+            }
+            assert!(
+                covered_signal > 20,
+                "a visible thin emissive signal was exercised"
+            );
+        }
+        // The inverse case keeps the styled foreground's silhouette against
+        // a farther style-0 surface, as a tank over unoutlined ground does.
+        let far_ground = Shape {
+            style: 0,
+            ..cover()
+        };
+        let tank = Shape {
+            style: 1,
+            ..streak()
+        };
+        let outlined = render(
+            &context,
+            &[tank, far_ground],
+            &camera,
+            samples,
+            Some(outline(vec![style(INK, 2.0)])),
+        );
+        assert!(
+            inked_count(&outlined) > 0,
+            "styled foreground retains its silhouette over style 0"
         );
     }
 }

@@ -208,12 +208,21 @@ the game view is very wide and the vignette is round.
   screen-space outline pass replaces the hulls, drop `outline` from the
   parameter files and regenerate: the hulls and the ink material go.
 - No textures are needed for the style itself.
-- The tiny combat shell is an original eight-sided mesh generated directly by
-  `python sandbox/asset_sources/combat/shell.py` into
-  `sandbox/assets/game/meshes/shell.obj`. Its signal-amber material uses the
-  Sunny Battlefield signal colour in linear RGB, emission 30 and outline
-  style 0. Muzzle flashes and tank hits use warm additive particles; smoke
-  and cover dust use soft alpha-blended puffs from the existing shared texture.
+- Combat rounds reuse the showcase sphere and signal material: a 0.4 m
+  round head and a 0.18 m wide, 1.6 m long ellipsoid tail, centred 0.8 m
+  behind the head. They have no shadow or outline. A warm point light uses
+  intensity 1.5 and radius 3 m. Visual dimensions are independent of the
+  collision radius.
+- The muzzle flash is a single directional HDR particle: 0.64 m wide and
+  1 m long initially, centred 0.25 m ahead of the muzzle, lasting 0.1 s.
+  It uses the map's linear signal colour and emission strength, with a
+  short point light (intensity 3, radius 4 m). Smoke is a quiet alpha-blended
+  wake behind the luminous tail. Tank impacts use narrow HDR spark streaks;
+  cover impacts use expanding dust.
+- Sunny Battlefield is the default combat palette. Add one **Combat Palette**
+  component to a scene and enable **Sunbaked** to use that map's signal
+  material and flash colour/strength. Both choices use the actual look-dev
+  materials, so changes to the approved signal also update gameplay.
 
 ## Evidence
 

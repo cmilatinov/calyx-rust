@@ -849,6 +849,12 @@
       },
       "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
         "priority": 0
+      },
+      "7e09858d-fd71-4729-bb90-8ed76c0bda9a": {
+        "intensity": 0.15,
+        "knee": 0.5,
+        "radius": 6,
+        "threshold": 1.2
       }
     },
     "a4e9c1eb-a8bc-4b3f-b3d6-d588fe769a76": {
@@ -1160,7 +1166,7 @@
         "transform": {
           "position": [
             0.0,
-            1.8562711540145874,
+            1.8562711540145873,
             -0.5127557516098022
           ],
           "rotation": [
