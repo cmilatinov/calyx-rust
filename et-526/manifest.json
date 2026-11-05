@@ -1,0 +1,86 @@
+[
+    {
+        "file":  "sunny_far.png",
+        "sha256":  "864C364B14057B2CDD469B6F7D7F9DA7B0EAF25B4E75134449530B58C1247EB0"
+    },
+    {
+        "file":  "sunny_sentry.png",
+        "sha256":  "0A0F81CD997A525E314B001AEDC95EF1E2FB6AF85A3AD859E1E45F26F34147DB"
+    },
+    {
+        "file":  "sunny_barrel.png",
+        "sha256":  "AC66C846383D2F3230C62D923783134C54C6A4838E070A76EC84C3E2205E84D1"
+    },
+    {
+        "file":  "sunny_reticle_ground.png",
+        "sha256":  "BB9EA824D83970795AC007CA4DBBF6FE1C16D353114A0E97CEE72176A7163910"
+    },
+    {
+        "file":  "sunny_reticle_road.png",
+        "sha256":  "4A51E1111B5B3E4283534D37C2BA7AA2D38E3C6ED29AE6196E40083A47045390"
+    },
+    {
+        "file":  "sunny_reticle_aim.png",
+        "sha256":  "2D0CB9AD3BEF5E2D2438A3D6ECD5DB319A6F694983A29A68F02F4CFC3E7BD510"
+    },
+    {
+        "file":  "sunny_aim.json",
+        "sha256":  "742B2955010035A807031412D9D0DEE170E7999E2483D06B95D6CDD6CBFEA76D"
+    },
+    {
+        "file":  "sunbaked_far.png",
+        "sha256":  "D56FE482B885E192716E0433CFE22909010A8DB04A13B2970814A7DE6FCDB237"
+    },
+    {
+        "file":  "sunbaked_sentry.png",
+        "sha256":  "643703D71549139BEC44A33B0C48EBEBE96827302882D162A633D64059F8A34D"
+    },
+    {
+        "file":  "sunbaked_barrel.png",
+        "sha256":  "15BFD4257466BBEEB19AD31533CB78AE2CFD999D745B0336DCD5907831935CE8"
+    },
+    {
+        "file":  "sunbaked_reticle_ground.png",
+        "sha256":  "32DF1A9D551C40DAC0DFD4EBAFF997C4DF3A9ACCDEDD986DCC4FF6CCE81CEFD8"
+    },
+    {
+        "file":  "sunbaked_reticle_road.png",
+        "sha256":  "79D3FA54AC39FBDCA5F548E8AEEE40EED773D099B9987DA953458A0AEB2421AA"
+    },
+    {
+        "file":  "sunbaked_reticle_aim.png",
+        "sha256":  "F3DB362A9F7C5C6EDAC0F5523FE3A946C1B18FDFD9C7E47E52533EF5ECC98C6B"
+    },
+    {
+        "file":  "sunbaked_aim.json",
+        "sha256":  "728BFA1203B3728CA500BB59F309FC75F140E1F9F65185C9B344CADE17F65B8B"
+    },
+    {
+        "file":  "moonlit_far.png",
+        "sha256":  "62C29845BA744D484B81B82C41CA33779E3A2F2577ED58F6F224DA7703602BD9"
+    },
+    {
+        "file":  "moonlit_sentry.png",
+        "sha256":  "DB1B79FB433BD0D90640BB18E4D51A7931032A3A4F35DE94979F49030BA00768"
+    },
+    {
+        "file":  "moonlit_barrel.png",
+        "sha256":  "B9A98469B23D267EDA4B3E576AC378CFF5FA8F656DB49ABE7AE3EB8CA9C47554"
+    },
+    {
+        "file":  "moonlit_reticle_ground.png",
+        "sha256":  "143E46E45FA04B77387D723147755885F3A9BB3F31524A2A116BB92F6619C6FD"
+    },
+    {
+        "file":  "moonlit_reticle_road.png",
+        "sha256":  "7FE28E028B19490AC5247EA57149CE270B1EBF9E173258AA2C37DAFEC782B88A"
+    },
+    {
+        "file":  "moonlit_reticle_aim.png",
+        "sha256":  "6201D193231753104899EAF3D89C911FFB977725EFD743AC20D251A317210228"
+    },
+    {
+        "file":  "moonlit_aim.json",
+        "sha256":  "71FAE78E0B4E1A4F0EBA598D4FAEFB9E9C9A1613B434211A707AC0AE9EA57521"
+    }
+]
