@@ -36,7 +36,7 @@ The original images are preserved without alteration:
   diameter is about 13.6% of the view width, including compact layouts.
 - Show rounded black HP tracks above combatants, filled with their side colour.
   Width follows 90% of each tank's projected visible mesh bounds (48px minimum);
-  anchor the pill 32px above the projected top. Preserve its projected width
+  anchor the pill 8px above the projected top so it sits close to the tank. Preserve its projected width
   and reduce the outer height by 18%; use slightly less rounded corners and
   expand the coloured fill into the removed inner border. Keep enemy arrows
   between it and the tank. The existing scene crosshair stays visible until #526 supplies

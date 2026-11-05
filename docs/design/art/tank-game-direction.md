@@ -84,6 +84,9 @@ convention.
 | Crate inset panel | honey timber `#C28B3C` | muted timber `#B99863` | weathered steel `#6B8086` |
 | Hazard yellow | yellow `#F3C84B` | ochre yellow `#E6B84C` | muted gold `#CDA559` |
 | Hazard black | charcoal `#303038` | graphite `#303030` | charcoal `#30373F` |
+| Explosive drums | danger red `#BE382B` | oxide red `#C43B27` | warm red `#E4513B` |
+| Sentry armor | pale steel `#B9BBAE` | bone steel `#C4BAA5` | cool steel `#A5B9C5` |
+| Sentry optic | pale cyan `#88DBE3` | turquoise `#79D0D8` | ice cyan `#9CDAE8` |
 | Grass tufts | grass `#83AC38` | scrub green `#9AAB61` | night grass `#507165` |
 | Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` | granite `#848C96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` | night bark `#4C4541` |
@@ -242,6 +245,20 @@ camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
 `pickup_yellow`, `pickup_blue`) are defined alongside these roles in
 `calyx_model_gen::palette`.
 
+Combat props use the same broad shape language. Explosive barrels are red
+drums with a centered yellow lid badge and a black flame silhouette, including
+a yellow inner lick. The lid warning must read at the Far camera; side
+diamonds repeat it without relying on text. Narrow hazard hoops and rolled
+rims retain the drum silhouette; the lid has no offset bung or other dot.
+Sentries retain the red
+player-2 center, framed by pale armor cheeks, visible pitch/yaw bearings,
+a thick recoil sleeve and open muzzle. Paired roof cooling banks, a hatch
+handle, a shaded cyan optic and broad anchor pads explain the mechanism
+from above. Their extra details are substantial forms, not tiny surface noise.
+The `explosive_red`, `sentry_armor` and `sentry_optic` roles are matte clay
+(roughness 0.95, metalness 0) with no emission; the optic is a colored lens,
+not an additional gameplay signal.
+
 ## Silhouette and scale
 
 - Chunky, softly rounded shapes; generous bevels (0.12–0.35 m), no thin
@@ -275,12 +292,17 @@ camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
 - Multi-part models use named `[[parts]]` tables in the parameter file. Each
   part has its own `kind`, shape keys, `role`, optional `shading`, `offset`
   (XYZ metres) and `rotation` (XYZ Euler degrees). Omitted transforms are zero.
+  Transforms are local to the model root, or to another named part supplied
+  with `parent = "head"`, as on the Sentry. Missing parents and cycles fail
+  before generation. A part can set `cast_shadows = false`, as the reticle does.
   A `prism` extrudes a closed XZ footprint: clipped stripe polygons, Jersey
   cross-sections and wall junctions. A cylinder may set `top_radius` for a
   tapered trunk. A blob may set `fuse` (voxel size) to join overlapping lobes
   into one organic surface rather than intersecting spheres.
+  A `ring` makes an annular band with `radius`, `inner_radius`, `height` and
+  `vertices`, leaving its center open for a reticle or muzzle.
   Model-level `shading`, `smooth_angle` and optional `outline` apply to all
-  parts; a part may override shading. The five generated shapes are supported;
+  parts; a part may override shading. The six generated shapes are supported;
   sourced models remain in the single-shape format.
 - Each part becomes `generated/models/<model>__<part>.obj`. The generator
   assembles them under one root in `generated/prefabs/<map>/<model>.cxprefab`,
@@ -288,7 +310,7 @@ camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
   names, so reordering the parts keeps the ids. Instantiate the prefab to
   place the complete model. Existing single-shape files and ids stay the same.
 - Generated opaque prop materials set `outline_style = 1`; ground, road,
-  signals and legacy hull ink use 0. New parts need no inverted hull.
+  signals, reticle marks and legacy hull ink use 0. New parts need no inverted hull.
 - The complete 23-piece concept-sheet kit is shown on all three maps in the
   look-dev scene: six tileable wall modules, two barriers, two crates, three
   tree sizes, three rock sizes and seven props. The Scenario camera shows a
@@ -342,3 +364,12 @@ pickup retains the legacy `pickup_yellow` asset/role name for stable IDs), with
 palette-specific emission chosen to bloom visibly at Far. Final 2 px inner-ink
 views of every model and all three Far galleries/pens are under
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v4>.
+
+The generated Sentry, explosive barrel and ground reticle, including Far views
+against both terrain colours in each palette and arena firing/aim captures,
+are under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526>.
+The revised explosive drum and detailed Sentry, including the same Far-pitch
+views, lower three-quarter views and live arena checks for all three palettes,
+are under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526/v2>.
+The centered barrel lid warning without a bung is shown in all three palettes
+under <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-526/v3>.

@@ -1,0 +1,112 @@
+# Flat ground reticle with an open center and four ticks; light marks over a dark contrast border, no ink.
+# Metres, Y up, forward +Z; regenerate with calyx_model_gen.
+
+[[parts]]
+cast_shadows = false
+name = "contrast_ring"
+kind = "ring"
+role = "reticle_dark"
+radius = 0.6
+inner_radius = 0.38
+height = 0.012
+vertices = 32
+offset = [0, 0.018, 0]
+
+[[parts]]
+cast_shadows = false
+name = "aim_ring"
+kind = "ring"
+role = "reticle_light"
+radius = 0.54
+inner_radius = 0.44
+height = 0.012
+vertices = 32
+offset = [0, 0.032, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_north_back"
+kind = "box"
+role = "reticle_dark"
+size = [0.18, 0.012, 0.38]
+offset = [0.0, 0.018, 0.64]
+bevel = 0
+segments = 3
+rotation = [0, 0, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_north_light"
+kind = "box"
+role = "reticle_light"
+size = [0.09, 0.012, 0.28]
+offset = [0.0, 0.032, 0.64]
+bevel = 0
+segments = 3
+rotation = [0, 0, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_east_back"
+kind = "box"
+role = "reticle_dark"
+size = [0.18, 0.012, 0.38]
+offset = [0.64, 0.018, 0]
+bevel = 0
+segments = 3
+rotation = [0, 90, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_east_light"
+kind = "box"
+role = "reticle_light"
+size = [0.09, 0.012, 0.28]
+offset = [0.64, 0.032, 0]
+bevel = 0
+segments = 3
+rotation = [0, 90, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_south_back"
+kind = "box"
+role = "reticle_dark"
+size = [0.18, 0.012, 0.38]
+offset = [0, 0.018, -0.64]
+bevel = 0
+segments = 3
+rotation = [0, 180, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_south_light"
+kind = "box"
+role = "reticle_light"
+size = [0.09, 0.012, 0.28]
+offset = [0, 0.032, -0.64]
+bevel = 0
+segments = 3
+rotation = [0, 180, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_west_back"
+kind = "box"
+role = "reticle_dark"
+size = [0.18, 0.012, 0.38]
+offset = [-0.64, 0.018, 0]
+bevel = 0
+segments = 3
+rotation = [0, 270, 0]
+
+[[parts]]
+cast_shadows = false
+name = "tick_west_light"
+kind = "box"
+role = "reticle_light"
+size = [0.09, 0.012, 0.28]
+offset = [-0.64, 0.032, 0]
+bevel = 0
+segments = 3
+rotation = [0, 270, 0]

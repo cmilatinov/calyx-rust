@@ -20,7 +20,6 @@ egui.workspace = true
 serde_json.workspace = true
 legion.workspace = true
 eframe.workspace = true
-winit.workspace = true
 log.workspace = true
 nalgebra.workspace = true
 rapier3d.workspace = true

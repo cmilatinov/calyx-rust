@@ -1112,6 +1112,47 @@ mod tests {
     use rapier3d::dynamics::RigidBodyType;
 
     #[test]
+    fn player_prefab_instances_remap_their_reticles_and_move_them_independently() {
+        use calyx_engine::component::ComponentMesh;
+        use calyx_engine::scene::{Prefab, PrefabData};
+
+        let prefab: Prefab = serde_json::from_str::<PrefabData>(include_str!(
+            "../assets/game/prefabs/tank.cxprefab"
+        ))
+        .unwrap()
+        .into();
+        let mut scene = calyx_engine::test_support::test_scene();
+        let mut crosshairs = Vec::new();
+        for _ in 0..2 {
+            let (_, dropped) = scene.instantiate_prefab_reporting(&prefab, None).unwrap();
+            assert!(dropped.is_empty(), "{dropped:?}");
+            let controller = scene
+                .objects()
+                .filter_map(|object| {
+                    scene.read_component::<ComponentTankController, _, _>(object, |c| *c)
+                })
+                .find(|controller| !crosshairs.contains(&controller.crosshair.id()))
+                .unwrap();
+            let crosshair = controller.crosshair.game_object(&scene).unwrap();
+            assert!(!prefab.data.components.contains_key(&scene.uuid(crosshair)));
+            let parts = scene.children(crosshair).collect::<Vec<_>>();
+            assert_eq!(parts.len(), 10);
+            for part in parts {
+                assert!(!prefab.data.components.contains_key(&scene.uuid(part)));
+                assert!(scene
+                    .read_component::<ComponentMesh, _, _>(part, |_| ())
+                    .is_some());
+            }
+            let aim = vec3(3.0 + crosshairs.len() as f32 * 5.0, 0.0, 9.0);
+            super::update_crosshair(&mut scene, &controller, Some(aim));
+            assert!((scene.world_transform(crosshair).position - aim).norm() < 1e-5);
+            crosshairs.push(controller.crosshair.id());
+        }
+        let first = scene.find(crosshairs[0]).unwrap();
+        assert!((scene.world_transform(first).position - vec3(3.0, 0.0, 9.0)).norm() < 1e-5);
+    }
+
+    #[test]
     fn yaw_rotation_faces_positive_x() {
         let rotation = yaw_rotation(&vec3(1.0, 0.0, 0.0));
         let forward = rotation * vec3(0.0, 0.0, 1.0);

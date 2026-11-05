@@ -199,6 +199,32 @@ def build_prism(shape):
     return [obj]
 
 
+def build_ring(shape):
+    count = shape["vertices"]
+    vertices = [
+        (radius * math.cos(2 * math.pi * i / count),
+         radius * math.sin(2 * math.pi * i / count), height)
+        for height in (0, shape["height"])
+        for radius in (shape["radius"], shape["inner_radius"])
+        for i in range(count)
+    ]
+    faces = []
+    for i in range(count):
+        j = (i + 1) % count
+        faces += [
+            (i, j, j + 2 * count, i + 2 * count),
+            (i + count, i + 3 * count, j + 3 * count, j + count),
+            (i + 2 * count, j + 2 * count, j + 3 * count, i + 3 * count),
+            (i, i + count, j + count, j),
+        ]
+    mesh = bpy.data.meshes.new("annular band")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new("Ring", mesh)
+    bpy.context.collection.objects.link(obj)
+    return [obj]
+
+
 def build_import(shape):
     source = shape["source"]
     extension = os.path.splitext(source)[1].lower()
@@ -239,6 +265,7 @@ def build_import(shape):
 
 
 BUILDERS = {
+    "ring": build_ring,
     "prism": build_prism,
     "box": build_box,
     "rock": build_rock,

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "dec2b437-51d5-587f-8366-ddf524ae7a8b",
+    "name": "generated/models/sentry__yaw_bearing",
+    "display_name": "sentry__yaw_bearing",
+    "type_uuid": "792d264b-de6f-4431-b59f-76f18fdb3bfe"
+  },
+  "inner": []
+}

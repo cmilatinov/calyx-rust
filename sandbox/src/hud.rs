@@ -339,7 +339,7 @@ impl Projection {
 fn hp_anchor(bounds: ScreenBounds) -> (f32, f32, f32) {
     (
         (bounds.left + bounds.right) * 0.5,
-        bounds.top - 32.0,
+        bounds.top - 8.0,
         ((bounds.right - bounds.left) * 0.9).max(48.0),
     )
 }
@@ -612,7 +612,7 @@ mod tests {
             right: 260.0,
             top: 200.0,
         });
-        assert_eq!(far, (140.0, 168.0, 72.0));
+        assert_eq!(far, (140.0, 192.0, 72.0));
         assert_eq!(near.2, far.2 * 2.0);
         assert_eq!(
             hp_anchor(ScreenBounds {
