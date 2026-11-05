@@ -108,7 +108,7 @@ fn scatter(foliage: &ComponentFoliage) -> Vec<FoliageInstance> {
     let mut random = Random(foliage.seed as u64);
     let mut instances = Vec::with_capacity(count);
     for _ in 0..count {
-        let entry = (random.next() as u64 * foliage.entries.len() as u64 >> 32) as usize;
+        let entry = ((random.next() as u64 * foliage.entries.len() as u64) >> 32) as usize;
         let position = Vec3::new(
             (random.unit() - 0.5) * foliage.area.x,
             0.0,
