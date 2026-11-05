@@ -48,43 +48,41 @@ fn every_tileable_wall_open_end_has_the_same_exported_contact_profile() {
 }
 
 #[test]
-fn hazard_stripes_cover_the_camera_visible_top_instead_of_only_vertical_faces() {
+fn hazard_stripes_cover_both_sloped_sides_and_leave_the_roof_unpainted() {
     let model = Model::load(&sandbox().join("asset_sources/models/barrier_hazard.toml")).unwrap();
     let Shape::Parts { parts } = model.shape else {
         panic!("multi-material barrier")
     };
-    let mut yellow_area = 0.0;
-    let mut black_area = 0.0;
-    for part in parts.iter().filter(|p| p.name.starts_with("top_")) {
-        assert_eq!(part.rotation, [0.0; 3]);
-        assert!(
-            part.offset[1] >= 1.05,
-            "markings must be above the concrete top"
-        );
-        let Shape::Prism { points, .. } = &part.shape else {
-            panic!("clipped paint polygon")
-        };
-        let area = points
-            .iter()
-            .zip(points.iter().cycle().skip(1))
-            .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
-            .sum::<f64>()
-            .abs()
-            / 2.0;
-        match part.role.as_str() {
-            "hazard_yellow" => yellow_area += area,
-            "hazard_black" => black_area += area,
-            other => panic!("unexpected paint role {other}"),
+    assert!(
+        parts.iter().all(|p| !p.name.starts_with("top_")),
+        "roof stays concrete"
+    );
+    for side in ["front_", "back_"] {
+        let mut yellow_area = 0.0;
+        let mut black_area = 0.0;
+        for part in parts.iter().filter(|p| p.name.starts_with(side)) {
+            let Shape::Prism { points, .. } = &part.shape else {
+                panic!("clipped paint polygon")
+            };
+            let area = points
+                .iter()
+                .zip(points.iter().cycle().skip(1))
+                .map(|(a, b)| a[0] * b[1] - b[0] * a[1])
+                .sum::<f64>()
+                .abs()
+                / 2.0;
+            match part.role.as_str() {
+                "hazard_yellow" => yellow_area += area,
+                "hazard_black" => black_area += area,
+                other => panic!("unexpected paint role {other}"),
+            }
         }
+        assert!(yellow_area > 0.8, "broad side marking {side}");
+        assert!(
+            (0.35..0.65).contains(&(black_area / yellow_area)),
+            "alternating bands {side}"
+        );
     }
-    assert!(
-        yellow_area > 0.8,
-        "a broad top marking must read at Far framing"
-    );
-    assert!(
-        (0.35..0.65).contains(&(black_area / yellow_area)),
-        "clear alternating dark/light bands"
-    );
 }
 
 #[test]

@@ -1,4 +1,4 @@
-# Signal yellow pickup orb over an octagonal pad.
+# Green glowing pickup orb; legacy yellow asset/role name preserves stable IDs.
 # Regenerate with calyx_model_gen; dimensions in metres.
 
 [[parts]]

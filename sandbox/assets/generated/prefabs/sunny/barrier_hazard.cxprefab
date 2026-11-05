@@ -32,37 +32,6 @@
           }
         }
       },
-      "042a162d-84b9-561e-a450-f722aba6e676": {
-        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-          "id": "042a162d-84b9-561e-a450-f722aba6e676",
-          "name": "top_stripe_0",
-          "visible": true
-        },
-        "93fd32b1-7127-4c88-8e89-893512af58de": {
-          "material": "38294ccb-6ce1-55d1-a7cd-758e8daccc2f",
-          "mesh": "618a4ea3-e0d8-5568-8c25-8a79c2c345a7"
-        },
-        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-          "transform": {
-            "position": [
-              0.0,
-              1.0639999999999998,
-              0.0
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0,
-              1.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        }
-      },
       "365413d3-b25d-5946-99fe-e9d8153b6387": {
         "02289c92-3412-406e-a7e5-3bbb15d7041e": {
           "id": "365413d3-b25d-5946-99fe-e9d8153b6387",
@@ -338,37 +307,6 @@
           }
         }
       },
-      "a90957f6-b3b9-571d-a9e4-9a6f7caf1797": {
-        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-          "id": "a90957f6-b3b9-571d-a9e4-9a6f7caf1797",
-          "name": "top_yellow",
-          "visible": true
-        },
-        "93fd32b1-7127-4c88-8e89-893512af58de": {
-          "material": "d7c59bc7-72c8-5803-b4d2-f957fedbd2a6",
-          "mesh": "78462597-d0eb-58a3-b807-bc83d6113a01"
-        },
-        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-          "transform": {
-            "position": [
-              0.0,
-              1.055,
-              0.0
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0,
-              1.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        }
-      },
       "b12e93f9-c725-58bb-8b01-c6ec7c6b8003": {
         "02289c92-3412-406e-a7e5-3bbb15d7041e": {
           "id": "b12e93f9-c725-58bb-8b01-c6ec7c6b8003",
@@ -422,37 +360,6 @@
               0.0,
               0.0,
               0.8249162373260137
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        }
-      },
-      "bef4b7c0-78cc-5217-8d10-5c1dcb2e76f3": {
-        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-          "id": "bef4b7c0-78cc-5217-8d10-5c1dcb2e76f3",
-          "name": "top_stripe_4",
-          "visible": true
-        },
-        "93fd32b1-7127-4c88-8e89-893512af58de": {
-          "material": "38294ccb-6ce1-55d1-a7cd-758e8daccc2f",
-          "mesh": "d4ddbbdd-54cc-5456-af3f-b75fbc282ab6"
-        },
-        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-          "transform": {
-            "position": [
-              0.0,
-              1.0639999999999998,
-              0.0
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0,
-              1.0
             ],
             "scale": [
               1.0,
@@ -586,68 +493,6 @@
           }
         }
       },
-      "cb4c9be5-e579-5675-b81b-25f5f982c984": {
-        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-          "id": "cb4c9be5-e579-5675-b81b-25f5f982c984",
-          "name": "top_stripe_5",
-          "visible": true
-        },
-        "93fd32b1-7127-4c88-8e89-893512af58de": {
-          "material": "38294ccb-6ce1-55d1-a7cd-758e8daccc2f",
-          "mesh": "53e6f43c-d3bb-5d04-95cd-f7c7674c3d88"
-        },
-        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-          "transform": {
-            "position": [
-              0.0,
-              1.0639999999999998,
-              0.0
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0,
-              1.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        }
-      },
-      "ce5b3a28-b84c-5d1e-bf33-99ff13ab43af": {
-        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-          "id": "ce5b3a28-b84c-5d1e-bf33-99ff13ab43af",
-          "name": "top_stripe_1",
-          "visible": true
-        },
-        "93fd32b1-7127-4c88-8e89-893512af58de": {
-          "material": "38294ccb-6ce1-55d1-a7cd-758e8daccc2f",
-          "mesh": "9864bcb8-47fb-5acf-8074-d0a9bf8ca9ae"
-        },
-        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-          "transform": {
-            "position": [
-              0.0,
-              1.0639999999999998,
-              0.0
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0,
-              1.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        }
-      },
       "d0381da9-870c-5997-9046-3d65f965ad0d": {
         "02289c92-3412-406e-a7e5-3bbb15d7041e": {
           "id": "d0381da9-870c-5997-9046-3d65f965ad0d",
@@ -725,37 +570,6 @@
             "position": [
               -0.9,
               1.04,
-              0.0
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0,
-              1.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        }
-      },
-      "de49fbb4-08a7-5cb1-b8ef-db7d52bab1a6": {
-        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-          "id": "de49fbb4-08a7-5cb1-b8ef-db7d52bab1a6",
-          "name": "top_stripe_2",
-          "visible": true
-        },
-        "93fd32b1-7127-4c88-8e89-893512af58de": {
-          "material": "38294ccb-6ce1-55d1-a7cd-758e8daccc2f",
-          "mesh": "a91e9040-100f-59f5-8cb8-8cc9eef73209"
-        },
-        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-          "transform": {
-            "position": [
-              0.0,
-              1.0639999999999998,
               0.0
             ],
             "rotation": [
@@ -865,37 +679,6 @@
           }
         }
       },
-      "fe2dfd72-fc7a-557e-8434-688e8cb98ac6": {
-        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
-          "id": "fe2dfd72-fc7a-557e-8434-688e8cb98ac6",
-          "name": "top_stripe_3",
-          "visible": true
-        },
-        "93fd32b1-7127-4c88-8e89-893512af58de": {
-          "material": "38294ccb-6ce1-55d1-a7cd-758e8daccc2f",
-          "mesh": "4d434a56-719c-50d8-a93b-5600eba95123"
-        },
-        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
-          "transform": {
-            "position": [
-              0.0,
-              1.0639999999999998,
-              0.0
-            ],
-            "rotation": [
-              0.0,
-              0.0,
-              0.0,
-              1.0
-            ],
-            "scale": [
-              1.0,
-              1.0,
-              1.0
-            ]
-          }
-        }
-      },
       "ffbfbeb1-67ff-5ee5-8f4f-ae8e52c98d42": {
         "02289c92-3412-406e-a7e5-3bbb15d7041e": {
           "id": "ffbfbeb1-67ff-5ee5-8f4f-ae8e52c98d42",
@@ -938,13 +721,6 @@
         "4dbf6a25-47aa-5e67-abf2-1feec673e124",
         "c2780d1d-34a2-568a-9be9-50e07be33c5a",
         "884574ba-1f1a-59fa-93b6-2adde1f0a5d2",
-        "a90957f6-b3b9-571d-a9e4-9a6f7caf1797",
-        "042a162d-84b9-561e-a450-f722aba6e676",
-        "ce5b3a28-b84c-5d1e-bf33-99ff13ab43af",
-        "de49fbb4-08a7-5cb1-b8ef-db7d52bab1a6",
-        "fe2dfd72-fc7a-557e-8434-688e8cb98ac6",
-        "bef4b7c0-78cc-5217-8d10-5c1dcb2e76f3",
-        "cb4c9be5-e579-5675-b81b-25f5f982c984",
         "365413d3-b25d-5946-99fe-e9d8153b6387",
         "91f809e7-017d-5308-8eca-f405b075f51b",
         "03b28961-3601-50d6-bec9-0237cb92677e",

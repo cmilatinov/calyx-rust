@@ -183,7 +183,7 @@ Adding a player colour, or changing one:
 
 | Style | Ink | Silhouette | Inner lines | Used by |
 | --- | --- | --- | --- | --- |
-| 1, ink | `#121212`, opacity 1 | 2 px | 1 px at 0.55 | tanks (hull, turret, pivot, tracks, guns, wheels), walls, barriers, crates, rocks, trees, sample materials |
+| 1, ink | `#121212`, opacity 1 | 2 px | 2 px at 0.55 | tanks (hull, turret, pivot, tracks, guns, wheels), walls, barriers, crates, rocks, trees, sample materials |
 
 - Ground, roads and the emissive signals (projectiles, muzzle flashes,
   lamps) use style 0: the ground draws no lines across its lanes, and the
@@ -233,8 +233,8 @@ the game view is very wide and the vignette is round.
 
 The concept sheet controls kit construction as well as colour: timber crates
 have visible slats, diagonal braces and silver corner hardware on all three maps;
-Jersey barriers have lifting loops and diagonal paint on the camera-visible top
-and sloped shoulders; trees have irregular scalloped dark/middle/light foliage
+Jersey barriers have lifting loops, a plain concrete roof and diagonal paint
+on both sloped side panels; trees have irregular scalloped dark/middle/light foliage
 tiers and a broad organic root flare. Close-ups cannot substitute for the Far
 camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
 `metal`, `metal_caps`, `flag_red`, `berries`, `sandbags`, `sandbag_seams`,
@@ -305,7 +305,7 @@ styled pass): <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-509>.
 The complete concept-sheet arena kit, Far gallery, repeated-join pen and all
 23 isolated model close-ups on the day maps:
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v2>.
-The asymmetric tree revision and complete Moonlit kit, with fresh Far frames
+The initial asymmetric tree revision and complete Moonlit kit, with Far frames
 for all three maps, are under
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v3>.
 Compare their shapes and material breaks with the [concept sheet](concept-sheet.png).
@@ -314,3 +314,11 @@ Earlier rounds, including the dropped candidates and pattern experiments,
 are beside them under `et-492/`. Moonlit against the two day maps, at Far,
 the match scenario at Far and a close-up of the shells:
 <https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-524>.
+
+The final kit refinement restores the approved small and medium tree crowns;
+the large tree has a broad unequal overlapping crown and visible tapered branch
+forks. Sandbags stand 1.27 m high. Pickup signals are blue and green (the green
+pickup retains the legacy `pickup_yellow` asset/role name for stable IDs), with
+palette-specific emission chosen to bloom visibly at Far. Final 2 px inner-ink
+views of every model and all three Far galleries/pens are under
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-517/v4>.
