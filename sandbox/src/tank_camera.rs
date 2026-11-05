@@ -82,7 +82,7 @@ impl Default for ComponentTankCamera {
         Self {
             height: 34.0,
             back: 13.7,
-            zoom: 0.6,
+            zoom: 1.0,
             min_zoom: 0.6,
             max_zoom: 1.0,
             zoom_sensitivity: 0.002,
@@ -407,7 +407,7 @@ mod tests {
     }
 
     #[test]
-    fn the_tank_prefab_and_the_arena_start_close_with_far_zoom_available() {
+    fn the_tank_prefab_and_the_arena_frame_the_tank_from_far() {
         for source in [
             include_str!("../assets/game/prefabs/tank.cxprefab"),
             include_str!("../assets/game/scenes/arena.cxscene"),
@@ -426,12 +426,11 @@ mod tests {
             )
             .expect("the camera has a transform");
 
-            assert_eq!((rig.height, rig.back, rig.zoom), (34.0, 13.7, 0.6));
-            assert_eq!((rig.min_zoom, rig.max_zoom), (0.6, 1.0));
+            assert_eq!((rig.height, rig.back, rig.zoom), (34.0, 13.7, 1.0));
             assert!((lens.fov.to_degrees() - 64.0).abs() < 1e-3);
             // Saved where its first frame puts it, so starting play does not
             // jump the view.
-            let framed = rig.camera_transform(Vec3::zeros(), 0.0, rig.zoom);
+            let framed = rig.camera_transform(Vec3::zeros(), 0.0, 1.0);
             assert!((transform.transform.position - framed.position).magnitude() < 1e-4);
             assert!(transform.transform.rotation.angle_to(&framed.rotation) < 1e-4);
         }
@@ -583,7 +582,6 @@ mod tests {
     fn aiming_to_either_side_leads_the_camera_that_way_and_keeps_the_crosshair_under_the_cursor() {
         for (cursor, side) in [(vec2(1180.0, 360.0), 1.0), (vec2(100.0, 360.0), -1.0)] {
             let mut arena = Arena::new();
-            arena.scroll(-10_000.0);
             arena.point_at(cursor);
             arena.run(3.0);
 

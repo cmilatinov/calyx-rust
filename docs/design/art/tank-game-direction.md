@@ -39,23 +39,21 @@ Considered and dropped:
 
 ## Camera
 
-The gameplay camera starts at the **Near** framing (zoom 0.6). The scroll
-wheel can zoom out to **Far**, the showcase reference:
+The gameplay camera is the **Far** framing:
 
-| Framing | Height | Back offset | Pitch | Horizontal fov | Ground width at the tank |
-| --- | --- | --- | --- | --- | --- |
-| Near (default) | 20.4 m | 8.22 m | 68 degrees | 64 degrees | about 27.5 m |
-| Far (zoom out / showcase) | 34 m | 13.7 m | 68 degrees | 64 degrees | about 46 m |
+| Height | Back offset | Pitch | Horizontal fov | Ground width at the tank |
+| --- | --- | --- | --- | --- |
+| 34 m | 13.7 m | 68° | 64° | about 46 m (23 m deep) |
 
-A tank is 2.3 m wide at the game's 0.45 scale. It occupies about 167 px in
-a 2062 px wide view at Near, and 100 px at Far. Check detail and gameplay
-readability at Near, and check silhouettes at Far as well. Kit prop scales
-stay the same as the showcase; the playable arena is 60 by 64 m.
+A tank (2.3 m wide at the game's 0.45 scale) is about 100 px wide in a
+2062 px wide view. Judge every visual change at this framing first.
 
-The tank's `Camera` object carries the Tank Camera component
-(`sandbox/src/tank_camera.rs`), which leads the view towards the aim point
-and zooms between 0.6 and 1.0. Its saved pose matches the initial Near view,
-so starting play does not jump the camera.
+The tank's `Camera` object carries it as a Tank Camera component
+(`sandbox/src/tank_camera.rs`), which also leads the view towards the aim
+point and zooms in with the scroll wheel to 0.6 of the Far framing.
+
+Kit prop scales stay the same as the showcase; the playable arena is 60 by
+64 m, with a larger visible ground apron beyond its walls.
 
 ## Colour convention
 

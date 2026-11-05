@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
     ColliderShape, ComponentCollider, ComponentID, ComponentMesh, ComponentRigidBody,
+    ComponentTransform,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
@@ -303,11 +304,13 @@ fn main() {
         .unwrap();
     let pose = scene
         .write_component::<ComponentTankCamera, _>(camera, |rig| {
-            rig.zoom = 0.6;
+            rig.zoom = 1.0;
             rig.camera_transform(Vec3::zeros(), 0.0, rig.zoom)
         })
         .unwrap();
-    scene.set_transform(camera, &pose.matrix());
+    scene.write_component::<ComponentTransform, _>(camera, |component| {
+        component.transform.position = pose.position;
+    });
     edited.insert(scene.uuid(camera));
     let children: Vec<_> = scene.children(arena).collect();
     for child in children {

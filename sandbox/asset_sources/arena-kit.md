@@ -149,6 +149,6 @@ authored cover colliders' current transforms, including scene edits.
 
 `cargo run -p sandbox --example remake_arena` rebuilds only the Arena object's
 authored children with deterministic ids and engine-created prefab links.
-It assigns the explicit actor placements and initial Near camera above,
+It assigns the explicit actor placements and initial Far camera above,
 preserving other component data and all actor ids/prefab links. Run
 the model generator first after changing a tile or kit parameter file.
