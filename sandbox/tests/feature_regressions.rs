@@ -384,7 +384,7 @@ fn drive_from(start: Vec3, yaw: f32, fps: usize, seconds: f32) -> Vec3 {
 #[test]
 fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
     // Facing 45 degrees into the arena's +X perimeter wall, whose face is at
-    // x = 13, in the lane between it and the cover.
+    // x = 13.4, in the lane between it and the cover.
     let start = vec3(11.0, 0.0, 0.0);
     let yaw = std::f32::consts::FRAC_PI_4;
     let slow = drive_from(start, yaw, 30, 1.5);
@@ -395,6 +395,133 @@ fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
         "30 fps: {slow:?}\n144 fps: {fast:?}"
     );
     assert!(fast.z - start.z > 2.0, "the tank should slide: {fast:?}");
+}
+
+#[test]
+fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
+    use rapier3d::pipeline::QueryFilter;
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.step();
+    let hit_distance = |origin, direction, length| {
+        runner
+            .scene()
+            .physics
+            .cast_ray(origin, direction, length, true, QueryFilter::only_fixed())
+            .unwrap_or_else(|| panic!("missing collider from {origin:?} toward {direction:?}"))
+            .toi
+    };
+    // Probe every one-metre wall join from immediately inside the pen.
+    for x in -10..=10 {
+        for (z, direction) in [(-3.0, -1.0), (25.0, 1.0)] {
+            let distance = hit_distance(vec3(x as f32, 0.8, z), vec3(0.0, 0.0, direction), 1.0);
+            assert!(
+                (distance - 0.4).abs() < 0.005,
+                "wall at x={x}, z={z}: {distance}"
+            );
+        }
+    }
+    for z in 0..=22 {
+        for side in [-1.0, 1.0] {
+            let distance =
+                hit_distance(vec3(side * 13.3, 0.8, z as f32), vec3(side, 0.0, 0.0), 1.0);
+            assert!((distance - 0.1).abs() < 0.005, "wall at z={z}: {distance}");
+        }
+    }
+    let distance = hit_distance(vec3(0.0, 0.8, 6.0), vec3(0.0, 0.0, 1.0), 6.0);
+    assert!((distance - 3.8).abs() < 0.01, "centre barrier: {distance}");
+    // The rotated sandbag stack is a thin 3/2/1 pile, not a full-depth
+    // rectangular block. The middle bag blocks a shot, but air beside the
+    // pile and beside its narrower top row must stay clear.
+    let distance = hit_distance(vec3(4.0, 0.65, 9.0), vec3(1.0, 0.0, 0.0), 2.0);
+    assert!(
+        (distance - 0.815).abs() < 0.01,
+        "middle sandbag: {distance}"
+    );
+    for (origin, direction, length) in [
+        (vec3(5.35, 0.6, 7.0), vec3(0.0, 0.0, 1.0), 4.0),
+        (vec3(4.0, 1.05, 8.35), vec3(1.0, 0.0, 0.0), 2.0),
+    ] {
+        assert!(
+            runner
+                .scene()
+                .physics
+                .cast_ray(origin, direction, length, true, QueryFilter::only_fixed())
+                .is_none(),
+            "invisible sandbag collision from {origin:?}"
+        );
+    }
+    // Flat tile seams and paving gaps share the same continuous floor.
+    for x in [-9.0, -0.5, 0.0, 0.5, 9.0] {
+        let distance = hit_distance(vec3(x, 0.1, 1.0), vec3(0.0, -1.0, 0.0), 1.0);
+        assert!(
+            (distance - 0.1).abs() < 0.001,
+            "ground at x={x}: {distance}"
+        );
+    }
+}
+
+#[test]
+fn authored_rock_shoulders_stop_shells_and_crowns_leave_air() {
+    use calyx_engine::component::ColliderShape;
+    use rapier3d::pipeline::QueryFilter;
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let boulder = object_named(&scene, "Arena Cover West Boulder");
+    let transform = scene.world_transform(boulder);
+    let point = |p: Vec3| (transform.matrix() * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz();
+    let direction = transform.rotation * vec3(0.0, 0.0, 1.0);
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.step();
+    // The exported body crosses this local line at Z=-.0415 and .2691.
+    // A normal shell must hit that shoulder, even though it misses a
+    // narrow, centred approximation of the rock's middle tier.
+    assert!(
+        runner
+            .scene()
+            .physics
+            .cast_shape(
+                ColliderShape::Sphere { radius: 0.18 },
+                point(vec3(0.9, 1.1, -0.5)),
+                nalgebra::UnitQuaternion::identity(),
+                direction,
+                1.0,
+                QueryFilter::only_fixed(),
+            )
+            .is_some(),
+        "shell passed through the visible rock shoulder"
+    );
+    // At this height the asymmetric crown ends before local X=.35.
+    assert!(
+        runner
+            .scene()
+            .physics
+            .cast_ray(
+                point(vec3(0.35, 1.59, -0.4)),
+                direction,
+                1.2,
+                true,
+                QueryFilter::only_fixed(),
+            )
+            .is_none(),
+        "invisible collision beside the rock crown"
+    );
+}
+
+#[test]
+fn both_authored_flank_lanes_are_driveable() {
+    for x in [-9.0, 9.0] {
+        let final_position = drive_from(vec3(x, 0.0, 0.0), 0.0, 60, 3.0);
+        assert!(
+            final_position.z > 16.0,
+            "flank x={x} blocked at {final_position:?}"
+        );
+        assert!(
+            (final_position.x - x).abs() < 0.1,
+            "unexpected deflection: {final_position:?}"
+        );
+    }
 }
 
 /// Fails when `authored` names a key `known` lacks, at any depth, so a

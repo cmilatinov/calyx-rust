@@ -5,6 +5,7 @@ use crate::arena::ComponentArena;
 use crate::sentry::ComponentSentry;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
+use calyx_engine::component::{ColliderShape, ComponentCollider};
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{
@@ -168,21 +169,49 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
     let arena = scene.objects().find_map(|object| {
         scene
             .read_component::<ComponentArena, _, _>(object, |arena| {
-                Some((arena.extent()?, arena.cell_size, arena.cover_positions()))
+                Some((
+                    arena.extent()?,
+                    arena.cell_size,
+                    arena.cover_positions(),
+                    arena.generate_on_start,
+                ))
             })
             .flatten()
-            .map(|arena| (scene.world_transform(object), arena))
+            .map(|arena| (object, scene.world_transform(object), arena))
     });
 
     let (view, floor, cover) = match arena {
-        Some((transform, ((width, depth), cell_size, cover))) => {
+        Some((object, transform, ((width, depth), cell_size, cover, generated))) => {
             let floor = GroundRect::placed(&transform, Vec3::zeros(), vec2(width, depth));
-            let cover = cover
-                .iter()
-                .map(|position| {
-                    GroundRect::placed(&transform, *position, vec2(cell_size, cell_size))
-                })
-                .collect();
+            let cover = if generated {
+                cover
+                    .iter()
+                    .map(|position| {
+                        GroundRect::placed(&transform, *position, vec2(cell_size, cell_size))
+                    })
+                    .collect()
+            } else {
+                // Authored kit instances have independent collider
+                // children; read their actual pose, including edits.
+                scene
+                    .descendants(object)
+                    .filter(|child| scene.name(*child).starts_with("Arena Cover"))
+                    .filter_map(|child| {
+                        let ColliderShape::Cuboid { half_extents } = scene
+                            .read_component::<ComponentCollider, _, _>(child, |collider| {
+                                collider.shape
+                            })?
+                        else {
+                            return None;
+                        };
+                        Some(GroundRect::placed(
+                            &scene.world_transform(child),
+                            Vec3::zeros(),
+                            vec2(half_extents.x * 2.0, half_extents.z * 2.0),
+                        ))
+                    })
+                    .collect()
+            };
             (MinimapView::fitting(floor, right), Some(floor), cover)
         }
         None => (
@@ -447,6 +476,7 @@ mod tests {
     use crate::sentry::ComponentSentry;
     use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
     use calyx_engine::component::ComponentID;
+    use calyx_engine::component::{ColliderShape, ComponentCollider};
     use calyx_engine::math::Transform;
     use calyx_engine::scene::GameObjectRef;
     use calyx_engine::ui::{PaintCommand, UiColor, UiTransform};
@@ -581,6 +611,57 @@ mod tests {
         assert_eq!(player_blip.position, vec2(2.0, 4.0));
         let heading = player_blip.heading.expect("a tank shows its heading");
         assert!((heading - vec2(1.0, 0.0)).norm() < 1e-5, "{heading:?}");
+    }
+
+    #[test]
+    fn authored_cover_uses_current_collider_poses_instead_of_grid_cells() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let arena = scene.create(None, None);
+        scene.set_transform(arena, &Transform::from_xyz(0.0, 0.0, 11.0).matrix());
+        scene.add_component(
+            arena,
+            ComponentArena {
+                generate_on_start: false,
+                ..Default::default()
+            },
+        );
+        let cover = scene.create(
+            Some(ComponentID {
+                name: "Arena Cover Test".into(),
+                ..Default::default()
+            }),
+            Some(arena),
+        );
+        scene.add_component(
+            cover,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: vec3(1.2, 0.6, 0.4),
+                },
+                ..Default::default()
+            },
+        );
+        scene.set_transform(
+            cover,
+            &Transform::from_components(
+                vec3(4.0, 0.6, 1.0),
+                UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0),
+                vec3(1.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
+        let player = scene.create(None, None);
+        let state = minimap_state(&scene, player);
+        assert_eq!(state.cover.len(), 1);
+        assert_eq!(state.cover[0].center, vec2(4.0, 12.0));
+        assert!((state.cover[0].half_axes[0].norm() - 1.2).abs() < 1e-4);
+        assert!((state.cover[0].half_axes[1].norm() - 0.4).abs() < 1e-4);
+        assert!(state.cover[0].half_axes[0].x.abs() < 1e-4);
+        scene.set_transform(cover, &Transform::from_xyz(8.0, 0.6, 1.0).matrix());
+        assert_eq!(
+            minimap_state(&scene, player).cover[0].center,
+            vec2(8.0, 12.0)
+        );
     }
 
     /// Every filled rectangle `commands` paint, as the four screen corners

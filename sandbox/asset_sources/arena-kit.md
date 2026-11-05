@@ -70,3 +70,39 @@ and pine shades. The lantern uses sodium `#FF9330` at strength 4. Pickup
 emission (Sunny/Sunbaked/Moonlit) is 12/12/6 for green and 24/24/16 for blue,
 with distinct colored halos at Far. Non-pickup material colors remain unchanged.
 All three look-dev rigs use 2 px inner ink; outer ink and thresholds are unchanged.
+
+## Authored gameplay arena
+
+The gameplay arena uses linked Sunny kit instances inside a closed 30 by 32 m
+pen. The existing Arena object remains at world `(0, 0, 11)` and supplies the
+minimap bounds. Its `generate_on_start` is off: saved kit children and their
+colliders are the layout. Empty test arenas keep the simple grid generator by
+default; adding a decorative child does not disable it.
+
+One-metre grass, sand, dirt, paving and road tiles use flat clay materials
+without ink. Uniform surfaces share scaled tile instances on whole-metre
+rectangles; paving joints and marked road dashes stay on individual tiles.
+The tiles share one uninterrupted collision floor at y = 0, so seams and
+paving joints do not catch tank tracks. The ground materials and meshes are
+generated for all three palettes alongside the prop kit.
+
+The two sand flank lanes stay clear for tanks. Staggered barriers, crates,
+sandbags and rocks break shots across the middle while leaving the player's
+initial firing lane open. The northeast pocket, local X 4 to 12 and Z 7 to 14,
+is reserved for a raised area. Gameplay actor ids and spawn positions stay
+independent of the kit layout.
+
+Walls use arm boxes, crates use their solid box, and barriers and rocks use
+stacked boxes for their changing silhouette. Rock slabs are derived from the
+exported triangles, with narrower height bands at the crown (at most sixteen
+per rock); they conservatively approximate contours rather than exact convex
+geometry. Sandbags use three thin
+rows matching their stepped pile. Tree trunks, flag poles
+and lamp posts have collision; foliage, lifting loops and paint are decorative.
+This uses the engine's existing primitive colliders. The minimap reads the
+authored cover colliders' current transforms, including scene edits.
+
+`cargo run -p sandbox --example remake_arena` rebuilds only the Arena object's
+authored children with deterministic ids and engine-created prefab links.
+It preserves the other scene objects and their serialized components. Run
+the model generator first after changing a tile or kit parameter file.

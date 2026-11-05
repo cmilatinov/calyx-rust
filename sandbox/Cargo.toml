@@ -25,3 +25,6 @@ log.workspace = true
 nalgebra.workspace = true
 rapier3d.workspace = true
 nalgebra-glm.workspace = true
+
+[dev-dependencies]
+calyx_model_gen = { path = "../crates/calyx_model_gen" }

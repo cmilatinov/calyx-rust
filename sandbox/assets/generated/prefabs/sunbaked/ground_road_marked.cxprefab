@@ -1,0 +1,105 @@
+{
+  "data": {
+    "components": {
+      "26afdaf7-55f6-5bcf-9444-ec96e1b95d42": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "26afdaf7-55f6-5bcf-9444-ec96e1b95d42",
+          "name": "marking",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "9a74beec-32fb-5478-9565-0392c4f9132a",
+          "mesh": "89516ed5-7420-51d6-a358-63c00014478b"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.1,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "3f25a321-cccd-5083-9f5b-5f5c0525e186": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "3f25a321-cccd-5083-9f5b-5f5c0525e186",
+          "name": "ground_road_marked",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "fed2b6ce-213b-52c3-a3ec-c072d06ea803": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "fed2b6ce-213b-52c3-a3ec-c072d06ea803",
+          "name": "surface",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "1a0e263a-d88a-5eb9-bec6-f21f5a1df1a6",
+          "mesh": "b3a6e8b8-1073-523d-adf8-6a667502117b"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "3f25a321-cccd-5083-9f5b-5f5c0525e186": [
+        "fed2b6ce-213b-52c3-a3ec-c072d06ea803",
+        "26afdaf7-55f6-5bcf-9444-ec96e1b95d42"
+      ]
+    },
+    "roots": [
+      "3f25a321-cccd-5083-9f5b-5f5c0525e186"
+    ]
+  },
+  "root": "3f25a321-cccd-5083-9f5b-5f5c0525e186"
+}

@@ -6281,6 +6281,7 @@ name = "sandbox"
 version = "0.1.0"
 dependencies = [
  "calyx_engine",
+ "calyx_model_gen",
  "eframe",
  "egui",
  "inventory",
