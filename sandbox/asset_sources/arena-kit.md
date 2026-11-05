@@ -62,4 +62,3 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 Every opaque part material has `outline_style = 1`; pickup signal orbs use 0
 to retain their glow. Palette roles and construction rules are in
 [the direction guide](../../docs/design/art/tank-game-direction.md).
-
