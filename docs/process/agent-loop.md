@@ -42,6 +42,15 @@ calyx_ctl stop                                           # discards the play cop
 calyx_ctl shutdown
 ```
 
+For changes to editor startup, repeat the debug launch above for both `./sandbox`
+and `./demos`, without `--release` or a larger stack. Wait for `info` to report
+`assemblies_loaded`, then load each project's `startup_scene` from its
+`project.toml`, capture the viewport and shut down. Both launches must answer
+the readiness ping and load their scene without errors in the log. Unit tests
+run on worker-thread stacks, so they do not replace this main-thread startup
+check: constructing editor state by value can leave too little stack for shader
+compilation even when the shader tests pass.
+
 `launch` returns once the editor answers a ping, but the editor keeps running
 afterwards, so run it detached (a background job) rather than as a foreground
 command whose output you wait on. It fails fast if the editor exits first

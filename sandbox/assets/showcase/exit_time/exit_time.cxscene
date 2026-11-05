@@ -39,6 +39,7 @@
         "visible": true
       },
       "bb784426-a5ec-4995-a86a-c40e7e2cb3ab": {
+        "cast_shadows": true,
         "material": "00000000-0000-0000-0000-000000000000",
         "mesh": "086b379f-7f3c-21f3-ec68-614f59809cd6",
         "root_bone": "d08e589f-3ac6-4941-b532-d852c5eb3368"
