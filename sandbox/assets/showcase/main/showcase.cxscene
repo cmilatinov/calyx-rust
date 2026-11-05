@@ -391,7 +391,10 @@
         },
         "local_space": false,
         "rendering": {
+          "billboard": "CameraFacing",
           "blend_mode": "Alpha",
+          "intensity": 1.0,
+          "min_screen_size": 6.0,
           "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
         },
         "shape": {
@@ -1327,7 +1330,7 @@
           50,
           255
         ],
-        "intensity": 3.6,
+        "intensity": 3.5999999046325684,
         "radius": 7.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
@@ -1364,7 +1367,7 @@
           200,
           255
         ],
-        "intensity": 2.4,
+        "intensity": 2.4000000953674316,
         "radius": 7.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
@@ -2294,7 +2297,7 @@
           255,
           255
         ],
-        "intensity": 2.4,
+        "intensity": 2.4000000953674316,
         "radius": 7.0
       },
       "c5b3b71f-1f14-4b5b-9881-436118684d29": {
@@ -2740,7 +2743,8 @@
         }
       },
       "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
-        "priority": 0
+        "priority": 0,
+        "profile": "00000000-0000-0000-0000-000000000000"
       },
       "d2694fb5-4815-471e-9537-4ab502c580f0": {
         "contrast": 1.059999942779541,
@@ -2900,7 +2904,10 @@
         },
         "local_space": false,
         "rendering": {
+          "billboard": "CameraFacing",
           "blend_mode": "Alpha",
+          "intensity": 1.0,
+          "min_screen_size": 6.0,
           "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
         },
         "shape": {
@@ -3090,7 +3097,10 @@
         },
         "local_space": false,
         "rendering": {
+          "billboard": "CameraFacing",
           "blend_mode": "Alpha",
+          "intensity": 1.0,
+          "min_screen_size": 6.0,
           "texture": "7a2bd53d-83b7-4821-a54e-1fa6586225d4"
         },
         "shape": {
