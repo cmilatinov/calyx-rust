@@ -115,12 +115,12 @@ fn long_wall_replaces_two_short_walls_on_the_documented_root_grid() {
         let min = mesh
             .positions
             .iter()
-            .map(|p| p[0] as f64)
+            .map(|p| p[0])
             .fold(f64::INFINITY, f64::min);
         let max = mesh
             .positions
             .iter()
-            .map(|p| p[0] as f64)
+            .map(|p| p[0])
             .fold(f64::NEG_INFINITY, f64::max);
         (min, max)
     };
