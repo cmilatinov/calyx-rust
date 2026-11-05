@@ -6,13 +6,14 @@ use crate::assets::skybox::Skybox;
 use crate::assets::texture::Texture;
 use crate::assets::{Asset, AssetId, AssetRegistry, BackgroundLoad};
 use crate::component::{
-    ComponentAmbientOcclusion, ComponentMesh, ComponentOutline, ComponentSkinnedMesh,
-    ComponentSkyLight,
+    ComponentAmbientOcclusion, ComponentFoliage, ComponentMesh, ComponentOutline,
+    ComponentSkinnedMesh, ComponentSkyLight,
 };
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::{AssetRenderState, LockedAssetRenderState};
+use crate::render::foliage::FoliageCache;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     drawn_outline_styles, BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass,
@@ -271,6 +272,7 @@ pub struct SceneRenderer {
     particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
+    foliage: FoliageCache,
     object_ids: Arc<[Uuid]>,
     object_ids_build: Vec<Uuid>,
     object_id_lookup: HashMap<Uuid, u32>,
@@ -426,6 +428,7 @@ impl SceneRenderer {
             particle_renderer,
             assets: Default::default(),
             draw_list: Default::default(),
+            foliage: Default::default(),
             object_ids: Default::default(),
             object_ids_build: Default::default(),
             object_id_lookup: Default::default(),
@@ -1011,6 +1014,45 @@ impl SceneRenderer {
                 c_mesh.cast_shadows,
             );
         }
+        self.foliage.begin_frame(scene.id());
+        let mut query = <(Entity, &ComponentFoliage)>::query();
+        for (entity, foliage) in query.iter(world) {
+            let Some(owner) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            if !scene.is_visible_in_hierarchy(owner)
+                || !scene.is_component_enabled::<ComponentFoliage>(owner)
+            {
+                continue;
+            }
+            let uuid = scene.uuid(owner);
+            let instances = self.foliage.instances(uuid, foliage);
+            let entries: Vec<_> = foliage
+                .entries
+                .iter()
+                .map(|entry| {
+                    entry
+                        .mesh
+                        .get_ref(&self.asset_context.registries)
+                        .zip(entry.material.get_ref(&self.asset_context.registries))
+                })
+                .collect();
+            let world = scene.world_transform(owner).matrix();
+            for instance in instances.iter() {
+                let Some((mesh, material)) = &entries[instance.entry] else {
+                    continue;
+                };
+                self.insert_draw_list_entry(
+                    mesh,
+                    material,
+                    uuid,
+                    None,
+                    (world * instance.transform).into(),
+                    foliage.cast_shadows,
+                );
+            }
+        }
+        self.foliage.end_frame();
         let mut skinned_meshes: HashSet<Uuid> = Default::default();
         let mut rest_poses: HashMap<GameObject, HashMap<String, Mat4>> = HashMap::new();
         let no_bones = HashMap::new();
@@ -3560,6 +3602,106 @@ mod tests {
                 "instance {index} was not drawn at its transform"
             );
         }
+    }
+
+    #[test]
+    fn foliage_batches_a_thousand_copies_and_tracks_authoring_edits() {
+        use crate::component::FoliageEntry;
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let cube = context.registries.assets.read().cube().unwrap();
+        let materials = [
+            pbr_material(&context, "test/foliage_a"),
+            pbr_material(&context, "test/foliage_b"),
+        ];
+        let mut builder = SceneBuilder::new(context.registries.clone());
+        let parent = builder.spawn("parent");
+        let owner = builder.spawn_child(parent, "foliage");
+        builder.add_component(
+            owner,
+            ComponentFoliage {
+                entries: materials
+                    .iter()
+                    .map(|material| FoliageEntry {
+                        mesh: AssetRef::from_id(cube.id()),
+                        material: AssetRef::from_id(material.id()),
+                    })
+                    .collect(),
+                density: 10.0,
+                ..Default::default()
+            },
+        );
+        let mut scene = builder.finish();
+        let object_count = scene.objects().count();
+        let uuid = scene.uuid(owner);
+        let mut renderer = renderer(&context, 1, (64, 64));
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert_eq!(renderer.draw_list.len(), 1000);
+        assert_eq!(renderer.object_ids_build, [uuid]);
+        assert!(renderer.draw_list.iter().all(|entry| entry.cast_shadows));
+        renderer.finish_object_ids();
+        let batches = renderer.build_draw_list();
+        assert_eq!(
+            batches.len(),
+            2,
+            "batches follow mesh/material variants, not copies"
+        );
+        assert_eq!(
+            batches.iter().map(|b| b.instances.len()).sum::<usize>(),
+            1000
+        );
+        assert_eq!(
+            scene.objects().count(),
+            object_count,
+            "scatter creates no objects"
+        );
+
+        scene.write_component::<ComponentFoliage, _>(owner, |patch| {
+            patch.entries.truncate(1);
+            patch.area = glm::vec2(1.0, 1.0);
+            patch.density = 1.0;
+            patch.scale_range = glm::vec2(1.0, 1.0);
+            patch.rotation_range = glm::vec2(0.0, 0.0);
+            patch.cast_shadows = false;
+        });
+        let parent_transform = Transform::from_components(
+            vec3(2.0, 0.0, 0.0),
+            UnitQuaternion::from_axis_angle(&Vec3::y_axis(), 0.5),
+            Vec3::repeat(2.0),
+        );
+        scene.set_transform(parent, &parent_transform.matrix());
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert_eq!(renderer.draw_list.len(), 1);
+        assert!(!renderer.draw_list[0].cast_shadows);
+        let local = scene
+            .read_component::<ComponentFoliage, _, _>(owner, |patch| {
+                renderer.foliage.instances(uuid, patch)[0].transform
+            })
+            .unwrap();
+        let expected = parent_transform.matrix() * local;
+        let actual: Mat4 = renderer.draw_list[0].transform.into();
+        assert!((actual - expected).norm() < 0.0001);
+        let position = vec3(expected[(0, 3)], expected[(1, 3)], expected[(2, 3)]);
+        let view = front_camera(1.0, 10.0);
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        let pixel = project(&view.0, &view.1, position, (64, 64));
+        assert_eq!(renderer.pick_game_object(pixel.0, pixel.1), Some(uuid));
+
+        scene.set_component_enabled::<ComponentFoliage>(owner, false);
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        assert_eq!(renderer.pick_game_object(pixel.0, pixel.1), None);
+        assert!(renderer.draw_list.is_empty());
+        scene.set_component_enabled::<ComponentFoliage>(owner, true);
+        scene.write_component::<ComponentID, _>(parent, |id| id.visible = false);
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert!(
+            renderer.draw_list.is_empty(),
+            "hidden ancestors suppress the whole patch"
+        );
+        scene.write_component::<ComponentID, _>(parent, |id| id.visible = true);
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert_eq!(renderer.draw_list.len(), 1);
     }
 
     #[test]
