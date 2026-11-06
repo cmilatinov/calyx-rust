@@ -17,7 +17,9 @@ use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
-use calyx_engine::ui::{PaintCommand, PointerEvents, UiArena, UiLength, UiNodeHandle, UiRect};
+use calyx_engine::ui::{
+    PaintCommand, PointerEvents, UiArena, UiColor, UiLength, UiNodeHandle, UiRect,
+};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::{vec2, vec4, Mat4, Vec3};
 use paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED};
@@ -56,6 +58,10 @@ pub struct ComponentTankHud {
     #[serde(skip)]
     #[reflect_skip]
     pub(crate) fog: crate::vision::FogState,
+    /// The fog painted last frame, so the next one eases from it.
+    #[serde(skip)]
+    #[reflect_skip]
+    fog_fade: std::sync::Arc<std::sync::Mutex<fog::FogFade>>,
 }
 
 impl Default for ComponentTankHud {
@@ -71,6 +77,7 @@ impl Default for ComponentTankHud {
             scoreboard_blur: Default::default(),
             map_boundary: Default::default(),
             fog: Default::default(),
+            fog_fade: Default::default(),
         }
     }
 }
@@ -113,6 +120,7 @@ impl ComponentUpdate for ComponentTankHud {
         input: &Input,
     ) {
         let open = input.action("scoreboard").pressed();
+        let dt = resources.time().delta_time();
         let pages = scoreboard::page_count(&scoreboard::scoreboard_rows(scene, this.game_object()));
         let _ = this.write(scene, |hud| {
             if !open {
@@ -124,7 +132,7 @@ impl ComponentUpdate for ComponentTankHud {
             }
             hud.scoreboard_page = hud.scoreboard_page.min(pages - 1);
             hud.scoreboard_open = open;
-            hud.advance(resources.time().delta_time());
+            hud.advance(dt);
         });
         let previous = this
             .read(scene, |hud| hud.scoreboard_blur)
@@ -132,6 +140,7 @@ impl ComponentUpdate for ComponentTankHud {
         let blur = update_scoreboard_blur(scene, this.game_object(), open, previous);
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
         if let Some(mut fog) = this.write(scene, |hud| std::mem::take(&mut hud.fog)) {
+            fog.advance(dt);
             crate::vision::apply_fog(scene, this.game_object(), &mut fog);
             let _ = this.write(scene, |hud| hud.fog = fog);
         }
@@ -211,7 +220,10 @@ impl ComponentHud for ComponentTankHud {
         let width = viewport.width() / p.scale;
         let height = viewport.height() / p.scale;
         let margin = hud.screen_margin.max(12.0).min(width * 0.1);
-        let map = minimap::minimap_state(scene, player);
+        let mut map = minimap::minimap_state(scene, player);
+        for blip in &mut map.blips {
+            blip.presence = hud.fog.presence(blip.id);
+        }
         if !hud.scoreboard_open {
             fog::paint_fog(
                 &mut p,
@@ -220,6 +232,11 @@ impl ComponentHud for ComponentTankHud {
                 scene.world_transform(player).position.y,
                 width,
                 height,
+                &mut hud
+                    .fog_fade
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+                hud.elapsed,
             );
             paint_world(&mut p, scene, player, hud, &map, width, height);
             let feed_width = (width * 0.24).clamp(230.0, 390.0);
@@ -402,9 +419,19 @@ fn paint_world(
             || player_team
                 .zip(combat_team(scene, object))
                 .is_some_and(|(a, b)| a == b);
-        if !friendly && !map.vision.visible(vec2(position.x, position.z)) {
+        // An enemy's bar fades with it as fog closes over or clears from it.
+        let opacity = if friendly {
+            1.0
+        } else {
+            let visible = map.vision.visible(vec2(position.x, position.z));
+            hud.fog
+                .presence(scene.uuid(object))
+                .unwrap_or(if visible { 1.0 } else { 0.0 })
+        };
+        if opacity <= 0.0 {
             continue;
         }
+        let faded = |color: UiColor| color.with_alpha(color.a as f32 / 255.0 * opacity);
         let Some(bounds) = projection.visual_bounds(scene, object) else {
             continue;
         };
@@ -418,7 +445,7 @@ fn paint_world(
             y - h * 0.5 - 3.0,
             w + 6.0,
             h + 6.0,
-            BLACK,
+            faded(BLACK),
             outer_radius,
         );
         let left = x - w * 0.5 - 1.0;
@@ -430,7 +457,7 @@ fn paint_world(
             top,
             inner_w,
             inner_h,
-            paint::PANEL,
+            faded(paint::PANEL),
             outer_radius - 2.0,
         );
         let trail = health
@@ -444,7 +471,7 @@ fn paint_world(
                 top,
                 trailing_width,
                 inner_h,
-                LIGHT,
+                faded(LIGHT),
                 outer_radius - 2.0,
             );
         }
@@ -454,7 +481,7 @@ fn paint_world(
                 top,
                 fill,
                 inner_h,
-                if friendly { CYAN } else { RED },
+                faded(if friendly { CYAN } else { RED }),
                 outer_radius - 2.0,
             );
         }
@@ -465,7 +492,7 @@ fn paint_world(
                     (x + 8.0, y + h * 0.5 + 7.0),
                     (x, y + h * 0.5 + 19.0),
                 ],
-                BLACK,
+                faded(BLACK),
             );
             p.polygon(
                 &[
@@ -473,7 +500,7 @@ fn paint_world(
                     (x + 5.5, y + h * 0.5 + 8.5),
                     (x, y + h * 0.5 + 16.0),
                 ],
-                RED,
+                faded(RED),
             );
         }
     }

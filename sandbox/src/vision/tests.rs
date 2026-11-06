@@ -211,10 +211,65 @@ fn fog_hides_a_sentry_behind_cover_and_shows_it_once_in_sight() {
     assert!(scene.is_component_enabled::<ComponentPointLight>(lamp));
     assert!(!fog.hides(scene.uuid(sentry)));
 
-    // Beyond vision range it hides again.
+    // Beyond vision range it fades out, then hides.
+    fog.advance(1.0);
     scene.set_world_transform(player, Transform::from_xyz(-6.0, 0.0, 9.0).matrix());
     apply_fog(&mut scene, player, &mut fog);
+    fog.advance(FADE_TIME * 0.9);
+    apply_fog(&mut scene, player, &mut fog);
+    assert!(scene.is_visible(sentry));
+    fog.advance(FADE_TIME * 0.2);
+    apply_fog(&mut scene, player, &mut fog);
     assert!(!scene.is_visible(sentry));
+    assert!(!scene.is_component_enabled::<ComponentPointLight>(lamp));
+}
+
+#[test]
+fn units_fade_in_and_out_of_sight_over_the_fade_time() {
+    let (mut scene, player, sentry, lamp) = sentry_behind_cover();
+    let id = scene.uuid(sentry);
+    let mut fog = FogState::default();
+    apply_fog(&mut scene, player, &mut fog);
+    assert_eq!(fog.presence(id), Some(0.0), "unseen units are gone at once");
+
+    // Coming into sight shows the unit at once and fades it in.
+    scene.set_world_transform(player, Transform::from_xyz(4.0, 0.0, 5.0).matrix());
+    apply_fog(&mut scene, player, &mut fog);
+    assert!(scene.is_visible(sentry));
+    assert_eq!(fog.presence(id), Some(0.0));
+    fog.advance(FADE_TIME * 0.5);
+    apply_fog(&mut scene, player, &mut fog);
+    assert!((fog.presence(id).unwrap() - 0.5).abs() < 1e-4);
+    fog.advance(FADE_TIME);
+    assert_eq!(fog.presence(id), Some(1.0));
+
+    // Going behind cover fades it out, light and all, before fog hides it.
+    scene.set_world_transform(player, Transform::from_xyz(0.0, 0.0, 0.0).matrix());
+    apply_fog(&mut scene, player, &mut fog);
+    assert!(scene.is_visible(sentry));
+    assert!(scene.is_component_enabled::<ComponentPointLight>(lamp));
+    fog.advance(FADE_TIME * 0.25);
+    apply_fog(&mut scene, player, &mut fog);
+    assert!((fog.presence(id).unwrap() - 0.75).abs() < 1e-4);
+    assert!(scene.is_visible(sentry), "still fading out");
+    fog.advance(FADE_TIME * 0.75);
+    apply_fog(&mut scene, player, &mut fog);
+    assert!(!scene.is_visible(sentry));
+    assert!(!scene.is_component_enabled::<ComponentPointLight>(lamp));
+    assert_eq!(fog.presence(id), Some(0.0));
+
+    // Seen again partway through fading out, it fades back in from there.
+    scene.set_world_transform(player, Transform::from_xyz(4.0, 0.0, 5.0).matrix());
+    apply_fog(&mut scene, player, &mut fog);
+    fog.advance(FADE_TIME);
+    scene.set_world_transform(player, Transform::from_xyz(0.0, 0.0, 0.0).matrix());
+    apply_fog(&mut scene, player, &mut fog);
+    fog.advance(FADE_TIME * 0.5);
+    scene.set_world_transform(player, Transform::from_xyz(4.0, 0.0, 5.0).matrix());
+    apply_fog(&mut scene, player, &mut fog);
+    assert!(scene.is_visible(sentry));
+    fog.advance(FADE_TIME * 0.25);
+    assert!((fog.presence(id).unwrap() - 0.75).abs() < 1e-4);
 }
 
 #[test]

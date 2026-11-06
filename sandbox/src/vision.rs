@@ -8,7 +8,8 @@
 //! Fog only changes what the local player sees. A hidden object keeps its
 //! colliders, health, update hooks and rounds; fog clears its render flag and
 //! disables its lights and particle systems, and restores exactly what it
-//! changed once the object is seen again.
+//! changed once the object is seen again. What the side stops seeing stays
+//! for [`FADE_TIME`] while it fades from the HUD and fog closes over it.
 
 use crate::arena::ComponentArena;
 use crate::combat::{combat_team, is_tank_combatant};
@@ -174,6 +175,31 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
     Some(ArenaGeometry { floor, cover })
 }
 
+/// How long fog takes to close over or clear away from what a side stops or
+/// starts seeing, in seconds: fog over the ground, and enemy units fading
+/// from the HUD and minimap before fog hides them.
+pub(crate) const FADE_TIME: f32 = 0.3;
+
+/// How little the reach of the rays around a point may vary, in metres, for
+/// the point's coverage to come from the single ray through it.
+const FLAT_REACH: f32 = 0.02;
+
+/// The widest arc either way of a point that its soft shadow sides blend
+/// over, in radians, so points right next to a viewer stay cheap.
+const MAX_SPREAD: f32 = 0.35;
+
+/// Share of the soft edge that lies inside the edge of sight; the rest
+/// darkens the ground just past it.
+const INNER_EDGE: f32 = 0.25;
+
+/// How much a viewer sees of a point `distance` away along a ray that
+/// reaches `reach`: 1 well inside, falling smoothly to 0 across a soft edge
+/// `soft` metres wide that straddles the end of the ray.
+fn edge(distance: f32, reach: f32, soft: f32) -> f32 {
+    let t = ((distance - reach) / soft + INNER_EDGE).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
+}
+
 /// One tank lending its sight to its side.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Viewer {
@@ -191,48 +217,116 @@ pub(crate) struct SightRays {
     /// Like `entry`, but a ray that meets cover carries on through the
     /// touching blocks it meets, so the cover itself is not in shadow.
     pub through: Vec<f32>,
+    /// The shortest and longest reach of `through` over runs of rays:
+    /// level `k` holds, for each ray, the extremes over it and the next
+    /// `2^k - 1` rays round the circle.
+    extremes: Vec<Vec<(f32, f32)>>,
 }
 
 impl SightRays {
+    /// Rays of `viewer` reaching `entry` and `through`, in order
+    /// counterclockwise from +X.
+    fn new(viewer: Viewer, entry: Vec<f32>, through: Vec<f32>) -> Self {
+        let count = through.len();
+        let mut extremes = vec![through
+            .iter()
+            .map(|&reach| (reach, reach))
+            .collect::<Vec<_>>()];
+        let mut span = 1;
+        while span * 2 <= count {
+            let below = &extremes[extremes.len() - 1];
+            let level = (0..count)
+                .map(|index| {
+                    let (a, b) = (below[index], below[(index + span) % count]);
+                    (a.0.min(b.0), a.1.max(b.1))
+                })
+                .collect();
+            extremes.push(level);
+            span *= 2;
+        }
+        Self {
+            viewer,
+            entry,
+            through,
+            extremes,
+        }
+    }
+
     /// The ray angle of ray `index`, counterclockwise from +X on the ground.
     pub fn angle(&self, index: usize) -> f32 {
         index as f32 * std::f32::consts::TAU / self.entry.len() as f32
     }
 
-    /// How far sight reaches along `angle`, through the cover it first
-    /// meets, interpolating between the two nearest rays.
-    fn reach_along(&self, angle: f32) -> f32 {
+    /// How far sight reaches at `turns` ray spacings counterclockwise from
+    /// +X, through the cover it first meets, interpolating between the two
+    /// nearest rays.
+    fn reach_at(&self, turns: f32) -> f32 {
         let count = self.through.len();
-        let turns = angle.rem_euclid(std::f32::consts::TAU) / std::f32::consts::TAU * count as f32;
-        let index = turns.floor() as usize % count;
+        let index = turns.floor().rem_euclid(count as f32) as usize % count;
         let next = (index + 1) % count;
-        let blend = turns.fract();
+        let blend = turns - turns.floor();
         self.through[index] * (1.0 - blend) + self.through[next] * blend
     }
 
-    /// How much of `point` this viewer sees: 1 inside its sight, falling to 0
-    /// over about `soft` metres past the edge of its range and across the
-    /// edges of cover shadows.
+    /// The shortest and longest reach of the rays from `first` to `last`,
+    /// counting round the circle.
+    fn reach_range(&self, first: i64, last: i64) -> (f32, f32) {
+        let count = self.through.len();
+        let length = ((last - first + 1).max(1) as usize).min(count);
+        let level = (usize::BITS - 1 - length.leading_zeros()) as usize;
+        let start = first.rem_euclid(count as i64) as usize;
+        let other = (start + length - (1 << level)) % count;
+        let (a, b) = (self.extremes[level][start], self.extremes[level][other]);
+        (a.0.min(b.0), a.1.max(b.1))
+    }
+
+    /// How much of `point` this viewer sees: 1 inside its sight, falling
+    /// smoothly to 0 across a soft edge `soft` metres wide, both at the end of
+    /// its range and across the sides of cover shadows.
+    ///
+    /// Along a ray the edge is a smoothstep. Where the rays around the point
+    /// reach different distances, as across a shadow side, every ray within
+    /// half the soft edge either way adds its own edge, weighted by a smooth
+    /// window that falls to zero at its ends, so the result moves
+    /// continuously as the point does and has no steps of its own.
     pub fn coverage(&self, point: Vec2, soft: f32) -> f32 {
-        const SAMPLES: i32 = 3;
+        let soft = soft.max(1e-3);
         let offset = point - self.viewer.position;
         let distance = offset.norm();
-        if distance > self.viewer.range + soft * 2.0 + 2.0 {
+        if distance >= self.viewer.range + soft * (1.0 - INNER_EDGE) {
             return 0.0;
         }
-        let soft = soft.max(f32::EPSILON);
-        let angle = offset.y.atan2(offset.x);
-        // Sample a soft metre's arc either way, so shadow sides blur as much
-        // as the end of sight does.
-        let spread = (soft * 0.5 / distance.max(soft)) / SAMPLES as f32;
-        let total = (-SAMPLES..=SAMPLES)
-            .map(|step| {
-                let reach = self.reach_along(angle + step as f32 * spread);
-                let t = ((distance - reach) / soft).clamp(0.0, 1.0);
-                1.0 - t * t * (3.0 - 2.0 * t)
-            })
-            .sum::<f32>();
-        total / (2 * SAMPLES + 1) as f32
+        let count = self.through.len() as f32;
+        let tau = std::f32::consts::TAU;
+        let turns = offset.y.atan2(offset.x).rem_euclid(tau) / tau * count;
+        let half = (soft * 0.5 / distance.max(f32::EPSILON)).min(MAX_SPREAD) / tau * count;
+        let first = (turns - half).ceil() as i64;
+        let last = (turns + half).floor() as i64;
+        // Every ray the window or the interpolation could use.
+        let (shortest, longest) = self.reach_range(first - 1, last + 1);
+        if shortest >= distance + soft * INNER_EDGE {
+            return 1.0;
+        }
+        if longest <= distance - soft * (1.0 - INNER_EDGE) {
+            return 0.0;
+        }
+        if half < 1.0 || longest - shortest < FLAT_REACH {
+            return edge(distance, self.reach_at(turns), soft);
+        }
+        let mut total = 0.0;
+        let mut weight = 0.0;
+        for index in first..=last {
+            let x = (index as f32 - turns) / half;
+            let w = (1.0 - x * x).max(0.0).powi(2);
+            let reach = self.through[index.rem_euclid(self.through.len() as i64) as usize];
+            total += w * edge(distance, reach, soft);
+            weight += w;
+        }
+        if weight > 0.0 {
+            total / weight
+        } else {
+            edge(distance, self.reach_at(turns), soft)
+        }
     }
 }
 
@@ -311,11 +405,7 @@ impl TeamVision {
                     entry.push(hit);
                     through.push(beyond);
                 }
-                SightRays {
-                    viewer,
-                    entry,
-                    through,
-                }
+                SightRays::new(viewer, entry, through)
             })
             .collect()
     }
@@ -397,6 +487,18 @@ pub(crate) struct FogState {
     /// Each object fog hid, with the lights and particle systems in its
     /// hierarchy that fog disabled.
     hidden: HashMap<Uuid, Vec<(Uuid, Effect)>>,
+    /// How present each object fog manages is, and whether the side saw it
+    /// when fog last looked.
+    presence: HashMap<Uuid, Presence>,
+}
+
+/// How far an object fog manages has faded in.
+#[derive(Clone, Copy, Debug, Default)]
+struct Presence {
+    /// From 0, hidden, to 1, in full view; it moves a step towards whether
+    /// the side sees the object each time fog time passes.
+    value: f32,
+    seen: bool,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -410,6 +512,33 @@ impl FogState {
     #[cfg(test)]
     pub fn hides(&self, id: Uuid) -> bool {
         self.hidden.contains_key(&id)
+    }
+
+    /// Lets `dt` seconds of fog time pass: every object the side sees fades
+    /// in and every object it no longer sees fades out, each over
+    /// [`FADE_TIME`]. Fog hides an object once it has faded out.
+    pub fn advance(&mut self, dt: f32) {
+        let step = if dt.is_finite() {
+            dt.max(0.0) / FADE_TIME
+        } else {
+            0.0
+        };
+        for presence in self.presence.values_mut() {
+            presence.value = if presence.seen {
+                (presence.value + step).min(1.0)
+            } else {
+                (presence.value - step).max(0.0)
+            };
+        }
+    }
+
+    /// How present the object with id `id` is, from 0 (hidden by fog) to 1
+    /// (in full view), or `None` for an object fog has not looked at.
+    pub fn presence(&self, id: Uuid) -> Option<f32> {
+        if self.hidden.contains_key(&id) {
+            return Some(0.0);
+        }
+        self.presence.get(&id).map(|presence| presence.value)
     }
 }
 
@@ -567,7 +696,12 @@ fn apply_fog_to(
         .filter_map(|&object| Some((object, sighting(scene, viewer, vision, object)?)))
         .collect::<Vec<_>>();
     for (object, sighting) in decisions {
-        conceal(scene, fog, object, sighting == Sighting::Hidden);
+        // What the side stops seeing fades out before it hides; what it sees
+        // shows at once and fades in.
+        let presence = fog.presence.entry(scene.uuid(object)).or_default();
+        presence.seen = sighting == Sighting::Seen;
+        let hide = !presence.seen && presence.value <= 0.0;
+        conceal(scene, fog, object, hide);
     }
 }
 
@@ -578,6 +712,7 @@ pub(crate) fn apply_fog(scene: &mut Scene, viewer: GameObject, fog: &mut FogStat
     let objects = scene.objects().collect::<Vec<_>>();
     apply_fog_to(scene, viewer, fog, &vision, &objects);
     fog.hidden.retain(|id, _| scene.find(*id).is_some());
+    fog.presence.retain(|id, _| scene.find(*id).is_some());
 }
 
 /// Re-applies the local player's fog of war after `objects` spawned or moved

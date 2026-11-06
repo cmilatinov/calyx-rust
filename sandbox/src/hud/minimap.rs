@@ -10,6 +10,7 @@ use crate::vision::cover_entry;
 use crate::vision::{arena_geometry, ground, GroundRect, TeamVision};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{UiColor, UiPoint, UiRect, UiSize};
+use calyx_engine::utils::Uuid;
 use nalgebra_glm::{vec2, Vec2};
 
 /// Half the side of the square the map shows when the scene has no arena,
@@ -93,6 +94,12 @@ pub(crate) struct MinimapBlip {
     pub position: Vec2,
     pub heading: Option<Vec2>,
     pub friendly: bool,
+    /// The object the blip marks.
+    pub id: Uuid,
+    /// How present fog of war leaves the object, from 0 to 1, as its
+    /// [`crate::vision::FogState::presence`]; `None` when fog has not looked
+    /// at it, and the map's vision decides alone.
+    pub presence: Option<f32>,
 }
 
 /// Everything the map draws, read from the scene.
@@ -191,6 +198,8 @@ fn blip(scene: &Scene, player: GameObject, object: GameObject) -> Option<Minimap
 
     let transform = scene.world_transform(object);
     Some(MinimapBlip {
+        id: scene.uuid(object),
+        presence: None,
         friendly: object == player
             || combat_team(scene, player)
                 .zip(combat_team(scene, object))
@@ -436,7 +445,14 @@ pub(super) fn paint_map(
         }
     }
     for blip in &state.blips {
-        if !blip.friendly && !state.vision.visible(blip.position) {
+        // An enemy fades in and out with fog, as it does in the main view.
+        let opacity = if blip.friendly {
+            1.0
+        } else {
+            let visible = state.vision.visible(blip.position);
+            blip.presence.unwrap_or(if visible { 1.0 } else { 0.0 })
+        };
+        if opacity <= 0.0 {
             continue;
         }
         let point = mapped(blip.position);
@@ -462,12 +478,12 @@ pub(super) fn paint_map(
                 }
             }
         } else {
-            p.circle(point.0, point.1, 6.5, BLACK);
+            p.circle(point.0, point.1, 6.5, BLACK.with_alpha(opacity));
             p.circle(
                 point.0,
                 point.1,
                 5.0,
-                if blip.friendly { CYAN } else { RED },
+                (if blip.friendly { CYAN } else { RED }).with_alpha(opacity),
             );
         }
     }

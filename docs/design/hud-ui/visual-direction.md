@@ -81,8 +81,13 @@ what any of its live tanks sees within that tank's vision range, unless cover
 is in the way. Enemy tanks, sentries and targets outside it are not drawn, nor
 their HP bars and damage numbers, and enemy rounds and muzzle effects follow
 the same rule except a round on course to hit the player. Ground outside
-vision is darkened with near-black ink that fades in over a soft edge along
-the range and every cover shadow. Fog is current vision only and changes
+vision is darkened with near-black ink that fades in over a soft edge about
+3 m wide along the range and every cover shadow; the edge must look smooth at
+any zoom, with no blocks or steps. Fog does not pop when vision changes: the
+ink eases in and out over 0.3 s, and an enemy that leaves sight stays drawn
+while its HP bar and minimap blip fade out over the same time, then hides.
+An enemy that comes into sight shows at once and its HP bar and blip fade
+in. Fog is current vision only and changes
 nothing but what is drawn: hidden enemies still collide, shoot and take
 damage.
 
