@@ -87,11 +87,14 @@ does not see is darkened with near-black ink by the renderer's fog of war
 (`ComponentFogOfWar` on the arena's global post-process volume, fed by
 `sandbox/src/vision/sight.rs`), under the HUD and health bars: each pixel by
 the ground position of the surface it shows, so cover a tank sees is lit up
-to its top. Sight fades out with distance, fully lit to 8 m inside a tank's
-vision range and fading along an exponential to dark 12 m past it, and cover
-shadows have hard, radial sides. Fog does not pop when vision changes: each
-sight ray's reach eases to its new length over 0.3 s, so fog sweeps open and
-closed, and an enemy that leaves sight stays drawn
+to its top. Only walls and boxes (crates and supply crates) block sight;
+low cover such as barriers, sandbags and rocks does not. Sight fades out with
+distance, fully lit to 8 m inside a tank's vision range and fading along an
+exponential to dark 12 m past it, and cover shadows have hard, radial sides,
+traced per pixel so they stay crisp and antialiased while tanks move. Fog
+does not pop when the side changes: a tank that joins it fades its sight in
+over 0.3 s and one that dies fades it out, and an enemy that leaves sight
+stays drawn
 while its HP bar and minimap blip fade out over the same time, then hides.
 An enemy that comes into sight shows at once and its HP bar and blip fade
 in. Fog is current vision only and changes

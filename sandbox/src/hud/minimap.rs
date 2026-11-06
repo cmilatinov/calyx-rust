@@ -7,7 +7,7 @@ use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
 #[cfg(test)]
 use crate::vision::cover_entry;
-use crate::vision::sight::side_sight;
+use crate::vision::sight::{side_sight, sight_rays};
 use crate::vision::{arena_geometry, ground, GroundRect, TeamVision};
 use calyx_engine::component::FogOfWarSight;
 use calyx_engine::scene::{GameObject, Scene};
@@ -405,29 +405,30 @@ pub(super) fn paint_map(
     };
     // Concentric, vertex-coloured rays light the ground every tank lending
     // its sight sees, as the main view's fog of war shows it: out along its
-    // sight rays to where cover stops them, fading with distance as the
-    // main view's fog does.
+    // sight rays to where the fog's blockers stop them, fading with distance
+    // and with the tank's weight as the main view's fog does.
     let mut points = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
-    const RAY_STEP: usize = 3;
+    const RAYS: usize = 240;
     const RINGS: usize = 12;
-    for viewer in &state.sight.viewers {
-        let count = viewer.reach.len();
-        if count == 0 {
-            continue;
-        }
-        let rays = count.div_ceil(RAY_STEP);
+    for (viewer, rays) in state
+        .sight
+        .viewers
+        .iter()
+        .zip(sight_rays(&state.sight, RAYS))
+    {
+        let count = rays.through.len();
         let first = points.len() as u32;
-        for i in 0..=rays {
-            let ray = (i * RAY_STEP) % count;
+        for i in 0..=count {
+            let ray = i % count;
             let angle = ray as f32 * std::f32::consts::TAU / count as f32;
-            let length = viewer.reach[ray].min(viewer.fade_end).max(0.0);
+            let length = rays.through[ray].min(viewer.fade_end).max(0.0);
             let direction = vec2(angle.cos(), angle.sin());
             for ring in 0..=RINGS {
                 let distance = length * ring as f32 / RINGS as f32;
                 points.push(mapped(inside(viewer.position + direction * distance)));
-                let light = viewer.range_fade(distance);
+                let light = viewer.sight(distance);
                 colors.push(UiColor::rgba(28, 145, 191, (light * 110.0) as u8));
                 if i > 0 && ring > 0 {
                     let b = first + (i * (RINGS + 1) + ring) as u32;

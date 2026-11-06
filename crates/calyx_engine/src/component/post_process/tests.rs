@@ -125,9 +125,10 @@ fn erased_effect_operations_preserve_all_builtin_blend_rules() {
             opacity: 0.3,
             sight: Some(FogOfWarSight {
                 viewers: vec![FogOfWarViewer {
-                    reach: vec![1.0, 2.0],
+                    weight: 0.5,
                     ..Default::default()
                 }],
+                blockers: vec![FogOfWarBlocker::default(); 2],
             }),
         },
     );

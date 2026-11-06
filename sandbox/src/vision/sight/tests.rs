@@ -82,10 +82,9 @@ fn the_range_fade_falls_monotonically_along_an_exponential() {
 #[test]
 fn the_renderer_fades_sight_as_range_fade_does() {
     let sight = side_sight(&vision(vec![viewer(1, Vec2::zeros())], Vec::new()));
-    let fog = &sight.viewers[0];
     for i in 0..=80 {
         let distance = i as f32 * 0.5;
-        assert!((fog.visibility(vec2(0.0, distance)) - range_fade(distance, 20.0)).abs() < 1e-5);
+        assert!((sight.visibility(vec2(0.0, distance)) - range_fade(distance, 20.0)).abs() < 1e-5);
     }
 }
 
@@ -98,85 +97,98 @@ fn several_tanks_light_the_ground_as_the_one_that_sees_it_best() {
     let sight = side_sight(&both);
     let point = vec2(8.0, 0.0);
     assert_eq!(first.visibility(point), 0.0);
-    let second = sight.viewers[1].visibility(point);
+    let second = sight.viewers[1].sight((point - sight.viewers[1].position).norm());
     assert!(second > 0.0, "{second}");
     assert_eq!(sight.visibility(point), second);
     assert_eq!(sight.visibility(vec2(2.0, 0.0)), 1.0);
 }
 
 #[test]
-fn fog_eases_open_and_closed_over_the_fade_time() {
-    let tank = viewer(1, Vec2::zeros());
-    let open = vision(vec![tank], Vec::new());
-    // The same tank, boxed in by cover all round.
-    let boxed = vision(
-        vec![tank],
-        vec![GroundRect::axis_aligned(Vec2::zeros(), vec2(0.5, 0.5))],
+fn only_cover_within_reach_of_the_side_is_handed_over() {
+    let mut side = block();
+    // Past the end of the tank's range fade, with room to spare.
+    let far = 20.0 + RANGE_FADE_OUTSIDE + 3.0;
+    side.cover
+        .push(GroundRect::axis_aligned(vec2(far, 0.0), vec2(1.0, 1.0)));
+    side.cover
+        .push(GroundRect::axis_aligned(vec2(0.0, -40.0), vec2(1.0, 1.0)));
+    let sight = side_sight(&side);
+    assert_eq!(
+        sight
+            .blockers
+            .iter()
+            .map(|blocker| blocker.center)
+            .collect::<Vec<_>>(),
+        [vec2(4.0, 0.0)]
     );
-    let full = tank.range + RANGE_FADE_OUTSIDE;
-    let mut fog = FogSight::default();
-    let reach = |fog: &FogSight| fog.sight().viewers[0].reach[0];
-
-    // The first update shows the sight as it is.
-    fog.update(&boxed, 0.0);
-    let closed = reach(&fog);
-    assert!(closed < 0.5, "{closed}");
-
-    // Opening up sweeps the reach out over the fade time, a third at a
-    // time.
-    let tick = FADE_TIME / 3.0;
-    fog.update(&open, tick);
-    assert!(
-        (reach(&fog) - (closed + full / 3.0)).abs() < 1e-3,
-        "{}",
-        reach(&fog)
-    );
-    fog.update(&open, tick);
-    fog.update(&open, tick);
-    assert!((reach(&fog) - full).abs() < 1e-3);
-
-    // Closing sweeps it back.
-    fog.update(&boxed, tick);
-    assert!((reach(&fog) - (full - full / 3.0)).abs() < 1e-3);
-    fog.update(&boxed, tick);
-    fog.update(&boxed, tick);
-    assert!((reach(&fog) - closed).abs() < 1e-3);
-
-    // A pause lets no fog time pass.
-    fog.update(&open, 0.0);
-    assert!((reach(&fog) - closed).abs() < 1e-3);
 }
 
 #[test]
-fn a_tank_joining_the_side_opens_its_sight_and_one_leaving_closes_it() {
+fn the_shadow_follows_a_moving_tank_without_lag() {
+    // Moving the tank moves its shadow sides at once: no per-ray easing
+    // trails them.
+    let mut fog = FogSight::default();
+    let mut side = block();
+    fog.update(&side, 0.0);
+    let point = vec2(9.0, 7.0);
+    assert!(fog.sight().visibility(point) > 0.0);
+    side.viewers[0].position = vec2(0.0, -2.0);
+    fog.update(&side, 0.016);
+    assert_eq!(fog.sight().viewers[0].position, vec2(0.0, -2.0));
+    assert_eq!(fog.sight().visibility(point), 0.0);
+    assert_eq!(fog.sight(), &side_sight(&side));
+}
+
+#[test]
+fn a_tank_joining_the_side_fades_its_sight_in_and_one_leaving_fades_it_out() {
     let first = viewer(1, Vec2::zeros());
-    let second = viewer(2, vec2(20.0, 0.0));
-    let full = first.range + RANGE_FADE_OUTSIDE;
+    let second = viewer(2, vec2(60.0, 0.0));
     let mut fog = FogSight::default();
     let both = vision(vec![first, second], Vec::new());
     let alone = vision(vec![first], Vec::new());
+    // The first update shows the side's sight in full.
     fog.update(&alone, 0.0);
     assert_eq!(fog.sight().viewers.len(), 1);
+    assert_eq!(fog.sight().viewers[0].weight, 1.0);
 
     let tick = FADE_TIME / 3.0;
     fog.update(&both, tick);
-    let joined = &fog.sight().viewers[1];
+    let joined = fog.sight().viewers[1];
     assert_eq!(joined.position, second.position);
-    assert!((joined.reach[0] - full / 3.0).abs() < 1e-3);
-    assert_eq!(fog.sight().viewers[0].reach[0], full);
+    assert!((joined.weight - 1.0 / 3.0).abs() < 1e-5);
+    assert_eq!(fog.sight().viewers[0].weight, 1.0);
+    assert!((fog.sight().visibility(second.position) - 1.0 / 3.0).abs() < 1e-5);
     fog.update(&both, tick);
     fog.update(&both, tick);
-    assert!((fog.sight().viewers[1].reach[0] - full).abs() < 1e-3);
+    assert!((fog.sight().viewers[1].weight - 1.0).abs() < 1e-5);
 
-    // The second tank dies: its sight closes where it last stood, then
+    // A pause lets no fog time pass.
+    fog.update(&alone, 0.0);
+    assert!((fog.sight().viewers[1].weight - 1.0).abs() < 1e-5);
+
+    // The second tank dies: its sight fades out where it last stood, then
     // goes.
     fog.update(&alone, tick);
     fog.update(&alone, tick);
     assert_eq!(fog.sight().viewers.len(), 2);
     assert_eq!(fog.sight().viewers[1].position, second.position);
-    assert!((fog.sight().viewers[1].reach[0] - full / 3.0).abs() < 1e-3);
+    assert!((fog.sight().viewers[1].weight - 1.0 / 3.0).abs() < 1e-5);
     fog.update(&alone, tick);
     assert_eq!(fog.sight().viewers.len(), 1);
+}
+
+#[test]
+fn the_minimaps_rays_stop_where_the_fogs_lines_of_sight_do() {
+    let sight = side_sight(&block());
+    let rays = sight_rays(&sight, 8);
+    assert_eq!(rays.len(), 1);
+    // Along +X the ray crosses the block and stops at its far side, where
+    // the fog's shadow starts; the others run to the end of the fade.
+    assert!((rays[0].through[0] - 5.0).abs() < 1e-4);
+    assert!(sight.visibility(vec2(4.99, 0.0)) > 0.0);
+    assert_eq!(sight.visibility(vec2(5.01, 0.0)), 0.0);
+    let fade_end = 20.0 + RANGE_FADE_OUTSIDE;
+    assert!((rays[0].through[2] - fade_end).abs() < 1e-4);
 }
 
 #[test]

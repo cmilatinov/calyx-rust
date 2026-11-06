@@ -21,7 +21,8 @@ struct FogOfWarUniform {
     camera: CameraPlanes,
     view_to_world: [[f32; 4]; 4],
     viewer_count: u32,
-    _pad: [u32; 3],
+    blocker_count: u32,
+    _pad: [u32; 2],
 }
 
 /// One viewer as the shader reads it: `Viewer` in
@@ -33,47 +34,62 @@ pub(crate) struct GpuViewer {
     fade_start: f32,
     fade_end: f32,
     fade_curve: f32,
-    shadow_jump: f32,
-    first_ray: u32,
-    ray_count: u32,
+    weight: f32,
 }
 
-/// Packs `sight` into the shader's viewer table and the flat run of every
-/// viewer's ray reaches, reusing the storage of `viewers` and `reach`.
+/// One blocker as the shader reads it: `Blocker` in
+/// `shaders/postprocess/fog_of_war.wgsl`.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GpuBlocker {
+    center: [f32; 2],
+    local_x: [f32; 2],
+    local_y: [f32; 2],
+    scale: [f32; 2],
+}
+
+/// Packs `sight` into the shader's viewer and blocker tables, reusing their
+/// storage. Flat blockers, which block nothing, are left out.
 pub(crate) fn pack_sight(
     sight: &FogOfWarSight,
     viewers: &mut Vec<GpuViewer>,
-    reach: &mut Vec<f32>,
+    blockers: &mut Vec<GpuBlocker>,
 ) {
     viewers.clear();
-    reach.clear();
-    for viewer in &sight.viewers {
-        viewers.push(GpuViewer {
-            position: [viewer.position.x, viewer.position.y],
-            fade_start: viewer.fade_start,
-            fade_end: viewer.fade_end,
-            fade_curve: viewer.fade_curve,
-            shadow_jump: viewer.shadow_jump,
-            first_ray: reach.len() as u32,
-            ray_count: viewer.reach.len() as u32,
-        });
-        reach.extend_from_slice(&viewer.reach);
-    }
+    blockers.clear();
+    viewers.extend(sight.viewers.iter().map(|viewer| GpuViewer {
+        position: [viewer.position.x, viewer.position.y],
+        fade_start: viewer.fade_start,
+        fade_end: viewer.fade_end,
+        fade_curve: viewer.fade_curve,
+        weight: viewer.weight,
+    }));
+    blockers.extend(sight.blockers.iter().filter_map(|blocker| {
+        let [x, y] = blocker.to_local()?;
+        Some(GpuBlocker {
+            center: [blocker.center.x, blocker.center.y],
+            local_x: [x.x, x.y],
+            local_y: [y.x, y.y],
+            scale: [x.norm(), y.norm()],
+        })
+    }));
 }
 
 /// Fog of war in the `Ldr` stage, after the ink outlines and before FXAA,
-/// which smooths its hard edges with the rest of the image. It reads the
-/// scene depth, rebuilds each pixel's world position, and mixes the pixel
-/// towards the fog colour by how little the side sees of its ground
-/// position `(x, z)` (see [`ComponentFogOfWar`]). It runs while the
+/// which smooths the image's other edges. It reads the scene depth,
+/// rebuilds each pixel's world position, traces lines of sight from the
+/// side's viewers past its blockers at a few points across the pixel's
+/// ground footprint, and mixes the pixel towards the fog colour by how
+/// little of it the side sees (see [`ComponentFogOfWar`] and
+/// [`FogOfWarSight::pixel_visibility`]). It runs while the
 /// settings hold a [`ComponentFogOfWar`] that game code gave a sight.
 pub struct FogOfWarPass {
     shader: Ref<Shader>,
     uniform_buffer: wgpu::Buffer,
     viewer_buffer: ResizableBuffer,
-    reach_buffer: ResizableBuffer,
+    blocker_buffer: ResizableBuffer,
     viewers: Vec<GpuViewer>,
-    reach: Vec<f32>,
+    blockers: Vec<GpuBlocker>,
     #[allow(clippy::type_complexity)]
     bind_group: CachedBindGroup<(
         wgpu::BindGroupLayout,
@@ -107,9 +123,9 @@ impl FogOfWarPass {
             shader,
             uniform_buffer,
             viewer_buffer: storage(),
-            reach_buffer: storage(),
+            blocker_buffer: storage(),
             viewers: Vec::new(),
-            reach: Vec::new(),
+            blockers: Vec::new(),
             bind_group: Default::default(),
         })
     }
@@ -142,7 +158,7 @@ impl PostProcessPass for FogOfWarPass {
         let Some(sight) = &fog.sight else {
             return;
         };
-        pack_sight(sight, &mut self.viewers, &mut self.reach);
+        pack_sight(sight, &mut self.viewers, &mut self.blockers);
         let device = context.render_context.device();
         let queue = context.render_context.queue();
         // Storage bindings need a buffer of at least one element.
@@ -150,9 +166,10 @@ impl PostProcessPass for FogOfWarPass {
             .resize(device, size_of::<GpuViewer>() as u64);
         self.viewer_buffer
             .write_buffer(device, queue, &self.viewers, None);
-        self.reach_buffer.resize(device, size_of::<f32>() as u64);
-        self.reach_buffer
-            .write_buffer(device, queue, &self.reach, None);
+        self.blocker_buffer
+            .resize(device, size_of::<GpuBlocker>() as u64);
+        self.blocker_buffer
+            .write_buffer(device, queue, &self.blockers, None);
         let uniform = FogOfWarUniform {
             color: [
                 fog.color.r() as f32 / 255.0,
@@ -163,7 +180,8 @@ impl PostProcessPass for FogOfWarPass {
             camera: context.camera,
             view_to_world: context.view_to_world.into(),
             viewer_count: self.viewers.len() as u32,
-            _pad: [0; 3],
+            blocker_count: self.blockers.len() as u32,
+            _pad: [0; 2],
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
@@ -190,14 +208,14 @@ impl PostProcessPass for FogOfWarPass {
         let device = context.render_context.device();
         let uniform_buffer = &self.uniform_buffer;
         let viewer_buffer = self.viewer_buffer.get_wgpu_buffer();
-        let reach_buffer = self.reach_buffer.get_wgpu_buffer();
+        let blocker_buffer = self.blocker_buffer.get_wgpu_buffer();
         let bind_group = self.bind_group.get_or_create(
             (
                 layout.clone(),
                 io.input.view.clone(),
                 depth.view.clone(),
                 self.viewer_buffer.generation(),
-                self.reach_buffer.generation(),
+                self.blocker_buffer.generation(),
             ),
             || {
                 device.create_bind_group(&wgpu::BindGroupDescriptor {
@@ -222,7 +240,7 @@ impl PostProcessPass for FogOfWarPass {
                         },
                         wgpu::BindGroupEntry {
                             binding: 4,
-                            resource: reach_buffer.as_entire_binding(),
+                            resource: blocker_buffer.as_entire_binding(),
                         },
                     ],
                 })

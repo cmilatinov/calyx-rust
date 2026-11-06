@@ -22,6 +22,7 @@ use crate::tank::{
 };
 use calyx_engine::component::{
     ColliderShape, ComponentCollider, ComponentID, ComponentParticleSystem, ComponentPointLight,
+    FogOfWarSight,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Scene};
@@ -336,7 +337,7 @@ fn ray_through_cover(viewer: Viewer, direction: Vec2, cover: &[GroundRect]) -> f
     loop {
         let further = spans
             .iter()
-            .filter(|(near, far)| *near <= exit + 0.05 && *far > exit)
+            .filter(|(near, far)| *near <= exit + FogOfWarSight::TOUCHING && *far > exit)
             .map(|(_, far)| *far)
             .fold(exit, f32::max);
         if further <= exit {

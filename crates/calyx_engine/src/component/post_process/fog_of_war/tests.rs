@@ -3,76 +3,108 @@
 use super::*;
 use crate::render::postprocess::{BlendEffect, PostProcessSettings};
 use nalgebra_glm::vec2;
-use std::f32::consts::TAU;
 
-/// A viewer at the origin whose 720 rays reach `far`, except those whose
-/// angle lies within `half_width` radians of `towards`, which reach `near`.
-fn viewer(towards: f32, half_width: f32, near: f32, far: f32) -> FogOfWarViewer {
+/// A viewer at `position` whose sight fades from 12 to 32 units out.
+fn viewer(position: Vec2) -> FogOfWarViewer {
     FogOfWarViewer {
-        position: Vec2::zeros(),
+        position,
         fade_start: 12.0,
         fade_end: 32.0,
         fade_curve: 3.0,
-        reach: (0..720)
-            .map(|index| {
-                let angle = index as f32 * TAU / 720.0;
-                let off = (angle - towards + TAU / 2.0).rem_euclid(TAU) - TAU / 2.0;
-                if off.abs() <= half_width {
-                    near
-                } else {
-                    far
-                }
-            })
-            .collect(),
-        shadow_jump: 0.3,
+        weight: 1.0,
     }
 }
 
-fn at(angle: f32, distance: f32) -> Vec2 {
-    vec2(angle.cos(), angle.sin()) * distance
+/// An axis-aligned blocker of `size` centred on `center`.
+fn block(center: Vec2, size: Vec2) -> FogOfWarBlocker {
+    FogOfWarBlocker {
+        center,
+        half_axes: [vec2(size.x * 0.5, 0.0), vec2(0.0, size.y * 0.5)],
+    }
 }
 
-#[test]
-fn a_point_just_inside_the_reach_is_seen_and_one_just_past_it_is_not() {
-    let viewer = viewer(0.0, 0.2, 5.0, 40.0);
-    assert_eq!(viewer.visibility(at(0.0, 4.99)), 1.0);
-    assert_eq!(viewer.visibility(at(0.0, 5.01)), 0.0);
-    // Off the shadow, sight goes on to the fade.
-    assert_eq!(viewer.visibility(at(1.0, 11.0)), 1.0);
-}
-
-#[test]
-fn a_shadow_side_is_a_hard_radial_edge_halfway_between_two_rays() {
-    // The shadow covers rays 0 to 10 of 720; its side lies between rays 10
-    // and 11, halfway at 10.5 ray spacings.
-    let spacing = TAU / 720.0;
-    let viewer = viewer(0.0, 10.2 * spacing, 5.0, 40.0);
-    for distance in [6.0, 10.0, 11.5] {
-        assert_eq!(
-            viewer.visibility(at(10.45 * spacing, distance)),
-            0.0,
-            "{distance} m out, just inside the shadow"
-        );
-        assert_eq!(
-            viewer.visibility(at(10.55 * spacing, distance)),
-            1.0,
-            "{distance} m out, just outside it"
-        );
+/// A viewer at the origin and a 2 by 2 block centred 5 units out along +X.
+fn behind_a_block() -> FogOfWarSight {
+    FogOfWarSight {
+        viewers: vec![viewer(Vec2::zeros())],
+        blockers: vec![block(vec2(5.0, 0.0), vec2(2.0, 2.0))],
     }
 }
 
 #[test]
-fn neighbouring_reaches_that_differ_little_interpolate() {
-    let mut viewer = viewer(0.0, 0.0, 5.0, 5.0);
-    viewer.reach[1] = 5.2;
-    let spacing = TAU / 720.0;
-    assert!((viewer.reach_at(at(0.5 * spacing, 1.0)) - 5.1).abs() < 1e-4);
-    assert!((viewer.reach_at(at(0.25 * spacing, 1.0)) - 5.05).abs() < 1e-4);
+fn a_blocker_is_seen_and_the_ground_behind_it_is_not() {
+    let sight = behind_a_block();
+    assert_eq!(sight.visibility(vec2(3.9, 0.0)), 1.0, "before the block");
+    assert_eq!(sight.visibility(vec2(4.5, 0.0)), 1.0, "on the block");
+    assert_eq!(sight.visibility(vec2(5.99, 0.0)), 1.0, "its far side");
+    assert_eq!(sight.visibility(vec2(6.01, 0.0)), 0.0, "just behind it");
+    assert_eq!(sight.visibility(vec2(11.0, 0.5)), 0.0, "deep in its shadow");
+    assert_eq!(sight.visibility(vec2(11.0, 4.0)), 1.0, "beside the shadow");
+}
+
+#[test]
+fn a_shadow_side_is_the_line_from_the_viewer_past_the_corner() {
+    // The block's corner (4, 1) bounds its shadow on the +Z side: the side
+    // runs along the line through it, at a quarter of the distance in z.
+    let sight = behind_a_block();
+    for x in [8.0, 12.0, 20.0] {
+        let edge = x / 4.0;
+        assert_eq!(sight.visibility(vec2(x, edge - 0.01)), 0.0, "{x}");
+        assert!(sight.visibility(vec2(x, edge + 0.01)) > 0.0, "{x}");
+    }
+}
+
+#[test]
+fn sight_carries_through_touching_blockers_but_not_across_a_gap() {
+    let mut sight = behind_a_block();
+    // A block touching the first one's far side, and one past a gap.
+    sight.blockers.push(block(vec2(7.02, 0.0), vec2(2.0, 2.0)));
+    sight.blockers.push(block(vec2(10.0, 0.0), vec2(2.0, 2.0)));
+    assert_eq!(
+        sight.visibility(vec2(7.5, 0.0)),
+        1.0,
+        "on the touching block"
+    );
+    assert_eq!(sight.visibility(vec2(8.1, 0.0)), 0.0, "past the run");
+    assert_eq!(
+        sight.visibility(vec2(10.0, 0.0)),
+        0.0,
+        "on the block past it"
+    );
+}
+
+#[test]
+fn a_rotated_blocker_casts_the_shadow_of_its_footprint() {
+    let diagonal = std::f32::consts::FRAC_1_SQRT_2;
+    let sight = FogOfWarSight {
+        viewers: vec![viewer(Vec2::zeros())],
+        blockers: vec![FogOfWarBlocker {
+            center: vec2(5.0, 0.0),
+            half_axes: [vec2(diagonal, diagonal), vec2(-diagonal, diagonal)],
+        }],
+    };
+    // A diamond from x = 5 - √2 to 5 + √2 along the line to it.
+    assert_eq!(sight.visibility(vec2(6.4, 0.0)), 1.0);
+    assert_eq!(sight.visibility(vec2(6.45, 0.0)), 0.0);
+    // Lines of sight that pass its slanted sides, though they cross its
+    // axis-aligned bounds, are clear.
+    assert_eq!(sight.visibility(vec2(8.0, 2.8)), 1.0);
+    assert_eq!(sight.visibility(vec2(8.0, 2.0)), 0.0);
+}
+
+#[test]
+fn a_viewer_inside_a_blocker_sees_out_to_its_side_only() {
+    let sight = FogOfWarSight {
+        viewers: vec![viewer(Vec2::zeros())],
+        blockers: vec![block(Vec2::zeros(), vec2(2.0, 2.0))],
+    };
+    assert_eq!(sight.visibility(vec2(0.9, 0.0)), 1.0);
+    assert_eq!(sight.visibility(vec2(1.1, 0.0)), 0.0);
 }
 
 #[test]
 fn the_range_fade_falls_monotonically_along_its_exponential() {
-    let viewer = viewer(0.0, 0.0, 40.0, 40.0);
+    let viewer = viewer(Vec2::zeros());
     assert_eq!(viewer.range_fade(0.0), 1.0);
     assert_eq!(viewer.range_fade(12.0), 1.0);
     assert_eq!(viewer.range_fade(32.0), 0.0);
@@ -92,7 +124,7 @@ fn the_range_fade_falls_monotonically_along_its_exponential() {
 
     let linear = FogOfWarViewer {
         fade_curve: 0.0,
-        ..viewer.clone()
+        ..viewer
     };
     assert!((linear.range_fade(22.0) - 0.5).abs() < 1e-6);
     let sharp = FogOfWarViewer {
@@ -104,37 +136,56 @@ fn the_range_fade_falls_monotonically_along_its_exponential() {
 }
 
 #[test]
+fn a_viewers_weight_scales_what_it_lends() {
+    let mut sight = behind_a_block();
+    sight.viewers[0].weight = 0.25;
+    assert_eq!(sight.visibility(vec2(2.0, 0.0)), 0.25);
+    assert_eq!(sight.visibility(vec2(8.0, 0.0)), 0.0);
+    sight.viewers[0].weight = 0.0;
+    assert_eq!(sight.visibility(vec2(2.0, 0.0)), 0.0);
+    assert_eq!(FogOfWarViewer::default().weight, 1.0);
+}
+
+#[test]
 fn the_side_sees_a_point_as_well_as_its_best_viewer() {
-    let near = viewer(0.0, 0.3, 3.0, 40.0);
-    let mut far = viewer(0.0, 0.0, 40.0, 40.0);
-    far.position = vec2(-20.0, 0.0);
+    let mut sight = behind_a_block();
     let point = vec2(8.0, 0.0);
     assert_eq!(
-        near.visibility(point),
+        sight.visibility(point),
         0.0,
         "behind the near viewer's cover"
     );
-    let partial = far.visibility(point);
+    let far = viewer(vec2(8.0, -20.0));
+    let partial = far.sight(20.0);
     assert!(partial > 0.0 && partial < 1.0, "{partial}");
-    let sight = FogOfWarSight {
-        viewers: vec![near.clone(), far],
-    };
+    sight.viewers.push(far);
     assert_eq!(sight.visibility(point), partial);
     assert_eq!(sight.visibility(vec2(2.0, 0.0)), 1.0);
     assert_eq!(FogOfWarSight::default().visibility(point), 0.0);
-    let open = FogOfWarViewer {
-        reach: Vec::new(),
-        ..near
-    };
-    assert_eq!(open.visibility(point), 1.0, "no rays cut nothing short");
+}
+
+#[test]
+fn a_pixel_averages_its_samples_across_a_shadow_side() {
+    let sight = behind_a_block();
+    let (dx, dy) = (vec2(0.1, 0.0), vec2(0.0, 0.1));
+    // Away from every edge a pixel is what its centre is.
+    assert_eq!(sight.pixel_visibility(vec2(2.0, 3.0), dx, dy), 1.0);
+    assert_eq!(sight.pixel_visibility(vec2(10.0, 0.0), dx, dy), 0.0);
+    // A pixel on the shadow's side is partly seen, and steps between its
+    // centre's values as it slides across the side.
+    let across = (0..=20)
+        .map(|step| sight.pixel_visibility(vec2(8.0, 1.9 + step as f32 * 0.01), dx, dy))
+        .collect::<Vec<_>>();
+    assert_eq!(across[0], 0.0);
+    assert_eq!(across[20], 1.0);
+    assert!(across.windows(2).all(|pair| pair[1] >= pair[0]));
+    assert!(across.iter().any(|&seen| seen > 0.0 && seen < 1.0));
 }
 
 #[test]
 fn the_sight_is_runtime_state_that_is_never_saved() {
     let fog = ComponentFogOfWar {
-        sight: Some(FogOfWarSight {
-            viewers: vec![viewer(0.0, 0.1, 3.0, 9.0)],
-        }),
+        sight: Some(behind_a_block()),
         ..Default::default()
     };
     let saved = serde_json::to_value(&fog).expect("saves");
@@ -148,15 +199,16 @@ fn the_sight_is_runtime_state_that_is_never_saved() {
 
 #[test]
 fn settings_carry_the_sight_and_reuse_its_storage() {
-    let sight = |near| FogOfWarSight {
-        viewers: vec![viewer(0.0, 0.1, near, 9.0)],
+    let sight = |x| FogOfWarSight {
+        viewers: vec![viewer(vec2(x, 0.0))],
+        blockers: vec![block(vec2(x, 3.0), vec2(1.0, 1.0)); 3],
     };
     let mut value = ComponentFogOfWar::default();
     value.copy_in_place(&ComponentFogOfWar {
         sight: Some(sight(3.0)),
         ..Default::default()
     });
-    let storage = value.sight.as_ref().unwrap().viewers[0].reach.as_ptr();
+    let storage = value.sight.as_ref().unwrap().blockers.as_ptr();
     let source = ComponentFogOfWar {
         opacity: 0.5,
         sight: Some(sight(4.0)),
@@ -164,10 +216,7 @@ fn settings_carry_the_sight_and_reuse_its_storage() {
     };
     value.copy_in_place(&source);
     assert_eq!(value, source);
-    assert_eq!(
-        value.sight.as_ref().unwrap().viewers[0].reach.as_ptr(),
-        storage
-    );
+    assert_eq!(value.sight.as_ref().unwrap().blockers.as_ptr(), storage);
     let settings = PostProcessSettings::default().with(source.clone());
     assert_eq!(settings.get::<ComponentFogOfWar>(), Some(&source));
 }

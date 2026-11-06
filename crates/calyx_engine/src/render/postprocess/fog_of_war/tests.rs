@@ -1,9 +1,9 @@
 //! Fog of war: which pixels the pass darkens for a known depth and sight,
-//! against the CPU rules of [`FogOfWarSight::visibility`].
+//! against the CPU rules of [`FogOfWarSight::pixel_visibility`].
 
 use super::*;
 use crate::assets::texture::Texture;
-use crate::component::FogOfWarViewer;
+use crate::component::{FogOfWarBlocker, FogOfWarViewer};
 use crate::math::Transform;
 use crate::render::postprocess::{ChainPlan, ChainTargets, PostProcessChain};
 use crate::render::scene_renderer::half_to_f32;
@@ -58,31 +58,21 @@ fn fog(sight: Option<FogOfWarSight>) -> ComponentFogOfWar {
     }
 }
 
-/// 720 rays reaching `far`, except those within `half_width` radians of the
-/// angle `towards`, which stop at `near`, as behind a block of cover.
-fn shadowed(towards: f32, half_width: f32, near: f32, far: f32) -> Vec<f32> {
-    (0..720)
-        .map(|index| {
-            let angle = index as f32 * std::f32::consts::TAU / 720.0;
-            let off = (angle - towards + std::f32::consts::PI).rem_euclid(std::f32::consts::TAU)
-                - std::f32::consts::PI;
-            if off.abs() <= half_width {
-                near
-            } else {
-                far
-            }
-        })
-        .collect()
-}
-
-fn viewer(position: Vec2, reach: Vec<f32>) -> FogOfWarViewer {
+fn viewer(position: Vec2) -> FogOfWarViewer {
     FogOfWarViewer {
         position,
         fade_start: 6.0,
         fade_end: 16.0,
         fade_curve: 3.0,
-        reach,
-        shadow_jump: 0.3,
+        weight: 1.0,
+    }
+}
+
+/// An axis-aligned blocker of `size` centred on `center`.
+fn block(center: Vec2, size: Vec2) -> FogOfWarBlocker {
+    FogOfWarBlocker {
+        center,
+        half_axes: [vec2(size.x * 0.5, 0.0), vec2(0.0, size.y * 0.5)],
     }
 }
 
@@ -278,10 +268,21 @@ fn assert_texel(actual: [f32; 4], expected: [f32; 4], what: &str) {
     }
 }
 
+/// The ground step to a neighbouring pixel, as the shader picks it: the
+/// shorter of the steps ahead and behind that stay on the image.
+fn ground_step(ahead: Option<Vec2>, behind: Option<Vec2>) -> Vec2 {
+    match (ahead, behind) {
+        (Some(ahead), Some(behind)) if behind.norm_squared() < ahead.norm_squared() => behind,
+        (Some(ahead), _) => ahead,
+        (None, Some(behind)) => behind,
+        (None, None) => Vec2::zeros(),
+    }
+}
+
 /// Checks every pixel of `output` against the CPU visibility of the ground
-/// position it shows, and returns how many came out clear, partly fogged
-/// and fully fogged. Pixels that lie within a few millimetres of an edge of
-/// sight, where float rounding may fall either way, are skipped.
+/// footprint it shows, and returns how many came out clear, partly fogged
+/// and fully fogged. Pixels with a sample within a few millimetres of an
+/// edge of sight, where float rounding may fall either way, are skipped.
 fn check_pixels(
     output: &[[f32; 4]],
     fog: &ComponentFogOfWar,
@@ -292,16 +293,27 @@ fn check_pixels(
     let mut counts = [0; 3];
     for y in 0..SIZE.1 {
         for x in 0..SIZE.0 {
-            let world = world_position(view, x, y, depth);
-            let ground = vec2(world.x, world.z);
-            let seen = sight.visibility(ground);
+            let at = |x: u32, y: u32| {
+                let world = world_position(view, x, y, depth);
+                vec2(world.x, world.z)
+            };
+            let ground = at(x, y);
+            let dx = ground_step(
+                (x + 1 < SIZE.0).then(|| at(x + 1, y) - ground),
+                (x > 0).then(|| ground - at(x - 1, y)),
+            );
+            let dy = ground_step(
+                (y + 1 < SIZE.1).then(|| at(x, y + 1) - ground),
+                (y > 0).then(|| ground - at(x, y - 1)),
+            );
+            let seen = sight.pixel_visibility(ground, dx, dy);
             let nearby = [
                 vec2(0.005, 0.0),
                 vec2(-0.005, 0.0),
                 vec2(0.0, 0.005),
                 vec2(0.0, -0.005),
             ]
-            .map(|step| sight.visibility(ground + step));
+            .map(|step| sight.pixel_visibility(ground + step, dx, dy));
             if nearby.iter().any(|other| (other - seen).abs() > 0.05) {
                 continue;
             }
@@ -325,13 +337,19 @@ fn each_pixel_is_fogged_by_the_ground_position_of_the_surface_it_shows() {
     let assets = TestAssets::engine();
     let context = assets.asset_context();
     let context = context.lock_read();
-    // A camera above the ground, tilted as a game camera is, and a second
-    // viewer whose sight overlaps the first's.
+    // A camera above the ground, tilted as a game camera is, a second
+    // viewer whose sight overlaps the first's, and a block in front of each
+    // of them, one turned.
     let view = looking(vec3(-4.0, 14.0, -10.0), vec3(0.0, 0.0, 2.0));
+    let turned = std::f32::consts::FRAC_1_SQRT_2;
     let fog = fog(Some(FogOfWarSight {
-        viewers: vec![
-            viewer(vec2(-2.0, 0.0), shadowed(0.6, 0.25, 3.0, 40.0)),
-            viewer(vec2(6.0, 6.0), shadowed(-2.4, 0.4, 2.0, 40.0)),
+        viewers: vec![viewer(vec2(-2.0, 0.0)), viewer(vec2(6.0, 6.0))],
+        blockers: vec![
+            block(vec2(0.5, 1.7), vec2(1.5, 1.5)),
+            FogOfWarBlocker {
+                center: vec2(4.2, 4.3),
+                half_axes: [vec2(turned, turned), vec2(-0.5 * turned, 0.5 * turned)],
+            },
         ],
     }));
     let depth = planes().depth_of(16.0);
@@ -350,12 +368,13 @@ fn the_same_pixel_is_clear_on_a_surface_in_sight_and_fogged_on_one_in_shadow() {
     let assets = TestAssets::engine();
     let context = assets.asset_context();
     let context = context.lock_read();
-    // Looking along +X from above the viewer; cover 4 m out stops the rays
-    // in a wedge around +X. A near surface, such as the top of the cover,
-    // shows on the same pixels as the ground in its shadow behind it.
+    // Looking along +X from above the viewer; a crate from 3.5 to 4.5 m out
+    // casts its shadow along +X. A near surface, such as the top of the
+    // crate, shows on the same pixels as the ground in its shadow behind it.
     let view = looking(vec3(-6.0, 10.0, 0.0), vec3(8.0, 0.0, 0.0));
     let fog = fog(Some(FogOfWarSight {
-        viewers: vec![viewer(Vec2::zeros(), shadowed(0.0, 0.3, 4.5, 40.0))],
+        viewers: vec![viewer(Vec2::zeros())],
+        blockers: vec![block(vec2(4.0, 0.0), vec2(1.0, 3.0))],
     }));
     let centre = (SIZE.0 / 2, SIZE.1 / 2);
     let at = |depth: f32| {
@@ -432,32 +451,48 @@ fn the_renderer_fogs_the_inked_image_before_fxaa() {
 }
 
 #[test]
-fn packing_lays_each_viewers_rays_after_the_last() {
+fn packing_turns_blockers_into_the_shaders_local_frames() {
+    let mut weak = viewer(vec2(1.0, 2.0));
+    weak.weight = 0.25;
     let sight = FogOfWarSight {
-        viewers: vec![
-            viewer(vec2(1.0, 2.0), vec![1.0, 2.0, 3.0]),
-            viewer(vec2(-1.0, 0.5), Vec::new()),
-            viewer(vec2(0.0, 0.0), vec![4.0, 5.0]),
+        viewers: vec![weak, viewer(vec2(-1.0, 0.5))],
+        blockers: vec![
+            block(vec2(3.0, 4.0), vec2(2.0, 4.0)),
+            FogOfWarBlocker {
+                center: vec2(9.0, 9.0),
+                half_axes: [vec2(1.0, 1.0), vec2(2.0, 2.0)],
+            },
         ],
     };
-    let (mut viewers, mut reach) = (vec![GpuViewer::default(); 5], vec![9.0; 9]);
+    let (mut viewers, mut blockers) = (
+        vec![GpuViewer::default(); 5],
+        vec![GpuBlocker::default(); 5],
+    );
 
-    pack_sight(&sight, &mut viewers, &mut reach);
+    pack_sight(&sight, &mut viewers, &mut blockers);
 
-    assert_eq!(reach, [1.0, 2.0, 3.0, 4.0, 5.0]);
     assert_eq!(
         viewers
             .iter()
-            .map(|viewer| (viewer.position, viewer.first_ray, viewer.ray_count))
+            .map(|viewer| (viewer.position, viewer.weight))
             .collect::<Vec<_>>(),
-        [([1.0, 2.0], 0, 3), ([-1.0, 0.5], 3, 0), ([0.0, 0.0], 3, 2)]
+        [([1.0, 2.0], 0.25), ([-1.0, 0.5], 1.0)]
     );
     assert_eq!(viewers[0].fade_curve, 3.0);
-    assert_eq!(viewers[0].shadow_jump, 0.3);
+    // The flat second blocker blocks nothing and is left out.
+    assert_eq!(
+        blockers,
+        [GpuBlocker {
+            center: [3.0, 4.0],
+            local_x: [1.0, 0.0],
+            local_y: [0.0, 0.5],
+            scale: [1.0, 0.5],
+        }]
+    );
 }
 
 #[test]
-fn the_uniform_and_viewer_match_the_shaders_layout() {
+fn the_uniform_viewer_and_blocker_match_the_shaders_layout() {
     let source = crate::render::test_kernel::preprocess(
         "//#include \"shaders/postprocess/fog_of_war.wgsl\"\n",
     )
@@ -467,12 +502,13 @@ fn the_uniform_and_viewer_match_the_shaders_layout() {
     let (size, members) = crate::render::test_kernel::wgsl_layout(&module, "FogOfWarUniform");
     assert_eq!(size as usize, size_of::<FogOfWarUniform>());
     assert_eq!(
-        members[..4],
+        members[..5],
         [
             ("color", 0),
             ("camera", 16),
             ("view_to_world", 32),
             ("viewer_count", 96),
+            ("blocker_count", 100),
         ]
         .map(|(name, offset)| (name.to_string(), offset))
     );
@@ -485,9 +521,19 @@ fn the_uniform_and_viewer_match_the_shaders_layout() {
             ("fade_start", 8),
             ("fade_end", 12),
             ("fade_curve", 16),
-            ("shadow_jump", 20),
-            ("first_ray", 24),
-            ("ray_count", 28),
+            ("weight", 20),
+        ]
+        .map(|(name, offset)| (name.to_string(), offset))
+    );
+    let (size, members) = crate::render::test_kernel::wgsl_layout(&module, "Blocker");
+    assert_eq!(size as usize, size_of::<GpuBlocker>());
+    assert_eq!(
+        members,
+        [
+            ("center", 0),
+            ("local_x", 8),
+            ("local_y", 16),
+            ("scale", 24),
         ]
         .map(|(name, offset)| (name.to_string(), offset))
     );
