@@ -35,10 +35,11 @@ The original images are preserved without alteration:
   clean edge throughout the HUD and scoreboard. Size elements against the rendered playfield, not the concept image pixels. The radar
   diameter is about 13.6% of the view width, including compact layouts.
 - Show rounded black HP tracks above combatants, filled with their side colour.
-  Width follows 90% of each tank's projected visible mesh bounds (48px minimum);
-  anchor the pill 8px above the projected top so it sits close to the tank. Preserve its projected width
-  and scale thickness with that width so smaller views retain the thin proportions;
-  use slightly less rounded corners and
+  Every bar, on tanks, sentries and targets alike, has one fixed size: a
+  64-unit fill, 7 units thick, so it never changes with the entity's size,
+  heading or distance. Only its position follows the projected visible mesh
+  bounds: centre the pill over them, 8px above the projected top so it sits
+  close to the entity. Use slightly less rounded corners and
   expand the coloured fill into the removed inner border. Keep enemy arrows
   between it and the tank. The existing scene crosshair stays visible until #526 supplies
   its ground model; the HUD must not draw a substitute ground reticle. Four
