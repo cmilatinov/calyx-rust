@@ -62,5 +62,10 @@ urlencoding.workspace = true
 pollster.workspace = true
 toml.workspace = true
 winit.workspace = true
+puffin.workspace = true
+
+[lints.rust]
+# `--cfg calyx_no_profiling` compiles the profiler's CPU scopes out; see `profiler`.
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(calyx_no_profiling)'] }
 
 [dev-dependencies]

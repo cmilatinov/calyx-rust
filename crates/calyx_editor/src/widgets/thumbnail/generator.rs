@@ -283,6 +283,7 @@ impl ThumbnailGenerator {
                             shadows: false,
                             // Thumbnails show the lit image.
                             gbuffer_view: None,
+                            profile_name: "Thumbnail",
                         },
                         (size_px, size_px),
                     )

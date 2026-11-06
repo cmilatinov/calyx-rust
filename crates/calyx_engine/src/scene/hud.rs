@@ -10,12 +10,17 @@ impl Scene {
     /// the scene holds disabled. Returns `None` when no component draws
     /// anything.
     pub fn build_hud(&self, ui: &mut UiArena, viewport: UiRect) -> Option<UiNodeHandle> {
+        crate::profile_scope!("HUD build");
         let registry = self.registries().components.read();
         let objects: Vec<_> = self.objects().collect();
         let layers: Vec<UiNodeHandle> = registry
             .components_with_hud()
             .flat_map(|(type_uuid, hook)| {
                 let prototype = registry.component(type_uuid);
+                crate::profile_scope!(
+                    "HUD hook",
+                    super::scene::hook_label(self.registries(), type_uuid)
+                );
                 objects
                     .iter()
                     .filter(|&&game_object| self.runs_hooks(game_object, prototype))
@@ -74,6 +79,7 @@ impl SceneHud {
         rect: egui::Rect,
         input: UiInput,
     ) {
+        crate::profile_scope!("HUD");
         let viewport = UiRect::from_min_size(
             UiPoint::new(rect.min.x, rect.min.y),
             UiSize::new(rect.width(), rect.height()),

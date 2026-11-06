@@ -1,6 +1,7 @@
 use std::collections::VecDeque;
 use std::path::PathBuf;
 
+use calyx_engine::profiler::{self, RangeReport};
 use calyx_engine::render::{ReadbackPoll, TextureReadback};
 use calyx_remote_protocol::{ErrorKind, ResponseEnvelope};
 
@@ -35,6 +36,16 @@ pub enum PendingOp {
         slot: ResponseSlot,
         done_at_frame: u64,
     },
+    /// Waiting for the profiler to capture `frames` frames from `first` on
+    /// and for the GPU to report them; turns capture off again at the end
+    /// when `stop_capture` is set.
+    ReadProfile {
+        slot: ResponseSlot,
+        first: u64,
+        frames: u32,
+        stop_capture: bool,
+        deadline_frame: u64,
+    },
     /// Waiting for a scene/game texture readback to complete, then writing the
     /// PNG.
     TextureShot {
@@ -52,6 +63,7 @@ impl PendingOp {
             PendingOp::StepFrames { slot, .. }
             | PendingOp::InputDrain { slot, .. }
             | PendingOp::WaitFrames { slot, .. }
+            | PendingOp::ReadProfile { slot, .. }
             | PendingOp::TextureShot { slot, .. } => slot,
         }
     }
@@ -88,6 +100,10 @@ pub struct RemoteRuntime {
     pub last_game_rect: Option<egui::Rect>,
     /// Viewport panel image rect captured the same way.
     pub last_viewport_rect: Option<egui::Rect>,
+    /// The [`profiler::capture_changes`] count of the last time a
+    /// `read_profile` turned capture on. While it is still current, nobody
+    /// else has asked for capture since, and the reads may turn it back off.
+    read_capture: Option<u64>,
 }
 
 impl RemoteRuntime {
@@ -102,6 +118,7 @@ impl RemoteRuntime {
             pending_window_shots: Vec::new(),
             last_game_rect: None,
             last_viewport_rect: None,
+            read_capture: None,
         }
     }
 
@@ -182,7 +199,11 @@ impl RemoteRuntime {
             .pending
             .iter()
             .any(|op| op.slot().client == client && matches!(op, PendingOp::StepFrames { .. }));
+        let owed_capture_stop = self.owes_capture_stop();
         self.pending.retain(|op| op.slot().client != client);
+        if owed_capture_stop {
+            self.stop_capture_unless_reading();
+        }
         self.pending_window_shots
             .retain(|shot| shot.slot.client != client);
         had_step
@@ -238,6 +259,34 @@ impl RemoteRuntime {
                         finished.push((index, Ok(serde_json::Value::Null)));
                     }
                 }
+                PendingOp::ReadProfile {
+                    first,
+                    frames,
+                    deadline_frame,
+                    ..
+                } => {
+                    let timed_out = frame_index >= *deadline_frame;
+                    match profiler::report_range(*first, *frames as usize) {
+                        RangeReport::Ready { report, complete } if complete || timed_out => {
+                            finished.push((index, profile_json(&report)));
+                        }
+                        RangeReport::Missing => finished.push((
+                            index,
+                            Err((
+                                ErrorKind::Internal,
+                                "the profiler no longer holds the requested frames".to_string(),
+                            )),
+                        )),
+                        _ if timed_out => finished.push((
+                            index,
+                            Err((
+                                ErrorKind::Timeout,
+                                "the profiled frames did not finish in time".to_string(),
+                            )),
+                        )),
+                        _ => {}
+                    }
+                }
                 PendingOp::TextureShot {
                     path,
                     readback,
@@ -267,12 +316,13 @@ impl RemoteRuntime {
 
         for (index, result) in finished.into_iter().rev() {
             let op = self.pending.swap_remove(index);
-            let slot = match &op {
-                PendingOp::StepFrames { slot, .. }
-                | PendingOp::InputDrain { slot, .. }
-                | PendingOp::WaitFrames { slot, .. }
-                | PendingOp::TextureShot { slot, .. } => slot,
-            };
+            if let PendingOp::ReadProfile {
+                stop_capture: true, ..
+            } = op
+            {
+                self.stop_capture_unless_reading();
+            }
+            let slot = op.slot();
             match result {
                 Ok(data) => self.respond_ok(slot, data),
                 Err((kind, message)) => self.respond_error(slot, kind, message),
@@ -281,6 +331,83 @@ impl RemoteRuntime {
 
         pause_simulation
     }
+}
+
+impl RemoteRuntime {
+    /// Starts a `read_profile` of the next `frames` frames for `slot`,
+    /// turning capture on for them when it is off. A window longer than the
+    /// profiler's history could never be reported whole, so it is refused.
+    pub fn push_profile_read(
+        &mut self,
+        slot: ResponseSlot,
+        frames: u32,
+    ) -> Result<(), (ErrorKind, String)> {
+        if frames as usize > profiler::HISTORY_FRAMES {
+            return Err((
+                ErrorKind::BadRequest,
+                format!(
+                    "frames must be at most {}, the frames the profiler keeps",
+                    profiler::HISTORY_FRAMES
+                ),
+            ));
+        }
+        let frames = frames.max(1);
+        // A read that finds capture off turns it on and owes turning it off.
+        // One that finds it on leaves it on, unless reads turned it on and
+        // nobody has asked for capture since.
+        let stop_capture = if profiler::capture_requested() {
+            self.owes_capture_stop() && self.reads_own_capture()
+        } else {
+            self.read_capture = Some(profiler::set_capture(true));
+            true
+        };
+        self.pending.push(PendingOp::ReadProfile {
+            slot,
+            first: profiler::first_captured_frame(),
+            frames,
+            stop_capture,
+            deadline_frame: self.frame_index + u64::from(frames) + PROFILE_GPU_DEADLINE_FRAMES,
+        });
+        Ok(())
+    }
+
+    /// Whether a pending `read_profile` turned capture on and will turn it
+    /// off again.
+    fn owes_capture_stop(&self) -> bool {
+        self.pending.iter().any(|op| {
+            matches!(
+                op,
+                PendingOp::ReadProfile {
+                    stop_capture: true,
+                    ..
+                }
+            )
+        })
+    }
+
+    /// Whether capture is as the last read that turned it on left it: no
+    /// one has started or stopped it since.
+    fn reads_own_capture(&self) -> bool {
+        self.read_capture == Some(profiler::capture_changes())
+    }
+
+    /// Turns capture off once no `read_profile` is waiting on it, unless
+    /// someone asked for capture after the reads turned it on.
+    fn stop_capture_unless_reading(&self) {
+        if !self.owes_capture_stop() && self.reads_own_capture() {
+            profiler::set_capture(false);
+        }
+    }
+}
+
+/// How many frames past its last profiled frame a `read_profile` waits for
+/// the GPU's timings before it answers without the missing ones.
+const PROFILE_GPU_DEADLINE_FRAMES: u64 = 60;
+
+fn profile_json(
+    report: &profiler::ProfileReport,
+) -> Result<serde_json::Value, (ErrorKind, String)> {
+    serde_json::to_value(report).map_err(|error| (ErrorKind::Internal, error.to_string()))
 }
 
 /// Writes `image` to `path` as PNG, creating parent directories, and returns
@@ -435,6 +562,63 @@ pub(crate) mod tests {
         runtime.cancel_steps_unless_running(false);
         assert!(!runtime.has_pending_step());
         assert_eq!(runtime.pending.len(), 1, "the wait must survive");
+    }
+
+    /// The only test of this binary that touches the profiler's capture.
+    #[test]
+    fn profile_reads_turn_capture_on_for_themselves_and_back_off() {
+        profiler::set_capture(false);
+        let mut runtime = test_runtime();
+        let first = ResponseSlot {
+            client: 1,
+            request_id: 1,
+        };
+        let second = ResponseSlot {
+            client: 2,
+            request_id: 1,
+        };
+        runtime.push_profile_read(first, 10).unwrap();
+        runtime.push_profile_read(second, 10).unwrap();
+        assert!(profiler::capture_requested());
+        runtime.drop_client(first.client);
+        assert!(
+            profiler::capture_requested(),
+            "the second read still needs capture"
+        );
+        runtime.drop_client(second.client);
+        assert!(!profiler::capture_requested());
+
+        profiler::set_capture(true);
+        runtime.push_profile_read(first, 10).unwrap();
+        runtime.drop_client(first.client);
+        assert!(
+            profiler::capture_requested(),
+            "a read that found capture on leaves it on"
+        );
+
+        profiler::set_capture(false);
+        runtime.push_profile_read(first, 10).unwrap();
+        profiler::set_capture(true);
+        runtime.drop_client(first.client);
+        assert!(
+            profiler::capture_requested(),
+            "a capture started during a read outlasts the read"
+        );
+        profiler::set_capture(false);
+    }
+
+    #[test]
+    fn a_profile_read_longer_than_the_history_is_refused() {
+        let mut runtime = test_runtime();
+        let slot = ResponseSlot {
+            client: 1,
+            request_id: 1,
+        };
+        let frames = profiler::HISTORY_FRAMES as u32 + 1;
+        let (kind, message) = runtime.push_profile_read(slot, frames).unwrap_err();
+        assert_eq!(kind, ErrorKind::BadRequest);
+        assert!(message.contains("600"), "{message}");
+        assert!(runtime.pending.is_empty());
     }
 
     #[test]

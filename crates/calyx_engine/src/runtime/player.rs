@@ -2,6 +2,7 @@ use crate::context::{AssetContext, GameContext, UpdatedScene};
 use crate::error::DynError;
 use crate::input::Input;
 use crate::logging::{DefaultLogger, Log};
+use crate::profiler;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::{SceneRenderer, SceneRendererOptions};
 use crate::runtime::{
@@ -38,6 +39,12 @@ impl GameApp {
         let startup_scene = settings
             .startup_scene_path()
             .ok_or("the project does not configure a startup scene")?;
+        if let Some(render_state) = &cc.wgpu_render_state {
+            profiler::gpu::install(&render_state.device, &render_state.queue);
+        }
+        if std::env::var_os(PROFILE_ENV).is_some() {
+            profiler::set_capture(true);
+        }
         let assets = AssetContext::new(cc, settings.assets_directory())?;
         {
             let mut type_registry = assets.registries.types.write();
@@ -102,6 +109,10 @@ impl GameApp {
 
 impl eframe::App for GameApp {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
+        profiler::new_frame();
+        log_profile();
+        crate::profile_scope!("Player update");
+        profiler::time_ui_pass(ctx);
         self.game.update();
 
         let texture_id = self
@@ -170,6 +181,24 @@ impl eframe::App for GameApp {
     }
 }
 
+/// Environment variable that turns profiling on in the player, which then
+/// logs a profile of the last [`PROFILE_LOG_FRAMES`] frames every as many
+/// frames.
+const PROFILE_ENV: &str = "CALYX_PROFILE";
+const PROFILE_LOG_FRAMES: u64 = 600;
+
+fn log_profile() {
+    let frame = profiler::current_frame();
+    if !profiler::is_capturing() || frame == 0 || !frame.is_multiple_of(PROFILE_LOG_FRAMES) {
+        return;
+    }
+    let report = profiler::report(PROFILE_LOG_FRAMES as usize);
+    match serde_json::to_string(&report) {
+        Ok(json) => log::info!("Profile of the last {} frames: {json}", report.frames),
+        Err(error) => log::warn!("Failed to serialize the profile: {error}"),
+    }
+}
+
 /// How the player renders the scene: like the editor's Game panel, without
 /// the editor grid.
 fn renderer_options() -> SceneRendererOptions {
@@ -178,6 +207,7 @@ fn renderer_options() -> SceneRendererOptions {
         // Lights that cast shadows keep them in the player, as in the
         // editor's game view.
         shadows: true,
+        profile_name: "Game",
         ..Default::default()
     }
 }
