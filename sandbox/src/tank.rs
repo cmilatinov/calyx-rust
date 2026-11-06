@@ -1,10 +1,11 @@
-use crate::combat::{record_kill, KillEvent};
+mod health_trail;
+use crate::combat::{record_damage, record_kill, ComponentCombatStats, KillEvent};
 use crate::spawn::ComponentRespawnState;
 use crate::tank_camera::{cursor_ground_point, update_tank_camera};
 use calyx_engine::component::{
     ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentRef,
-    ComponentRigidBody, ComponentTransform, ComponentUpdate, ReflectComponent,
-    ReflectComponentUpdate,
+    ComponentRigidBody, ComponentStart, ComponentTransform, ComponentUpdate, ReflectComponent,
+    ReflectComponentStart, ReflectComponentUpdate,
 };
 use calyx_engine::core::TimeType;
 use calyx_engine::input::Input;
@@ -14,6 +15,7 @@ use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::GameObjectRef;
 use calyx_engine::scene::Scene;
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+pub use health_trail::HealthDamageTrail;
 use legion::Entity;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, Vec3};
@@ -156,7 +158,7 @@ impl ComponentUpdate for ComponentProjectile {
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "f2c31eb5-c999-4125-9cb0-a72a238eca2e"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentStart)]
 #[reflect_attr(name = "Projectile Target")]
 #[serde(default)]
 pub struct ComponentProjectileTarget {
@@ -174,10 +176,27 @@ impl Default for ComponentProjectileTarget {
 }
 
 impl Component for ComponentProjectileTarget {}
+impl ComponentStart for ComponentProjectileTarget {
+    fn start(
+        _this: ComponentRef<Self>,
+        ComponentEventContext {
+            scene, game_object, ..
+        }: ComponentEventContext,
+    ) {
+        // Every damageable combatant participates, including authored training
+        // targets. Preserve explicit team/scoring settings on existing stats.
+        if scene
+            .read_component::<ComponentCombatStats, _, _>(game_object, |_| ())
+            .is_none()
+        {
+            scene.add_component(game_object, ComponentCombatStats::default());
+        }
+    }
+}
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "8f0175f4-1a76-4c43-8932-6462f9005ab4"]
-#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
 #[reflect_attr(name = "Health")]
 #[serde(default)]
 pub struct ComponentHealth {
@@ -185,6 +204,9 @@ pub struct ComponentHealth {
     pub current_health: f32,
     pub destroy_on_death: bool,
     pub dead: bool,
+    #[serde(skip)]
+    #[reflect_skip]
+    pub damage_trail: HealthDamageTrail,
 }
 
 impl Default for ComponentHealth {
@@ -194,20 +216,42 @@ impl Default for ComponentHealth {
             current_health: 100.0,
             destroy_on_death: false,
             dead: false,
+            damage_trail: Default::default(),
         }
     }
 }
 
 impl Component for ComponentHealth {}
+impl ComponentUpdate for ComponentHealth {
+    fn update(
+        this: ComponentRef<Self>,
+        ComponentEventContext { scene, .. }: ComponentEventContext,
+        resources: &mut ResourceMap,
+        _input: &Input,
+    ) {
+        let _ = this.write(scene, |health| {
+            health.damage_trail.advance(
+                resources.time().delta_time(),
+                health.current_health,
+                health.max_health,
+                health.dead,
+            )
+        });
+    }
+}
 
 impl ComponentHealth {
     fn apply_damage(&mut self, amount: f32) -> bool {
-        if self.dead || amount <= 0.0 {
+        if self.dead || !amount.is_finite() || amount <= 0.0 {
             return self.dead;
         }
 
+        self.damage_trail
+            .observe(self.current_health, self.max_health, self.dead);
         self.current_health = (self.current_health - amount).max(0.0);
         self.dead = self.current_health <= f32::EPSILON;
+        self.damage_trail
+            .observe(self.current_health, self.max_health, self.dead);
         self.dead
     }
 
@@ -215,6 +259,68 @@ impl ComponentHealth {
         self.max_health = self.max_health.max(0.0);
         self.current_health = self.max_health;
         self.dead = false;
+        self.damage_trail
+            .reset(self.current_health, self.max_health, self.dead);
+    }
+}
+
+#[cfg(test)]
+mod health_trail_tests {
+    use super::*;
+    fn advance(h: &mut ComponentHealth, dt: f32) {
+        h.damage_trail
+            .advance(dt, h.current_health, h.max_health, h.dead);
+    }
+
+    fn edge(h: &ComponentHealth) -> f32 {
+        h.damage_trail.edge(h.current_health, h.max_health, h.dead)
+    }
+
+    #[test]
+    fn damage_chunk_holds_drains_and_restarts_from_the_current_edge() {
+        let mut h = ComponentHealth::default();
+        h.apply_damage(40.0);
+        assert_eq!(edge(&h), 100.0);
+        advance(&mut h, 0.30);
+        assert_eq!(edge(&h), 100.0);
+        for invalid in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+            h.apply_damage(invalid);
+        }
+        advance(&mut h, 0.35);
+        assert!((edge(&h) - 80.0).abs() < 0.001);
+        h.apply_damage(20.0);
+        assert_eq!(h.current_health, 40.0);
+        assert!((edge(&h) - 80.0).abs() < 0.001);
+        advance(&mut h, 0.35);
+        assert!((edge(&h) - 80.0).abs() < 0.001);
+        advance(&mut h, 0.30);
+        assert!((edge(&h) - 60.0).abs() < 0.001);
+        advance(&mut h, 0.31);
+        assert_eq!(edge(&h), 40.0);
+    }
+
+    #[test]
+    fn healing_death_respawn_and_deserialization_clear_damage_chunks() {
+        let mut h = ComponentHealth::default();
+        h.apply_damage(40.0);
+        h.current_health = 75.0;
+        assert_eq!(edge(&h), 75.0);
+        advance(&mut h, 0.1);
+        assert_eq!(edge(&h), 75.0);
+        h.apply_damage(20.0);
+        h.restore_full();
+        assert_eq!(edge(&h), 100.0);
+        h.apply_damage(100.0);
+        assert!(h.dead);
+        assert_eq!(edge(&h), 0.0);
+        h.restore_full();
+        assert!(!h.dead);
+        assert_eq!(edge(&h), 100.0);
+        h.apply_damage(30.0);
+        let saved = serde_json::to_value(h).unwrap();
+        assert!(saved.get("damage_trail").is_none());
+        let loaded: ComponentHealth = serde_json::from_value(saved).unwrap();
+        assert_eq!(edge(&loaded), 70.0);
     }
 }
 
@@ -796,10 +902,10 @@ fn update_projectile(
     // target only takes damage when it is reached before the first obstacle.
     let obstacle_time = first_obstacle_time(scene, start, end, projectile.radius);
     let reach = obstacle_time.map_or(end, |time| start + (end - start) * time);
+    let shooter = projectile.shooter.game_object(scene);
     if let Some((target, hit_position)) =
-        first_projectile_hit(scene, game_object, start, reach, projectile.radius)
+        first_projectile_hit(scene, game_object, shooter, start, reach, projectile.radius)
     {
-        let shooter = projectile.shooter.game_object(scene);
         crate::combat_vfx::spawn_impact(scene, hit_position, true);
         apply_projectile_damage(scene, target, projectile.damage, shooter);
         scene.delete(game_object);
@@ -867,14 +973,20 @@ fn apply_projectile_damage(
     let mut died = false;
     let mut killed = false;
     let mut should_destroy = false;
+    let mut removed = 0.0;
+    let mut max_health = 0.0;
     let damaged_health = scene
         .write_component::<ComponentHealth, _>(target, |health| {
             let was_dead = health.dead;
+            let previous = health.current_health;
             died = health.apply_damage(damage);
+            removed = (previous - health.current_health).max(0.0);
+            max_health = health.max_health;
             killed = died && !was_dead;
             should_destroy = died && health.destroy_on_death;
         })
         .is_some();
+    record_damage(scene, target, shooter, removed, max_health);
     if killed {
         let event = KillEvent::new(scene, shooter, target);
         record_kill(scene, &event);
@@ -898,16 +1010,20 @@ fn apply_projectile_damage(
     }
 }
 
+/// The first projectile target the round's path enters, never the round
+/// itself or whoever fired it: a round leaves its shooter from inside the
+/// shooter's own hit sphere.
 fn first_projectile_hit(
     scene: &calyx_engine::scene::Scene,
     projectile_object: calyx_engine::scene::GameObject,
+    shooter: Option<calyx_engine::scene::GameObject>,
     start: Vec3,
     end: Vec3,
     projectile_radius: f32,
 ) -> Option<(calyx_engine::scene::GameObject, Vec3)> {
     scene
         .objects()
-        .filter(|&candidate| candidate != projectile_object)
+        .filter(|&candidate| candidate != projectile_object && Some(candidate) != shooter)
         .find_map(|candidate| {
             scene
                 .read_component::<ComponentProjectileTarget, _, _>(candidate, |target| {
@@ -1845,6 +1961,7 @@ mod tests {
             }),
             None,
         );
+        scene.add_component(tank, ComponentTankController::default());
         scene.add_component(tank, ComponentCombatStats::default());
         scene.add_component(tank, ComponentKillFeed::default());
         let target = scene.create(
@@ -2033,5 +2150,59 @@ mod tests {
         assert_eq!(health.current_health, health.max_health);
         assert!(!state.death_requested);
         assert_eq!(state.respawn_remaining, 1.0);
+    }
+
+    #[test]
+    fn confirmed_damage_feedback_rejects_invalid_dead_and_immune_hits_and_clamps_overkill() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let shooter = scene.create(None, None);
+        let victim = scene.create(None, None);
+        scene.add_component(shooter, ComponentTankController::default());
+        scene.add_component(shooter, ComponentCombatStats::default());
+        scene.add_component(victim, ComponentHealth::default());
+        for amount in [0.0, -2.0, f32::NAN, f32::INFINITY] {
+            super::apply_projectile_damage(&mut scene, victim, amount, Some(shooter));
+        }
+        assert_eq!(
+            scene.read_component::<ComponentHealth, _, _>(victim, |health| health.current_health),
+            Some(100.0)
+        );
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats
+                .feedback
+                .len()),
+            Some(0)
+        );
+        scene.add_component(
+            victim,
+            ComponentRespawnState {
+                invulnerability_remaining: 1.0,
+                ..Default::default()
+            },
+        );
+        super::apply_projectile_damage(&mut scene, victim, 35.0, Some(shooter));
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats
+                .feedback
+                .len()),
+            Some(0)
+        );
+        scene.write_component::<ComponentRespawnState, _>(victim, |state| {
+            state.invulnerability_remaining = 0.0
+        });
+        super::apply_projectile_damage(&mut scene, victim, 150.0, Some(shooter));
+        super::apply_projectile_damage(&mut scene, victim, 150.0, Some(shooter));
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats
+                .feedback
+                .iter()
+                .map(|hit| hit.amount)
+                .collect::<Vec<_>>()),
+            Some(vec![100.0])
+        );
+        assert_eq!(
+            scene.read_component::<ComponentCombatStats, _, _>(shooter, |stats| stats.kills),
+            Some(1)
+        );
     }
 }

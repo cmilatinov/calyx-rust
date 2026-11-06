@@ -65,7 +65,7 @@ enum Action {
     Shutdown,
     /// Start or resume simulation.
     Play {
-        /// Run this scene file instead of the project's startup scene on a
+        /// Run this scene file instead of the editor's open scene on a
         /// fresh start.
         #[arg(long)]
         scene: Option<PathBuf>,

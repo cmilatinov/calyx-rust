@@ -1,128 +1,109 @@
-//! The kill feed: the latest kills, newest at the top, fading as they age.
-
-use super::{hud_text, HudStyle};
-use crate::combat::ComponentKillFeed;
+//! Confirmed kills: team colours for tanks, neutral attribution for hazards.
+use super::paint::{alpha, Painter, CYAN, LIGHT, MUTED, RED, STEEL};
+use crate::combat::{combat_team, ComponentKillFeed};
 use calyx_engine::scene::{GameObject, Scene};
-use calyx_engine::ui::{
-    AlignItems, Border, CornerRadius, EdgeInsets, PointerEvents, StylePatch, UiArena, UiLength,
-    UiNodeHandle, Widget,
-};
+use calyx_engine::ui::UiColor;
 
-/// One kill feed line as the HUD draws it.
-#[derive(Clone, Debug, PartialEq)]
-pub(crate) struct KillFeedLine {
-    pub killer: Option<String>,
-    pub victim: String,
-    pub opacity: f32,
-}
-
-/// The lines of the kill feed on `game_object`, newest first; none when it
-/// has no feed.
-pub(crate) fn kill_feed_lines(scene: &Scene, game_object: GameObject) -> Vec<KillFeedLine> {
-    scene
-        .read_component::<ComponentKillFeed, _, _>(game_object, |feed| {
-            feed.entries()
-                .map(|entry| KillFeedLine {
-                    killer: entry.killer.clone(),
-                    victim: entry.victim.clone(),
-                    opacity: feed.opacity(entry),
-                })
-                .filter(|line| line.opacity > 0.0)
-                .collect()
-        })
-        .unwrap_or_default()
-}
-
-const FONT_SIZE: f32 = 13.0;
-const PADDING_X: f32 = 10.0;
-const PADDING_Y: f32 = 5.0;
-const GAP: f32 = 5.0;
-
-/// A width that fits `text` at `font_size` in the HUD's proportional font.
-/// Layout cannot measure glyphs, and its own estimate of half the font size
-/// per character runs short of capitals, so the parts of a line would
-/// overlap.
-fn estimated_text_width(text: &str, font_size: f32) -> f32 {
-    text.chars()
-        .map(|character| {
-            if character.is_whitespace() {
-                0.3
-            } else if character.is_lowercase() {
-                0.56
-            } else {
-                0.7
+pub(super) fn paint_feed(
+    p: &mut Painter,
+    scene: &Scene,
+    player: GameObject,
+    x: f32,
+    y: f32,
+    w: f32,
+    h: f32,
+) {
+    let team = combat_team(scene, player);
+    let _ = scene.read_component::<ComponentKillFeed, _, _>(player, |feed| {
+        for (index, entry) in feed.entries().take(2).enumerate() {
+            let opacity = feed.opacity(entry);
+            let y = y + index as f32 * (h + 7.0);
+            let start = p.commands.len();
+            let color = |other| match other {
+                None => MUTED,
+                Some(t) if Some(t) == team => CYAN,
+                _ => RED,
+            };
+            let kc = color(entry.killer_team);
+            let vc = color(entry.victim_team);
+            let slant = h * 0.23;
+            for (inset, c) in [(0.0, STEEL), (2.0, UiColor::rgba(10, 19, 28, 225))] {
+                p.polygon(
+                    &[
+                        (x + slant + inset, y + inset),
+                        (x + w - inset, y + inset),
+                        (x + w - slant - inset, y + h - inset),
+                        (x + inset, y + h - inset),
+                    ],
+                    c,
+                );
             }
-        })
-        .sum::<f32>()
-        * font_size
-}
-
-pub(super) struct KillFeedHud<'a> {
-    pub style: HudStyle,
-    pub lines: &'a [KillFeedLine],
-    pub width: f32,
-    pub margin: EdgeInsets,
-}
-
-impl Widget for KillFeedHud<'_> {
-    fn build(&self, ui: &mut UiArena) -> UiNodeHandle {
-        let style = self.style;
-        let rows: Vec<UiNodeHandle> = self
-            .lines
-            .iter()
-            .enumerate()
-            .map(|(index, line)| {
-                let fade = |color: calyx_engine::ui::UiColor| color.with_alpha(line.opacity);
-                let mut width = PADDING_X * 2.0;
-                let mut text = |ui: &mut UiArena, part: &str, value: &str, color| {
-                    let part_width = estimated_text_width(value, FONT_SIZE);
-                    width += part_width;
-                    hud_text(
-                        ui,
-                        format!("hud-kill-feed-{index}-{part}"),
-                        value,
-                        style.value_style(fade(color), FONT_SIZE),
-                    )
-                    .width(ui, UiLength::Px(part_width))
-                };
-                // "<killer> destroyed <victim>", or "<victim> was destroyed"
-                // when nobody gets the kill.
-                let parts = match &line.killer {
-                    Some(killer) => vec![
-                        text(ui, "killer", &killer.to_uppercase(), style.ammo),
-                        text(ui, "verb", "destroyed", style.muted),
-                        text(ui, "victim", &line.victim.to_uppercase(), style.text),
-                    ],
-                    None => vec![
-                        text(ui, "victim", &line.victim.to_uppercase(), style.text),
-                        text(ui, "verb", "was destroyed", style.muted),
-                    ],
-                };
-                width += GAP * (parts.len() - 1) as f32;
-                ui.row()
-                    .id(ui, format!("hud-kill-feed-{index}"))
-                    .style(
-                        ui,
-                        StylePatch::default()
-                            .background(fade(style.panel))
-                            .border(Border::solid(fade(style.outline), 1.0))
-                            .radius(CornerRadius::all(3.0))
-                            .padding(EdgeInsets::symmetric(PADDING_X, PADDING_Y))
-                            .gap(GAP)
-                            .pointer_events(PointerEvents::None),
-                    )
-                    .width(ui, UiLength::Px(width.min(self.width)))
-                    .height(ui, UiLength::Px(FONT_SIZE * 1.25 + PADDING_Y * 2.0))
-                    .children(ui, parts)
-            })
-            .collect();
-        ui.column()
-            .id(ui, "hud-kill-feed")
-            .gap(ui, 4.0)
-            .align_items(ui, AlignItems::End)
-            .width(ui, UiLength::Px(self.width))
-            .margin(ui, self.margin)
-            .pointer_events(ui, PointerEvents::None)
-            .children(ui, rows)
-    }
+            p.polygon(
+                &[
+                    (x + slant, y + 2.0),
+                    (x + slant + 12.0, y + 2.0),
+                    (x + 14.0, y + h - 2.0),
+                    (x + 2.0, y + h - 2.0),
+                ],
+                kc,
+            );
+            p.polygon(
+                &[
+                    (x + w - 14.0, y + 2.0),
+                    (x + w - 2.0, y + 2.0),
+                    (x + w - slant, y + h - 2.0),
+                    (x + w - slant - 12.0, y + h - 2.0),
+                ],
+                vc,
+            );
+            let icon_scale = (h * 0.55) / 24.0;
+            let center = x + w * 0.5;
+            p.tank(center - 29.0 * icon_scale, y + h * 0.23, icon_scale, LIGHT);
+            p.polygon(
+                &[
+                    (center + 27.0 * icon_scale, y + h * 0.38),
+                    (center + 33.0 * icon_scale, y + h * 0.5),
+                    (center + 27.0 * icon_scale, y + h * 0.62),
+                ],
+                LIGHT,
+            );
+            p.middle(
+                x + w * 0.23,
+                y + h * 0.5,
+                entry.killer.as_deref().unwrap_or("Environment"),
+                h * 0.58,
+                kc,
+                Some(w * 0.32),
+            );
+            p.middle(
+                x + w * 0.78,
+                y + h * 0.5,
+                &entry.victim,
+                h * 0.58,
+                vc,
+                Some(w * 0.32),
+            );
+            for command in &mut p.commands[start..] {
+                use calyx_engine::ui::PaintCommand::*;
+                match command {
+                    FillRect { color, .. }
+                    | FillPolygon { color, .. }
+                    | Text { color, .. }
+                    | Line { color, .. } => *color = alpha(*color, opacity),
+                    Label(label) => {
+                        label.color = alpha(label.color, opacity);
+                        if let Some(outline) = &mut label.outline {
+                            outline.color = alpha(outline.color, opacity);
+                        }
+                    }
+                    ColorMesh { colors, .. } => {
+                        for c in colors {
+                            *c = alpha(*c, opacity)
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+    });
 }

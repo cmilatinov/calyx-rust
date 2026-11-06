@@ -96,10 +96,11 @@ impl ProjectManager {
         self.runtime_settings.runtime()
     }
 
-    /// Starts the shared runtime from `scene`, or else from the project's
-    /// configured startup scene.
+    /// Starts the shared runtime from `scene`, or else from the scene open
+    /// in the editor, unsaved edits included.
     ///
-    /// Without either, the current editor scene runs as it is.
+    /// The project's startup scene is for the standalone player; the editor
+    /// plays what it is editing.
     pub fn start_simulation(
         &self,
         scenes: &mut SceneManager,
@@ -109,11 +110,11 @@ impl ProjectManager {
             scenes.start_simulation();
             return Ok(None);
         }
-        let Some(path) = scene.or_else(|| self.runtime_settings.startup_scene_path()) else {
+        let Some(path) = scene else {
             scenes.start_simulation();
             return Ok(None);
         };
-        if configured_scene_is_current(scenes, &path) {
+        if scene_is_current(scenes, &path) {
             scenes.start_simulation();
             return Ok(Some(path));
         }
@@ -507,18 +508,18 @@ fn build_assembly(
     }
 }
 
-fn configured_scene_is_current(scenes: &SceneManager, startup_scene: &Path) -> bool {
-    scene_paths_match(scenes.current_scene_meta().file.as_deref(), startup_scene)
+fn scene_is_current(scenes: &SceneManager, scene: &Path) -> bool {
+    scene_paths_match(scenes.current_scene_meta().file.as_deref(), scene)
 }
 
-fn scene_paths_match(current_scene: Option<&Path>, startup_scene: &Path) -> bool {
+fn scene_paths_match(current_scene: Option<&Path>, scene: &Path) -> bool {
     let Some(current_scene) = current_scene else {
         return false;
     };
-    current_scene == startup_scene
+    current_scene == scene
         || matches!(
-            (dunce::canonicalize(current_scene), dunce::canonicalize(startup_scene)),
-            (Ok(current_scene), Ok(startup_scene)) if current_scene == startup_scene
+            (dunce::canonicalize(current_scene), dunce::canonicalize(scene)),
+            (Ok(current_scene), Ok(scene)) if current_scene == scene
         )
 }
 
@@ -1202,11 +1203,10 @@ mod tests {
         fs::remove_dir_all(root).unwrap();
     }
 
-    /// Editor play starts the startup scene a project's `project.toml` names,
-    /// for any project: this one is generated on the fly, with no sandbox
-    /// paths or constants.
+    /// Editor play runs the scene open in the editor, not the startup scene
+    /// a project's `project.toml` names for the standalone player.
     #[test]
-    fn editor_play_runs_the_startup_scene_named_in_project_configuration() {
+    fn editor_play_runs_the_open_scene_rather_than_the_startup_scene() {
         use super::ProjectManager;
         use crate::scene_file::write_scene_file;
         use calyx_engine::component::ComponentID;
@@ -1283,7 +1283,7 @@ height = 600
             .unwrap();
         game.scenes.start_simulation();
 
-        assert_eq!(started.as_deref(), Some(startup_path.as_path()));
+        assert_eq!(started, None);
         assert!(game.scenes.is_simulating());
         let names = |scene: &calyx_engine::scene::Scene| {
             scene
@@ -1291,13 +1291,10 @@ height = 600
                 .map(|object| scene.name(object))
                 .collect::<Vec<_>>()
         };
-        assert_eq!(
-            names(game.scenes.simulation_scene()),
-            ["Configured startup object"]
-        );
+        assert_eq!(names(game.scenes.simulation_scene()), ["Authoring object"]);
         assert_eq!(names(game.scenes.current_scene()), ["Authoring object"]);
 
-        // The configured scene runs a frame like any other simulation.
+        // The open scene runs a frame like any other simulation.
         let input_context = egui::Context::default();
         let input = Input::from_ctx(&input_context, None, game.resources.input_mut(), false);
         let assets = game.assets.lock_read();
@@ -1308,7 +1305,7 @@ height = 600
         game.scenes.stop_simulation();
         assert!(!game.scenes.is_simulating());
 
-        // A scene named for the run replaces the startup scene.
+        // A scene named for the run replaces the open scene.
         let started = project
             .read()
             .start_simulation(&mut game.scenes, Some(other_path.clone()))

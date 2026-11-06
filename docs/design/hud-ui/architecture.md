@@ -4,6 +4,7 @@ Related guidance:
 
 - [Runtime and backend](runtime.md)
 - [Testing strategy](testing.md)
+- [HUD visual direction and concepts](visual-direction.md)
 
 ## Goals
 

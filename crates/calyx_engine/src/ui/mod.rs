@@ -7,6 +7,7 @@ pub mod layout;
 pub mod paint;
 pub mod runtime;
 pub mod style;
+pub mod text;
 pub mod widgets;
 
 pub use backend::*;
@@ -16,6 +17,7 @@ pub use layout::*;
 pub use paint::*;
 pub use runtime::*;
 pub use style::*;
+pub use text::*;
 pub use widgets::*;
 
 #[cfg(test)]

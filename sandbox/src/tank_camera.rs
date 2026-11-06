@@ -187,7 +187,12 @@ pub(crate) fn update_tank_camera(
         0.0
     };
 
-    state.target_zoom = rig.zoom_after_scroll(state.target_zoom, input.scroll_delta().y);
+    let scroll = if input.action("scoreboard").pressed() {
+        0.0
+    } else {
+        input.scroll_delta().y
+    };
+    state.target_zoom = rig.zoom_after_scroll(state.target_zoom, scroll);
     state.zoom = rig.clamp_zoom(ease(state.zoom, state.target_zoom, rig.zoom_smoothing, dt));
 
     // Aim through the camera as the lead left it, then lead from there: the

@@ -176,9 +176,26 @@ impl Author {
             _ => panic!("no collision handoff for {model}"),
         };
         for (i, (center, size)) in solids.into_iter().enumerate() {
+            let (center, size) = blocking_shells(center, size);
             self.collider(root, &format!("{name} collision {i}"), center, size);
         }
     }
+}
+
+/// Top of every obstacle collider. Rounds fly level at the gun's height,
+/// about 1.6 m with a 0.18 m radius, so cover drawn lower than that would
+/// let them pass over it.
+const SHELL_BLOCKING_TOP: f32 = 2.0;
+
+/// Stretches a solid upward to [`SHELL_BLOCKING_TOP`], keeping its bottom
+/// and footprint, so rounds stop at the obstacle instead of flying over it.
+fn blocking_shells(center: Vec3, size: Vec3) -> (Vec3, Vec3) {
+    let bottom = center.y - size.y * 0.5;
+    let top = (center.y + size.y * 0.5).max(SHELL_BLOCKING_TOP);
+    (
+        vec3(center.x, (bottom + top) * 0.5, center.z),
+        vec3(size.x, top - bottom, size.z),
+    )
 }
 
 // Clip the exported triangles to horizontal bands, keeping the rock's
@@ -473,6 +490,7 @@ fn main() {
         ("South", vec3(0.0, 0.8, -31.0), vec3(59.2, 1.6, 1.2)),
         ("North", vec3(0.0, 0.8, 31.0), vec3(59.2, 1.6, 1.2)),
     ] {
+        let (center, size) = blocking_shells(center, size);
         author.collider(arena, &format!("Arena Wall {name} collision"), center, size);
     }
 

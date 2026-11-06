@@ -26,6 +26,7 @@ mod prefab;
 pub(crate) mod prefab_link;
 mod scene_manager;
 mod scene_view;
+mod visual_bounds;
 
 // These sub-modules are pub(crate) so that Scene's internal sub-systems
 // (graph, store, transforms) can be accessed by sibling modules within

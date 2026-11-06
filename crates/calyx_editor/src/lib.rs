@@ -991,13 +991,13 @@ impl EditorApp {
 
     /// Starts or resumes simulation as the toolbar's play button does: the
     /// project's runtime window sets the game aspect, and a fresh simulation
-    /// runs the configured startup scene when the project has one.
+    /// runs the scene open in the editor.
     pub(crate) fn start_simulation(&mut self) -> Result<(), String> {
         self.start_simulation_of(None)
     }
 
     /// Starts simulation as [`Self::start_simulation`] does, running `scene`
-    /// instead of the project's startup scene on a fresh start.
+    /// instead of the open scene on a fresh start.
     pub(crate) fn start_simulation_of(&mut self, scene: Option<PathBuf>) -> Result<(), String> {
         if self.state.prefab_mode.is_open() {
             return Err(prefab_mode::PLAY_IN_PREFAB_MODE.into());

@@ -6,6 +6,7 @@ Use these files for Calyx-specific context:
 - [docs/process/planning.md](docs/process/planning.md) - roadmap source, priorities, and current product direction.
 - [docs/process/autonomy.md](docs/process/autonomy.md) - autonomous execution authority and escalation boundaries.
 - [docs/design/hud-ui/architecture.md](docs/design/hud-ui/architecture.md) - runtime HUD/UI architecture and linked requirements.
+- [docs/design/hud-ui/visual-direction.md](docs/design/hud-ui/visual-direction.md) - HUD restyling, combat overlays and scoreboard layout; the supplied visual concepts and live behavior requirements.
 - [docs/design/art/tank-game-direction.md](docs/design/art/tank-game-direction.md) - the tank game's visual style: clay + ink, map palettes, player colours, lighting, camera and asset sourcing.
 - [docs/process/toolchain.md](docs/process/toolchain.md) - the pinned nightly, moving it, and the sccache os error 206 workaround on Windows.
 - [docs/process/agent-loop.md](docs/process/agent-loop.md) - remote-controlling the editor with `calyx_ctl` to verify changes end to end.

@@ -156,7 +156,10 @@ impl PanelSceneHierarchy {
                 res
             });
         if !children.is_empty() {
-            let res = item.show_hierarchical_with_children(ui, id, true, content, |ui| {
+            // Nodes start collapsed: an expanded tree lays out every object's
+            // row each frame, which costs milliseconds in a scene of
+            // thousands of objects.
+            let res = item.show_hierarchical_with_children(ui, id, false, content, |ui| {
                 for child_node in children {
                     self.render_scene_node(scene, selection, ui, child_node, container_visible)
                 }

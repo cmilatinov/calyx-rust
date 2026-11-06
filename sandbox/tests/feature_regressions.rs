@@ -238,10 +238,11 @@ fn sandbox_scene_draws_the_tank_hud() {
         .iter()
         .filter_map(|command| match command {
             PaintCommand::Text { text, .. } => Some(text.as_str()),
+            PaintCommand::Label(label) => Some(label.text.as_str()),
             _ => None,
         })
         .collect();
-    for expected in ["HULL INTEGRITY", "100/100", "6/6", "READY"] {
+    for expected in ["N", "05:00"] {
         assert!(text.contains(&expected), "{expected} in {text:?}");
     }
 }
@@ -511,11 +512,13 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
             assert!((distance - 0.1).abs() < 0.005, "wall at z={z}: {distance}");
         }
     }
+    // Every solid rises to the shell-blocking top, so the barrier's widest
+    // foot band now meets a shot at gun height first.
     let distance = hit_distance(vec3(0.0, 0.8, 16.0), vec3(0.0, 0.0, 1.0), 6.0);
-    assert!((distance - 3.8).abs() < 0.01, "centre barrier: {distance}");
-    // The rotated sandbag stack is a thin 3/2/1 pile, not a full-depth
-    // rectangular block. The middle bag blocks a shot, but air beside the
-    // pile and beside its narrower top row must stay clear.
+    assert!((distance - 3.44).abs() < 0.01, "centre barrier: {distance}");
+    // The rotated sandbag stack is a thin pile, not a full-depth
+    // rectangular block. A shot meets the bottom row, risen to the
+    // shell-blocking top, but air beside the pile must stay clear.
     let sandbags = object_named(runner.scene(), "Arena Cover Right Sandbags");
     let sandbag_pose = runner.scene().world_transform(sandbags);
     let point = |p: Vec3| (sandbag_pose.matrix() * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz();
@@ -525,31 +528,22 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
         direction(vec3(0.0, 0.0, 1.0)),
         2.0,
     );
+    assert!((distance - 0.785).abs() < 0.01, "sandbag pile: {distance}");
+    let beside = point(vec3(2.0, 0.6, 0.35));
     assert!(
-        (distance - 0.815).abs() < 0.01,
-        "middle sandbag: {distance}"
+        runner
+            .scene()
+            .physics
+            .cast_ray(
+                beside,
+                direction(vec3(-1.0, 0.0, 0.0)),
+                4.0,
+                true,
+                QueryFilter::only_fixed()
+            )
+            .is_none(),
+        "invisible sandbag collision from {beside:?}"
     );
-    for (origin, direction, length) in [
-        (
-            point(vec3(2.0, 0.6, 0.35)),
-            direction(vec3(-1.0, 0.0, 0.0)),
-            4.0,
-        ),
-        (
-            point(vec3(0.65, 1.05, -1.0)),
-            direction(vec3(0.0, 0.0, 1.0)),
-            2.0,
-        ),
-    ] {
-        assert!(
-            runner
-                .scene()
-                .physics
-                .cast_ray(origin, direction, length, true, QueryFilter::only_fixed())
-                .is_none(),
-            "invisible sandbag collision from {origin:?}"
-        );
-    }
     // Flat tile seams and paving gaps share the same continuous floor.
     for x in [-9.0, -0.5, 0.0, 0.5, 9.0] {
         let distance = hit_distance(vec3(x, 0.1, 1.0), vec3(0.0, -1.0, 0.0), 1.0);
@@ -590,21 +584,104 @@ fn authored_rock_shoulders_stop_shells_and_crowns_leave_air() {
             .is_some(),
         "shell passed through the visible rock shoulder"
     );
-    // At this height the asymmetric crown ends before local X=.35.
+    // Beside the crown, at gun height, the rock still stops the round
+    // rather than letting it fly over the lower shoulder.
     assert!(
         runner
             .scene()
             .physics
-            .cast_ray(
-                point(vec3(0.35, 1.59, -0.4)),
+            .cast_shape(
+                ColliderShape::Sphere { radius: 0.18 },
+                point(vec3(0.35, 1.61, -0.5)),
+                nalgebra::UnitQuaternion::identity(),
                 direction,
                 1.2,
-                true,
                 QueryFilter::only_fixed(),
             )
-            .is_none(),
-        "invisible collision beside the rock crown"
+            .is_some(),
+        "shell flew over the rock beside its crown"
     );
+}
+
+/// No obstacle is low enough for a round fired from the tank's gun to fly
+/// over it: every cover, prop and wall solid rises above the shell's path.
+#[test]
+fn shells_at_gun_height_cannot_fly_over_any_obstacle() {
+    use calyx_engine::component::ColliderShape;
+    use rapier3d::pipeline::QueryFilter;
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let tank = object_named(&scene, "Tank");
+    let barrel = scene
+        .read_component::<ComponentTankController, _, _>(tank, |controller| {
+            controller.barrel.game_object(&scene)
+        })
+        .flatten()
+        .expect("sandbox tank should reference its barrel");
+    let gun_height = scene.world_transform(barrel).position.y;
+    let solids: Vec<_> = scene
+        .objects()
+        .filter(|object| {
+            let name = scene.name(*object);
+            name.starts_with("Arena ") && name.contains(" collision")
+        })
+        .collect();
+    assert!(solids.len() > 80, "{} obstacle solids", solids.len());
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.step();
+    for solid in solids {
+        let center = runner.scene().world_transform(solid).position;
+        let origin = vec3(center.x - 3.0, gun_height, center.z);
+        assert!(
+            runner
+                .scene()
+                .physics
+                .cast_shape(
+                    ColliderShape::Sphere { radius: 0.18 },
+                    origin,
+                    nalgebra::UnitQuaternion::identity(),
+                    vec3(1.0, 0.0, 0.0),
+                    3.0,
+                    QueryFilter::only_fixed(),
+                )
+                .is_some(),
+            "a shell at gun height flew over {}",
+            runner.scene().name(solid)
+        );
+    }
+}
+
+/// A sentry standing on the ground takes the player's rounds, which fly
+/// well above its origin, and is destroyed once its health runs out.
+#[test]
+fn player_rounds_destroy_a_sentry_on_the_ground() {
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let sentry = object_named(&scene, "Sentry");
+    let ground = scene.world_transform(sentry).position.y;
+    place_on_firing_line(&mut scene, sentry, 4.0);
+    let mut pose = scene.world_transform(sentry);
+    pose.position.y = ground;
+    scene.set_world_transform(sentry, pose.matrix());
+    let full_health = current_health(&scene, sentry);
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+    runner.press_key(egui::Key::Space);
+    let mut steps = 0;
+    while current_health(runner.scene(), sentry) == full_health {
+        runner.step();
+        steps += 1;
+        assert!(steps < 120, "a round should hit the sentry");
+    }
+    assert_eq!(
+        current_health(runner.scene(), sentry),
+        full_health - ComponentTankController::default().projectile_damage
+    );
+    while find_named(runner.scene(), "Sentry").is_some() {
+        runner.step();
+        steps += 1;
+        assert!(steps < 600, "the sentry should be destroyed");
+    }
 }
 
 #[test]

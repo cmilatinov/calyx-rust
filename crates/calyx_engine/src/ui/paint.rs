@@ -6,6 +6,13 @@ use super::widgets::UiArena;
 /// Backend-neutral paint command.
 #[derive(Clone, Debug, PartialEq)]
 pub enum PaintCommand {
+    Label(super::TextLabel),
+    /// An indexed mesh with a color per vertex, for continuous gradients.
+    ColorMesh {
+        points: Vec<UiPoint>,
+        colors: Vec<UiColor>,
+        indices: Vec<u32>,
+    },
     PushClip(UiRect),
     PopClip,
     PushTransform {
@@ -17,6 +24,18 @@ pub enum PaintCommand {
         rect: UiRect,
         color: UiColor,
         radius: CornerRadius,
+    },
+    /// A convex polygon with perimeter-ordered vertices. Fewer than three are ignored.
+    FillPolygon {
+        points: Vec<UiPoint>,
+        color: UiColor,
+    },
+    /// Joined triangles without antialiasing on internal edges. Invalid indices
+    /// or an index count that is not a multiple of three discard the mesh.
+    FillTriangleMesh {
+        points: Vec<UiPoint>,
+        indices: Vec<u32>,
+        color: UiColor,
     },
     StrokeRect {
         rect: UiRect,
