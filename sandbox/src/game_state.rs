@@ -255,6 +255,7 @@ mod tests {
         assert_eq!(state.current_phase(), GamePhase::MainMenu);
         assert!(!state.return_to_menu_requested);
     }
+
     #[test]
     fn zero_duration_selects_an_elapsed_match_without_automatic_finish() {
         let mut state = ComponentGameState {

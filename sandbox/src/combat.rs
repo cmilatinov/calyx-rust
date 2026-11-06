@@ -624,6 +624,7 @@ mod tests {
             assert_eq!(victims, vec!["Target A".to_string()]);
         }
     }
+
     fn combatants() -> (Scene, GameObject, GameObject, GameObject) {
         let mut scene = calyx_engine::test_support::test_scene();
         let killer = named(&mut scene, "Killer");
@@ -641,6 +642,7 @@ mod tests {
         }
         (scene, killer, helper, victim)
     }
+
     #[test]
     fn damage_assists_score_and_feedback_follow_confirmed_events() {
         let (mut scene, killer, helper, victim) = combatants();
@@ -689,6 +691,7 @@ mod tests {
             "incoming damage does not confirm the victim's shots"
         );
     }
+
     #[test]
     fn expired_assists_environment_and_team_damage_do_not_award_score() {
         for mode in 0..3 {
@@ -725,6 +728,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn spawn_team_overrides_stats_and_inferred_side_and_effects_expire() {
         let (mut scene, killer, _, victim) = combatants();
@@ -753,6 +757,7 @@ mod tests {
             assert!(stats.feedback.is_empty());
         });
     }
+
     #[test]
     fn sentry_kills_are_environmental_but_keep_the_neutral_feed_name() {
         let (mut scene, player, helper, victim) = combatants();

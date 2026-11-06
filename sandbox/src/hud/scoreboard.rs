@@ -14,6 +14,7 @@ pub(super) struct ScoreboardRow {
     friendly: bool,
     is_player: bool,
 }
+
 pub(super) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<ScoreboardRow> {
     let team = combat_team(scene, player);
     let mut rows = scene
@@ -44,6 +45,7 @@ pub(super) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<Scoreboa
     });
     rows
 }
+
 pub(super) fn page_count(rows: &[ScoreboardRow]) -> usize {
     [true, false]
         .iter()
@@ -57,6 +59,7 @@ pub(super) fn page_count(rows: &[ScoreboardRow]) -> usize {
         .unwrap_or(1)
         .max(1)
 }
+
 fn grouped(value: u32) -> String {
     let text = value.to_string();
     let mut result = String::new();
@@ -382,6 +385,7 @@ pub(super) fn paint_scoreboard(
         );
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -434,6 +438,7 @@ mod tests {
             assert_eq!(row.deaths, u32::from(row.name == "Victim"));
         }
     }
+
     #[test]
     fn groups_sort_by_actual_score_then_kills_and_preserve_assists() {
         let mut scene = calyx_engine::test_support::test_scene();

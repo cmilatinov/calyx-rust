@@ -53,6 +53,7 @@ pub struct ComponentTankHud {
     #[reflect_skip]
     map_boundary: std::sync::Arc<std::sync::Mutex<minimap::BoundaryCache>>,
 }
+
 impl Default for ComponentTankHud {
     fn default() -> Self {
         Self {
@@ -69,6 +70,7 @@ impl Default for ComponentTankHud {
         }
     }
 }
+
 impl Component for ComponentTankHud {}
 impl ComponentTankHud {
     fn advance(&mut self, dt: f32) {
@@ -76,6 +78,7 @@ impl ComponentTankHud {
             self.elapsed += dt.max(0.0);
         }
     }
+
     fn time(&self, scene: &Scene) -> f32 {
         scene
             .objects()
@@ -97,6 +100,7 @@ impl ComponentTankHud {
             })
     }
 }
+
 impl ComponentUpdate for ComponentTankHud {
     fn update(
         this: ComponentRef<Self>,
@@ -125,6 +129,7 @@ impl ComponentUpdate for ComponentTankHud {
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
     }
 }
+
 /// A transient local volume defocuses the backdrop and suppresses late ink;
 /// removing it restores the scene's existing post-processing without editing assets.
 fn update_scoreboard_blur(
@@ -184,6 +189,7 @@ fn update_scoreboard_blur(
     );
     GameObjectRef::new(scene.uuid(object))
 }
+
 impl ComponentHud for ComponentTankHud {
     fn build_hud(
         hud: &Self,
@@ -252,10 +258,12 @@ impl ComponentHud for ComponentTankHud {
         )
     }
 }
+
 fn format_time(seconds: f32) -> String {
     let seconds = seconds.max(0.0).ceil() as u32;
     format!("{:02}:{:02}", seconds / 60, seconds % 60)
 }
+
 fn health_ratio(health: f32, max: f32) -> f32 {
     if max > 0.0 {
         (health / max).clamp(0.0, 1.0)
@@ -269,6 +277,7 @@ struct Projection {
     width: f32,
     height: f32,
 }
+
 impl Projection {
     fn scene(scene: &Scene, width: f32, height: f32) -> Option<Self> {
         let (object, camera) = scene.main_camera()?;
@@ -279,6 +288,7 @@ impl Projection {
             height,
         })
     }
+
     fn point(&self, position: Vec3) -> Option<(f32, f32)> {
         let clip = self.matrix * vec4(position.x, position.y, position.z, 1.0);
         if clip.w <= 0.0 {
@@ -294,12 +304,14 @@ impl Projection {
         ))
     }
 }
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum DamageTier {
     Low,
     Normal,
     High,
 }
+
 fn damage_tier(amount: f32, max: f32, low: f32, high: f32) -> DamageTier {
     let ratio = amount / max.max(f32::EPSILON);
     if ratio >= high.max(low).max(0.0) {
@@ -310,12 +322,14 @@ fn damage_tier(amount: f32, max: f32, low: f32, high: f32) -> DamageTier {
         DamageTier::Normal
     }
 }
+
 #[derive(Clone, Copy, Debug)]
 struct ScreenBounds {
     left: f32,
     right: f32,
     top: f32,
 }
+
 impl Projection {
     fn visual_bounds(&self, scene: &Scene, object: GameObject) -> Option<ScreenBounds> {
         let mut points = scene
@@ -336,6 +350,7 @@ impl Projection {
         Some(bounds)
     }
 }
+
 fn hp_anchor(bounds: ScreenBounds) -> (f32, f32, f32) {
     (
         (bounds.left + bounds.right) * 0.5,
@@ -343,6 +358,7 @@ fn hp_anchor(bounds: ScreenBounds) -> (f32, f32, f32) {
         ((bounds.right - bounds.left) * 0.9).max(48.0),
     )
 }
+
 fn paint_world(
     p: &mut Painter,
     scene: &Scene,
@@ -569,6 +585,7 @@ mod tests {
         scene.add_component(tank, ComponentTankHud::default());
         (scene, tank)
     }
+
     fn commands(scene: &Scene, width: f32, height: f32) -> Vec<PaintCommand> {
         SceneHud::default()
             .frame(
@@ -579,6 +596,7 @@ mod tests {
             .unwrap()
             .paint_commands
     }
+
     #[test]
     fn timer_and_radar_remain_without_removed_bottom_instrument_panels() {
         let (scene, _) = setup();
@@ -601,6 +619,7 @@ mod tests {
                 .any(|s| s.contains("HULL") || s.contains("CANNON") || s.contains("RELOAD")));
         }
     }
+
     #[test]
     fn health_annotation_width_tracks_projected_geometry_and_anchor_clears_top() {
         let far = hp_anchor(ScreenBounds {
@@ -625,6 +644,7 @@ mod tests {
             48.0
         );
     }
+
     #[test]
     fn timer_uses_simulation_delta_resets_with_scene_and_reads_match_state() {
         let (scene, _) = setup();
@@ -657,12 +677,14 @@ mod tests {
         });
         assert_eq!(format_time(hud.time(&scene)), "00:42");
     }
+
     #[test]
     fn damage_tiers_are_removed_health_ratios() {
         assert_eq!(damage_tier(10.0, 100.0, 0.15, 0.5), DamageTier::Low);
         assert_eq!(damage_tier(35.0, 100.0, 0.15, 0.5), DamageTier::Normal);
         assert_eq!(damage_tier(60.0, 100.0, 0.15, 0.5), DamageTier::High);
     }
+
     #[test]
     fn scoreboard_is_held_and_bounded_with_many_real_rows() {
         let (mut scene, tank) = setup();
@@ -694,6 +716,7 @@ mod tests {
             }
         }
     }
+
     #[test]
     fn scoreboard_blur_is_local_reused_and_removed_without_touching_world_effects() {
         let (mut scene, owner) = setup();

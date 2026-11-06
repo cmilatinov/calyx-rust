@@ -104,6 +104,7 @@ impl<T: Clone> UiBackend for RecordingBackend<T> {
     fn draw_label(&mut self, label: &TextLabel) {
         self.ops.push(BackendOp::Label(label.clone()));
     }
+
     fn color_mesh(&mut self, points: &[UiPoint], colors: &[UiColor], indices: &[u32]) {
         if points.len() == colors.len() && valid_triangle_mesh(points, indices) {
             self.ops.push(BackendOp::ColorMesh {

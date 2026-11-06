@@ -271,9 +271,11 @@ mod health_trail_tests {
         h.damage_trail
             .advance(dt, h.current_health, h.max_health, h.dead);
     }
+
     fn edge(h: &ComponentHealth) -> f32 {
         h.damage_trail.edge(h.current_health, h.max_health, h.dead)
     }
+
     #[test]
     fn damage_chunk_holds_drains_and_restarts_from_the_current_edge() {
         let mut h = ComponentHealth::default();
@@ -296,6 +298,7 @@ mod health_trail_tests {
         advance(&mut h, 0.31);
         assert_eq!(edge(&h), 40.0);
     }
+
     #[test]
     fn healing_death_respawn_and_deserialization_clear_damage_chunks() {
         let mut h = ComponentHealth::default();
@@ -2144,6 +2147,7 @@ mod tests {
         assert!(!state.death_requested);
         assert_eq!(state.respawn_remaining, 1.0);
     }
+
     #[test]
     fn confirmed_damage_feedback_rejects_invalid_dead_and_immune_hits_and_clamps_overkill() {
         let mut scene = calyx_engine::test_support::test_scene();

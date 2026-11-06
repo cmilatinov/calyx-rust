@@ -9,6 +9,7 @@ pub struct HealthDamageTrail {
     start: f32,
     age: f32,
 }
+
 impl HealthDamageTrail {
     pub const HOLD: f32 = 0.35;
     pub const SHRINK: f32 = 0.60;
@@ -22,6 +23,7 @@ impl HealthDamageTrail {
             age: Self::HOLD + Self::SHRINK,
         };
     }
+
     pub(crate) fn observe(&mut self, health: f32, maximum: f32, dead: bool) -> bool {
         let Some(previous) = self.observed else {
             self.reset(health, maximum, dead);
@@ -45,6 +47,7 @@ impl HealthDamageTrail {
         }
         false
     }
+
     pub(crate) fn advance(&mut self, dt: f32, health: f32, maximum: f32, dead: bool) {
         if self.observe(health, maximum, dead) {
             return;
@@ -55,6 +58,7 @@ impl HealthDamageTrail {
         let t = ((self.age - Self::HOLD) / Self::SHRINK).clamp(0.0, 1.0);
         self.edge = self.start + (health - self.start) * t;
     }
+
     pub(crate) fn edge(&self, health: f32, maximum: f32, dead: bool) -> f32 {
         if self.observed.is_none_or(|old| health > old)
             || maximum != self.maximum

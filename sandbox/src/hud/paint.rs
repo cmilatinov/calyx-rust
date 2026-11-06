@@ -17,6 +17,7 @@ pub(super) struct Painter {
     pub scale: f32,
     pub origin: UiPoint,
 }
+
 impl Painter {
     pub fn new(viewport: UiRect) -> Self {
         Self {
@@ -25,18 +26,21 @@ impl Painter {
             origin: viewport.min,
         }
     }
+
     pub fn point(&self, x: f32, y: f32) -> UiPoint {
         UiPoint::new(
             self.origin.x + x * self.scale,
             self.origin.y + y * self.scale,
         )
     }
+
     pub fn rect(&self, x: f32, y: f32, w: f32, h: f32) -> UiRect {
         UiRect::from_min_size(
             self.point(x, y),
             UiSize::new(w * self.scale, h * self.scale),
         )
     }
+
     pub fn fill(&mut self, x: f32, y: f32, w: f32, h: f32, color: UiColor, radius: f32) {
         self.commands.push(PaintCommand::FillRect {
             rect: self.rect(x, y, w, h),
@@ -44,12 +48,14 @@ impl Painter {
             radius: CornerRadius::all(radius * self.scale),
         });
     }
+
     pub fn polygon(&mut self, points: &[(f32, f32)], color: UiColor) {
         self.commands.push(PaintCommand::FillPolygon {
             points: points.iter().map(|&(x, y)| self.point(x, y)).collect(),
             color,
         });
     }
+
     pub fn line(&mut self, a: (f32, f32), b: (f32, f32), color: UiColor, width: f32) {
         self.commands.push(PaintCommand::Line {
             start: self.point(a.0, a.1),
@@ -58,6 +64,7 @@ impl Painter {
             width: width * self.scale,
         });
     }
+
     pub fn bevel(&mut self, x: f32, y: f32, w: f32, h: f32, cut: f32, color: UiColor) {
         self.polygon(
             &[
@@ -73,6 +80,7 @@ impl Painter {
             color,
         );
     }
+
     pub fn panel(&mut self, x: f32, y: f32, w: f32, h: f32, cut: f32) {
         self.bevel(x, y, w, h, cut, STEEL);
         self.bevel(
@@ -84,6 +92,7 @@ impl Painter {
             PANEL,
         );
     }
+
     #[allow(clippy::too_many_arguments)]
     pub fn label(
         &mut self,
@@ -116,6 +125,7 @@ impl Painter {
             }),
         }));
     }
+
     pub fn middle(
         &mut self,
         x: f32,
@@ -137,6 +147,7 @@ impl Painter {
             None,
         );
     }
+
     pub fn gradient(&mut self, points: &[(f32, f32)], colors: &[UiColor], indices: &[u32]) {
         self.commands.push(PaintCommand::ColorMesh {
             points: points.iter().map(|&(x, y)| self.point(x, y)).collect(),
@@ -144,6 +155,7 @@ impl Painter {
             indices: indices.to_vec(),
         });
     }
+
     pub fn title_plate(&mut self, x: f32, y: f32, w: f32, h: f32) {
         for (inset, color) in [(0.0, STEEL), (3.0, PANEL)] {
             let x = x + inset;
@@ -163,6 +175,7 @@ impl Painter {
             );
         }
     }
+
     pub fn plate(&mut self, x: f32, y: f32, w: f32, h: f32) {
         for (inset, color) in [(0.0, STEEL), (3.0, PANEL)] {
             let x = x + inset;
@@ -182,9 +195,11 @@ impl Painter {
             );
         }
     }
+
     pub fn circle(&mut self, x: f32, y: f32, r: f32, color: UiColor) {
         self.fill(x - r, y - r, 2.0 * r, 2.0 * r, color, r);
     }
+
     pub fn tank(&mut self, x: f32, y: f32, s: f32, color: UiColor) {
         // Broad tread/body silhouette, stepped turret, roof hatch, long cannon.
         self.bevel(x, y + 11.0 * s, 42.0 * s, 13.0 * s, 5.0 * s, color);
@@ -201,6 +216,7 @@ impl Painter {
         self.fill(x + 28.0 * s, y + 7.0 * s, 22.0 * s, 4.0 * s, color, 0.8 * s);
         self.fill(x + 47.0 * s, y + 5.0 * s, 4.0 * s, 7.0 * s, color, s);
     }
+
     pub fn skull(&mut self, x: f32, y: f32, s: f32, color: UiColor) {
         self.bevel(x, y, 23.0 * s, 19.0 * s, 6.0 * s, color);
         self.fill(x + 5.0 * s, y + 15.0 * s, 13.0 * s, 10.0 * s, color, 1.0);
@@ -215,6 +231,7 @@ impl Painter {
             );
         }
     }
+
     pub fn assist(&mut self, x: f32, y: f32, s: f32, color: UiColor) {
         let draw = |p: &mut Self, points: &[(f32, f32)], c| {
             p.polygon(
@@ -271,6 +288,7 @@ impl Painter {
         }
     }
 }
+
 pub(super) fn alpha(color: UiColor, opacity: f32) -> UiColor {
     color.with_alpha(opacity)
 }
