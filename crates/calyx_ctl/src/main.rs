@@ -186,7 +186,7 @@ enum ProfilerAction {
     /// Profile the next N frames (turning capture on for them when it is
     /// off) and print their averages and maximums as JSON.
     Read {
-        /// Number of frames to profile.
+        /// Number of frames to profile, at most the 600 the profiler keeps.
         #[arg(long, default_value_t = 120)]
         frames: u32,
     },

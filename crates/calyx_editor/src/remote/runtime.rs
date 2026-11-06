@@ -330,8 +330,22 @@ impl RemoteRuntime {
 
 impl RemoteRuntime {
     /// Starts a `read_profile` of the next `frames` frames for `slot`,
-    /// turning capture on for them when it is off.
-    pub fn push_profile_read(&mut self, slot: ResponseSlot, frames: u32) {
+    /// turning capture on for them when it is off. A window longer than the
+    /// profiler's history could never be reported whole, so it is refused.
+    pub fn push_profile_read(
+        &mut self,
+        slot: ResponseSlot,
+        frames: u32,
+    ) -> Result<(), (ErrorKind, String)> {
+        if frames as usize > profiler::HISTORY_FRAMES {
+            return Err((
+                ErrorKind::BadRequest,
+                format!(
+                    "frames must be at most {}, the frames the profiler keeps",
+                    profiler::HISTORY_FRAMES
+                ),
+            ));
+        }
         let frames = frames.max(1);
         // A read that finds capture on leaves it on, unless an earlier read
         // turned it on and still owes turning it off.
@@ -344,6 +358,7 @@ impl RemoteRuntime {
             stop_capture,
             deadline_frame: self.frame_index + u64::from(frames) + PROFILE_GPU_DEADLINE_FRAMES,
         });
+        Ok(())
     }
 
     /// Whether a pending `read_profile` turned capture on and will turn it
@@ -545,8 +560,8 @@ pub(crate) mod tests {
             client: 2,
             request_id: 1,
         };
-        runtime.push_profile_read(first, 10);
-        runtime.push_profile_read(second, 10);
+        runtime.push_profile_read(first, 10).unwrap();
+        runtime.push_profile_read(second, 10).unwrap();
         assert!(profiler::capture_requested());
         runtime.drop_client(first.client);
         assert!(
@@ -557,13 +572,27 @@ pub(crate) mod tests {
         assert!(!profiler::capture_requested());
 
         profiler::set_capture(true);
-        runtime.push_profile_read(first, 10);
+        runtime.push_profile_read(first, 10).unwrap();
         runtime.drop_client(first.client);
         assert!(
             profiler::capture_requested(),
             "a read that found capture on leaves it on"
         );
         profiler::set_capture(false);
+    }
+
+    #[test]
+    fn a_profile_read_longer_than_the_history_is_refused() {
+        let mut runtime = test_runtime();
+        let slot = ResponseSlot {
+            client: 1,
+            request_id: 1,
+        };
+        let frames = profiler::HISTORY_FRAMES as u32 + 1;
+        let (kind, message) = runtime.push_profile_read(slot, frames).unwrap_err();
+        assert_eq!(kind, ErrorKind::BadRequest);
+        assert!(message.contains("600"), "{message}");
+        assert!(runtime.pending.is_empty());
     }
 
     #[test]

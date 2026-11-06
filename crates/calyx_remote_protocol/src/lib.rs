@@ -420,7 +420,7 @@ pub enum Command {
     /// scope per thread and GPU pass, each as averages, maximums and last
     /// values in milliseconds.
     ReadProfile {
-        /// Number of frames to profile.
+        /// Number of frames to profile, at most the 600 the profiler keeps.
         frames: u32,
     },
 }

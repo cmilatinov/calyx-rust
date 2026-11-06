@@ -557,7 +557,7 @@ impl EditorApp {
                         "this editor was built with --cfg calyx_no_profiling".to_string(),
                     ));
                 }
-                runtime.push_profile_read(ResponseSlot { ..*slot }, frames);
+                runtime.push_profile_read(ResponseSlot { ..*slot }, frames)?;
                 Ok(None)
             }
         }
