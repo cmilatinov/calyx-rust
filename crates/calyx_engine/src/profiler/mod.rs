@@ -29,7 +29,7 @@ pub mod gpu;
 mod report;
 
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
@@ -86,9 +86,20 @@ static REQUESTED: AtomicBool = AtomicBool::new(false);
 /// Capture of the frame running now.
 static CAPTURING: AtomicBool = AtomicBool::new(false);
 
-/// Turns capture on or off from the next frame on.
-pub fn set_capture(on: bool) {
+/// Count of [`set_capture`] calls, so a caller can tell whether anyone
+/// else has asked for a change since its own.
+static CAPTURE_CHANGES: AtomicU64 = AtomicU64::new(0);
+
+/// Turns capture on or off from the next frame on, and returns the
+/// [`capture_changes`] count this call made.
+pub fn set_capture(on: bool) -> u64 {
     REQUESTED.store(on, Ordering::Relaxed);
+    CAPTURE_CHANGES.fetch_add(1, Ordering::Relaxed) + 1
+}
+
+/// How many times capture has been asked to change.
+pub fn capture_changes() -> u64 {
+    CAPTURE_CHANGES.load(Ordering::Relaxed)
 }
 
 /// Whether capture is on or asked for from the next frame.

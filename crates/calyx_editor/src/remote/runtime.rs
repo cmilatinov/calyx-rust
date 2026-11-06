@@ -100,6 +100,10 @@ pub struct RemoteRuntime {
     pub last_game_rect: Option<egui::Rect>,
     /// Viewport panel image rect captured the same way.
     pub last_viewport_rect: Option<egui::Rect>,
+    /// The [`profiler::capture_changes`] count of the last time a
+    /// `read_profile` turned capture on. While it is still current, nobody
+    /// else has asked for capture since, and the reads may turn it back off.
+    read_capture: Option<u64>,
 }
 
 impl RemoteRuntime {
@@ -114,6 +118,7 @@ impl RemoteRuntime {
             pending_window_shots: Vec::new(),
             last_game_rect: None,
             last_viewport_rect: None,
+            read_capture: None,
         }
     }
 
@@ -347,10 +352,15 @@ impl RemoteRuntime {
             ));
         }
         let frames = frames.max(1);
-        // A read that finds capture on leaves it on, unless an earlier read
-        // turned it on and still owes turning it off.
-        let stop_capture = !profiler::capture_requested() || self.owes_capture_stop();
-        profiler::set_capture(true);
+        // A read that finds capture off turns it on and owes turning it off.
+        // One that finds it on leaves it on, unless reads turned it on and
+        // nobody has asked for capture since.
+        let stop_capture = if profiler::capture_requested() {
+            self.owes_capture_stop() && self.reads_own_capture()
+        } else {
+            self.read_capture = Some(profiler::set_capture(true));
+            true
+        };
         self.pending.push(PendingOp::ReadProfile {
             slot,
             first: profiler::first_captured_frame(),
@@ -375,9 +385,16 @@ impl RemoteRuntime {
         })
     }
 
-    /// Turns capture off once no `read_profile` is waiting on it.
+    /// Whether capture is as the last read that turned it on left it: no
+    /// one has started or stopped it since.
+    fn reads_own_capture(&self) -> bool {
+        self.read_capture == Some(profiler::capture_changes())
+    }
+
+    /// Turns capture off once no `read_profile` is waiting on it, unless
+    /// someone asked for capture after the reads turned it on.
     fn stop_capture_unless_reading(&self) {
-        if !self.owes_capture_stop() {
+        if !self.owes_capture_stop() && self.reads_own_capture() {
             profiler::set_capture(false);
         }
     }
@@ -577,6 +594,15 @@ pub(crate) mod tests {
         assert!(
             profiler::capture_requested(),
             "a read that found capture on leaves it on"
+        );
+
+        profiler::set_capture(false);
+        runtime.push_profile_read(first, 10).unwrap();
+        profiler::set_capture(true);
+        runtime.drop_client(first.client);
+        assert!(
+            profiler::capture_requested(),
+            "a capture started during a read outlasts the read"
         );
         profiler::set_capture(false);
     }
