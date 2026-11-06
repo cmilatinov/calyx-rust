@@ -114,9 +114,9 @@ pub enum Command {
     Shutdown,
 
     /// Starts (or resumes) scene simulation as the toolbar's play button does,
-    /// running the project's configured startup scene on a fresh start.
+    /// running the scene open in the editor on a fresh start.
     Play {
-        /// Scene file to run on a fresh start instead of the startup scene,
+        /// Scene file to run on a fresh start instead of the open scene,
         /// absolute or relative to the editor's working directory. Refused
         /// while a simulation scene exists.
         #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -832,7 +832,7 @@ mod tests {
     }
 
     /// A plain `play` stays the same on the wire, so older clients still run
-    /// the startup scene.
+    /// the open scene.
     #[test]
     fn play_without_a_scene_keeps_its_wire_format() {
         let request = RequestEnvelope {
