@@ -276,7 +276,7 @@ pub(crate) fn spawn_shot(
     position: Vec3,
     rotation: UnitQuaternion<f32>,
     flight_time: f32,
-) {
+) -> [GameObject; 2] {
     let palette = ComponentCombatPalette::in_scene(scene);
     let mut flash = burst(1, 0.1);
     flash.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
@@ -325,7 +325,7 @@ pub(crate) fn spawn_shot(
     smoke.rendering.blend_mode = ParticleBlendMode::Alpha;
     smoke.rendering.min_screen_size = 0.0;
     let source = GameObjectRef::new(scene.uuid(projectile));
-    emitter(
+    let smoke = emitter(
         scene,
         "Shell Smoke Trail",
         position,
@@ -333,6 +333,7 @@ pub(crate) fn spawn_shot(
         flight_time + SMOKE_LIFETIME,
         source,
     );
+    [muzzle, smoke]
 }
 
 pub(crate) fn spawn_impact(scene: &mut Scene, position: Vec3, tank: bool) {

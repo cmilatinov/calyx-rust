@@ -61,6 +61,10 @@ pub struct ComponentTankController {
     /// Fastest the turret turns towards the cursor, in radians per second.
     #[reflect_attr(min = 0.0, speed = 0.1)]
     pub turret_turn_speed: f32,
+    /// How far the tank sees, in metres, lending its sight to its side's fog
+    /// of war; cover still blocks it.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub vision_range: f32,
     pub projectile_speed: f32,
     pub projectile_damage: f32,
     pub projectile_lifetime: f32,
@@ -96,6 +100,7 @@ impl Default for ComponentTankController {
             friction: 14.0,
             hull_turn_speed: 2.8,
             turret_turn_speed: 12.0,
+            vision_range: 15.0,
             projectile_speed: 28.0,
             projectile_damage: 35.0,
             projectile_lifetime: 2.0,
@@ -381,6 +386,10 @@ impl ComponentUpdate for ComponentTankController {
             component.ammo = controller.ammo;
             component.speed = controller.speed;
         });
+        if tank_transform.position != previous_tank_transform.position {
+            // Moving changes what this tank sees, or whether it is seen.
+            crate::vision::refresh(scene, &[game_object]);
+        }
     }
 }
 
@@ -862,13 +871,15 @@ pub(crate) fn spawn_round(
         },
     );
     crate::combat_vfx::spawn_round_visual(scene, projectile_object);
-    crate::combat_vfx::spawn_shot(
+    let [muzzle, smoke] = crate::combat_vfx::spawn_shot(
         scene,
         projectile_object,
         position,
         rotation,
         projectile.lifetime_remaining,
     );
+    // An unseen shooter's round and muzzle effects never flash into view.
+    crate::vision::refresh(scene, &[projectile_object, muzzle, smoke]);
 }
 
 fn update_projectile(
@@ -930,6 +941,7 @@ fn update_projectile(
         component.direction = projectile.direction;
         component.lifetime_remaining = projectile.lifetime_remaining;
     });
+    crate::vision::refresh(scene, &[game_object]);
 }
 
 /// Fraction of the `start`..`end` segment a round of `radius` travels before

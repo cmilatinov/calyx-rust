@@ -74,8 +74,19 @@ or detected hostile contacts. The map follows the player, with vision covering
 70% of its radius. Near-black fog surrounds a soft cyan falloff clipped by
 live cover; visible contours are brighter. Compact contact dots keep a dark
 outline (6.5px outer radius, 5px fill); preserve the larger player chevron. Keep
-the cached contours current when floor or cover geometry changes. Keep
-these presentation rules separate from
+the cached contours current when floor or cover geometry changes.
+
+The main view follows the same vision (`sandbox/src/vision.rs`): a side sees
+what any of its live tanks sees within that tank's vision range, unless cover
+is in the way. Enemy tanks, sentries and targets outside it are not drawn, nor
+their HP bars and damage numbers, and enemy rounds and muzzle effects follow
+the same rule except a round on course to hit the player. Ground outside
+vision is darkened with near-black ink that fades in over a soft edge along
+the range and every cover shadow. Fog is current vision only and changes
+nothing but what is drawn: hidden enemies still collide, shoot and take
+damage.
+
+Keep these presentation rules separate from
 configurable scoring, timing and damage rules.
 
 The initial scoring defaults are 100 points per enemy kill and 50 per assist,

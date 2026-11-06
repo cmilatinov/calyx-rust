@@ -1,3 +1,4 @@
+mod fog;
 mod kill_feed;
 mod minimap;
 mod paint;
@@ -34,7 +35,6 @@ pub struct ComponentTankHud {
     /// Standalone scenes count down this duration; zero selects elapsed time.
     /// A scene Game State component supplies the authoritative clock instead.
     pub timer_duration: f32,
-    pub vision_range: f32,
     pub low_damage_ratio: f32,
     pub high_damage_ratio: f32,
     #[serde(skip)]
@@ -52,6 +52,10 @@ pub struct ComponentTankHud {
     #[serde(skip)]
     #[reflect_skip]
     map_boundary: std::sync::Arc<std::sync::Mutex<minimap::BoundaryCache>>,
+    /// What fog of war hid from this HUD's player.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) fog: crate::vision::FogState,
 }
 
 impl Default for ComponentTankHud {
@@ -59,7 +63,6 @@ impl Default for ComponentTankHud {
         Self {
             screen_margin: 34.0,
             timer_duration: 300.0,
-            vision_range: 15.0,
             low_damage_ratio: 0.15,
             high_damage_ratio: 0.5,
             scoreboard_open: false,
@@ -67,6 +70,7 @@ impl Default for ComponentTankHud {
             scoreboard_page: 0,
             scoreboard_blur: Default::default(),
             map_boundary: Default::default(),
+            fog: Default::default(),
         }
     }
 }
@@ -127,6 +131,10 @@ impl ComponentUpdate for ComponentTankHud {
             .unwrap_or_default();
         let blur = update_scoreboard_blur(scene, this.game_object(), open, previous);
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
+        if let Some(mut fog) = this.write(scene, |hud| std::mem::take(&mut hud.fog)) {
+            crate::vision::apply_fog(scene, this.game_object(), &mut fog);
+            let _ = this.write(scene, |hud| hud.fog = fog);
+        }
     }
 }
 
@@ -205,6 +213,14 @@ impl ComponentHud for ComponentTankHud {
         let margin = hud.screen_margin.max(12.0).min(width * 0.1);
         let map = minimap::minimap_state(scene, player);
         if !hud.scoreboard_open {
+            fog::paint_fog(
+                &mut p,
+                scene,
+                &map.vision,
+                scene.world_transform(player).position.y,
+                width,
+                height,
+            );
             paint_world(&mut p, scene, player, hud, &map, width, height);
             let feed_width = (width * 0.24).clamp(230.0, 390.0);
             let feed_height = (height * 0.043).clamp(28.0, 42.0);
@@ -225,7 +241,6 @@ impl ComponentHud for ComponentTankHud {
                 margin + radius + 4.0,
                 margin + radius + 14.0,
                 radius,
-                hud.vision_range,
             );
             let tw = (width * 0.16).clamp(160.0, 270.0) * 0.82;
             let th = (height * 0.09).clamp(60.0, 88.0) * 0.82;
@@ -387,7 +402,7 @@ fn paint_world(
             || player_team
                 .zip(combat_team(scene, object))
                 .is_some_and(|(a, b)| a == b);
-        if !friendly && !map.visible(vec2(position.x, position.z), hud.vision_range) {
+        if !friendly && !map.vision.visible(vec2(position.x, position.z)) {
             continue;
         }
         let Some(bounds) = projection.visual_bounds(scene, object) else {
@@ -471,9 +486,16 @@ fn paint_world(
             if hit.age >= crate::combat::DAMAGE_FEEDBACK_LIFETIME {
                 continue;
             }
-            let bounds = GameObjectRef::new(hit.target)
-                .game_object(scene)
-                .and_then(|target| projection.visual_bounds(scene, target));
+            let target = GameObjectRef::new(hit.target).game_object(scene);
+            let at = target.map_or(hit.position, |target| {
+                scene.world_transform(target).position
+            });
+            if !target.is_some_and(|target| crate::vision::is_friendly(scene, player, target))
+                && !map.vision.visible(vec2(at.x, at.z))
+            {
+                continue;
+            }
+            let bounds = target.and_then(|target| projection.visual_bounds(scene, target));
             let anchor = bounds
                 .map(hp_anchor)
                 .map(|(x, y, w)| (x - w * 0.4, y - 25.0))

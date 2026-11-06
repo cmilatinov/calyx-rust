@@ -1,16 +1,16 @@
 //! A top-down map of the arena, drawn from world positions each frame.
 
 use super::paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED, STEEL};
-use crate::arena::ComponentArena;
 use crate::combat::combat_team;
 use crate::sentry::ComponentSentry;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
-use calyx_engine::component::{ColliderShape, ComponentCollider};
-use calyx_engine::math::Transform;
+#[cfg(test)]
+use crate::vision::cover_entry;
+use crate::vision::{arena_geometry, ground, GroundRect, TeamVision};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{UiColor, UiPoint, UiRect, UiSize};
-use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
+use nalgebra_glm::{vec2, Vec2};
 
 /// Half the side of the square the map shows when the scene has no arena,
 /// in metres, centred on the player.
@@ -77,38 +77,6 @@ impl MinimapView {
     }
 }
 
-/// A rectangle on the ground: its centre and the two half-axes from the
-/// centre to the middle of two adjacent sides.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct GroundRect {
-    pub center: Vec2,
-    pub half_axes: [Vec2; 2],
-}
-
-impl GroundRect {
-    /// A rectangle of `size` along X and Z, centred on `center`.
-    #[cfg(test)]
-    pub fn axis_aligned(center: Vec2, size: Vec2) -> Self {
-        Self {
-            center,
-            half_axes: [vec2(size.x * 0.5, 0.0), vec2(0.0, size.y * 0.5)],
-        }
-    }
-
-    /// The ground under a rectangle of `size` along its local X and Z,
-    /// centred on `center` in the local space of `transform`.
-    pub fn placed(transform: &Transform, center: Vec3, size: Vec2) -> Self {
-        let half_axis = |local: Vec3| ground(transform.transform_direction(&local));
-        Self {
-            center: ground(transform.transform_position(&center)),
-            half_axes: [
-                half_axis(vec3(size.x * 0.5, 0.0, 0.0)),
-                half_axis(vec3(0.0, 0.0, size.y * 0.5)),
-            ],
-        }
-    }
-}
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum BlipKind {
     Player,
@@ -137,79 +105,24 @@ pub(crate) struct MinimapState {
     pub cover: Vec<GroundRect>,
     pub blips: Vec<MinimapBlip>,
     pub player_position: Vec2,
+    /// How far the player sees, which sets how far the map reaches.
+    pub vision_range: f32,
+    /// What the player's side sees; the main view hides and darkens by the
+    /// same vision.
+    pub vision: TeamVision,
 }
 
 /// Reads the map of the scene `player`'s HUD shows: the first arena, facing
 /// the way `player`'s camera does, and every tank, sentry and live target.
 pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
     let right = camera_right(scene, player).unwrap_or_else(|| vec2(1.0, 0.0));
-    let arena = scene.objects().find_map(|object| {
-        scene
-            .read_component::<ComponentArena, _, _>(object, |arena| {
-                Some((
-                    arena.extent()?,
-                    arena.cell_size,
-                    arena.cover_positions(),
-                    arena.generate_on_start,
-                ))
-            })
-            .flatten()
-            .map(|arena| (object, scene.world_transform(object), arena))
-    });
-
+    let arena = arena_geometry(scene);
     let (view, floor, cover) = match arena {
-        Some((object, transform, ((width, depth), cell_size, cover, generated))) => {
-            let floor = GroundRect::placed(&transform, Vec3::zeros(), vec2(width, depth));
-            let live = |child: &GameObject| {
-                scene.is_visible_in_hierarchy(*child)
-                    && scene.is_component_enabled::<ComponentCollider>(*child)
-            };
-            let children = scene.children(object).collect::<Vec<_>>();
-            let cover = if generated && children.is_empty() {
-                cover
-                    .iter()
-                    .map(|position| {
-                        GroundRect::placed(&transform, *position, vec2(cell_size, cell_size))
-                    })
-                    .collect()
-            } else if generated {
-                // Generated cover is one unit cube per cell; follow its live
-                // pose and visibility.
-                children
-                    .into_iter()
-                    .filter(|child| live(child) && scene.transform(*child).position.y > 0.0)
-                    .map(|child| {
-                        GroundRect::placed(
-                            &scene.world_transform(child),
-                            Vec3::zeros(),
-                            vec2(1.0, 1.0),
-                        )
-                    })
-                    .collect()
-            } else {
-                // Authored kit instances have independent collider
-                // children; read their actual pose, including edits.
-                scene
-                    .descendants(object)
-                    .filter(|child| scene.name(*child).starts_with("Arena Cover") && live(child))
-                    .filter_map(|child| {
-                        let ColliderShape::Cuboid { half_extents } = scene
-                            .read_component::<ComponentCollider, _, _>(child, |collider| {
-                                collider.shape
-                            })?
-                        else {
-                            return None;
-                        };
-                        Some(GroundRect::placed(
-                            &scene.world_transform(child),
-                            Vec3::zeros(),
-                            vec2(half_extents.x * 2.0, half_extents.z * 2.0),
-                        ))
-                    })
-                    .collect()
-            };
-            (MinimapView::fitting(floor, right), Some(floor), cover)
-        }
+        Some(arena) => (
+            MinimapView::fitting(arena.floor, right),
+            Some(arena.floor),
+            arena.cover,
+        ),
         None => (
             MinimapView::facing(
                 ground(scene.world_transform(player).position),
@@ -223,6 +136,13 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
 
     MinimapState {
         player_position: ground(scene.world_transform(player).position),
+        vision_range: scene
+            .read_component::<ComponentTankController, _, _>(player, |controller| {
+                controller.vision_range
+            })
+            .unwrap_or(0.0)
+            .max(0.0),
+        vision: TeamVision::of_player(scene, player, cover.clone()),
         view,
         floor,
         cover,
@@ -291,65 +211,11 @@ fn camera_right(scene: &Scene, player: GameObject) -> Option<Vec2> {
     ground(scene.world_transform(camera).right()).try_normalize(f32::EPSILON)
 }
 
-fn ground(position: Vec3) -> Vec2 {
-    vec2(position.x, position.z)
-}
-
 fn rect_center(rect: UiRect) -> UiPoint {
     UiPoint::new(
         (rect.min.x + rect.max.x) * 0.5,
         (rect.min.y + rect.max.y) * 0.5,
     )
-}
-
-/// Segment entry in a transformed ground footprint. Inverting its two half axes
-/// handles rotated, scaled and sheared arena parents without axis-aligned leaks.
-fn cover_entry(start: Vec2, end: Vec2, cover: GroundRect) -> Option<f32> {
-    let [a, b] = cover.half_axes;
-    let det = a.x * b.y - a.y * b.x;
-    if det.abs() < 1e-6 {
-        return None;
-    }
-    let local = |v: Vec2| vec2((v.x * b.y - v.y * b.x) / det, (a.x * v.y - a.y * v.x) / det);
-    let origin = local(start - cover.center);
-    let direction = local(end - start);
-    let mut near = 0.0f32;
-    let mut far = 1.0f32;
-    for axis in 0..2 {
-        if direction[axis].abs() < 1e-6 {
-            if origin[axis].abs() > 1.0 {
-                return None;
-            }
-        } else {
-            let a = (-1.0 - origin[axis]) / direction[axis];
-            let b = (1.0 - origin[axis]) / direction[axis];
-            near = near.max(a.min(b));
-            far = far.min(a.max(b));
-            if near > far {
-                return None;
-            }
-        }
-    }
-    (far >= 0.0 && near <= 1.0).then_some(near.max(0.0))
-}
-
-impl MinimapState {
-    pub fn visible(&self, position: Vec2, range: f32) -> bool {
-        (position - self.player_position).norm() <= range.max(0.0)
-            && !self.cover.iter().any(|cover| {
-                cover_entry(self.player_position, position, *cover).is_some_and(|t| t < 0.999)
-            })
-    }
-
-    fn sight_end(&self, angle: f32, range: f32) -> Vec2 {
-        let end = self.player_position + vec2(angle.cos(), angle.sin()) * range.max(0.0);
-        let t = self
-            .cover
-            .iter()
-            .filter_map(|cover| cover_entry(self.player_position, end, *cover))
-            .fold(1.0f32, f32::min);
-        self.player_position + (end - self.player_position) * t
-    }
 }
 
 /// Clip convex geometry against a polygonal circle before sending it to the UI.
@@ -385,7 +251,7 @@ fn corners(area: GroundRect) -> [Vec2; 4] {
 }
 
 fn contains(area: GroundRect, point: Vec2) -> bool {
-    cover_entry(point, point, area).is_some()
+    crate::vision::cover_entry(point, point, area).is_some()
 }
 
 /// Boundary of floor minus solid cover. Splitting intersections and checking the
@@ -487,8 +353,8 @@ pub(super) fn paint_map(
     x: f32,
     y: f32,
     radius: f32,
-    vision: f32,
 ) {
+    let vision = state.vision_range;
     p.circle(x, y, radius + 4.0, STEEL);
     p.circle(x, y, radius, UiColor::rgba(3, 8, 12, 255));
     let rect = UiRect::from_min_size(
@@ -505,30 +371,46 @@ pub(super) fn paint_map(
         let point = view.map_point(world, rect);
         (point.x, point.y)
     };
-    // Concentric, vertex-coloured rays produce a soft radial falloff, with
-    // every ray terminated by actual live cover. Nothing lights behind a wall.
+    // Keep other friendly tanks' light inside the map's rim.
+    let inside = |world: Vec2| {
+        let offset = world - state.player_position;
+        let limit = extent * 0.97;
+        if offset.norm() > limit {
+            state.player_position + offset.normalize() * limit
+        } else {
+            world
+        }
+    };
+    // Concentric, vertex-coloured rays produce a soft radial falloff around
+    // every tank lending its sight, with every ray terminated by actual live
+    // cover. Nothing lights behind a wall.
     let mut points = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
     const RAYS: usize = 192;
     const RINGS: usize = 12;
-    for i in 0..=RAYS {
-        let angle = i as f32 * std::f32::consts::TAU / RAYS as f32;
-        let end = state.sight_end(angle, vision);
-        let length = (end - state.player_position).norm();
-        for ring in 0..=RINGS {
-            let t = ring as f32 / RINGS as f32;
-            points.push(mapped(
-                state.player_position + (end - state.player_position) * t,
-            ));
-            let distance = t * length / vision.max(1.0);
-            let radial = (1.0 - distance.powi(2)).clamp(0.0, 1.0);
-            let edge = if ring == RINGS { 0.0 } else { 1.0 };
-            colors.push(UiColor::rgba(28, 145, 191, (radial * edge * 110.0) as u8));
-            if i > 0 && ring > 0 {
-                let b = (i * (RINGS + 1) + ring) as u32;
-                let a = b - (RINGS + 1) as u32;
-                indices.extend([a - 1, a, b, a - 1, b, b - 1]);
+    for rays in state.vision.sight_rays(RAYS) {
+        let viewer = rays.viewer;
+        let first = points.len() as u32;
+        let range = viewer.range.max(1.0);
+        for i in 0..=RAYS {
+            let angle = rays.angle(i);
+            let length = rays.entry[i % RAYS];
+            let end = viewer.position + vec2(angle.cos(), angle.sin()) * length;
+            for ring in 0..=RINGS {
+                let t = ring as f32 / RINGS as f32;
+                points.push(mapped(inside(
+                    viewer.position + (end - viewer.position) * t,
+                )));
+                let distance = t * length / range;
+                let radial = (1.0 - distance.powi(2)).clamp(0.0, 1.0);
+                let edge = if ring == RINGS { 0.0 } else { 1.0 };
+                colors.push(UiColor::rgba(28, 145, 191, (radial * edge * 110.0) as u8));
+                if i > 0 && ring > 0 {
+                    let b = first + (i * (RINGS + 1) + ring) as u32;
+                    let a = b - (RINGS + 1) as u32;
+                    indices.extend([a - 1, a, b, a - 1, b, b - 1]);
+                }
             }
         }
     }
@@ -537,9 +419,9 @@ pub(super) fn paint_map(
         .lock()
         .unwrap_or_else(|poisoned| poisoned.into_inner());
     for &(a, b) in boundary.edges(state.floor, &state.cover) {
-        let seen = state.visible(a, vision)
-            || state.visible(b, vision)
-            || state.visible((a + b) * 0.5, vision);
+        let seen = state.vision.visible(a)
+            || state.vision.visible(b)
+            || state.vision.visible((a + b) * 0.5);
         if let Some((a, b)) = clip_line_circle(mapped(a), mapped(b), (x, y), radius - 2.0) {
             p.line(
                 a,
@@ -554,7 +436,7 @@ pub(super) fn paint_map(
         }
     }
     for blip in &state.blips {
-        if !blip.friendly && !state.visible(blip.position, vision) {
+        if !blip.friendly && !state.vision.visible(blip.position) {
             continue;
         }
         let point = mapped(blip.position);
@@ -611,15 +493,10 @@ pub(super) fn paint_map(
 #[cfg(test)]
 mod tests {
     use super::*;
-    fn state(cover: Vec<GroundRect>) -> MinimapState {
-        MinimapState {
-            view: MinimapView::facing(Vec2::zeros(), vec2(20.0, 20.0), vec2(1.0, 0.0)),
-            floor: None,
-            cover,
-            blips: Vec::new(),
-            player_position: Vec2::zeros(),
-        }
-    }
+    use crate::arena::ComponentArena;
+    use calyx_engine::component::{ColliderShape, ComponentCollider};
+    use calyx_engine::math::Transform;
+    use nalgebra_glm::vec3;
 
     #[test]
     fn playable_contours_remove_shared_tile_seams_and_keep_obstacle_edges() {
@@ -697,19 +574,6 @@ mod tests {
     }
 
     #[test]
-    fn vision_hides_behind_cover_and_beyond_range() {
-        let map = state(vec![GroundRect::axis_aligned(
-            vec2(4.0, 0.0),
-            vec2(2.0, 4.0),
-        )]);
-        assert!(map.visible(vec2(2.0, 0.0), 10.0));
-        assert!(!map.visible(vec2(6.0, 0.0), 10.0));
-        assert!(map.visible(vec2(6.0, 6.0), 10.0));
-        assert!(!map.visible(vec2(0.0, 11.0), 10.0));
-        assert_eq!(map.sight_end(0.0, 10.0), vec2(3.0, 0.0));
-    }
-
-    #[test]
     fn transformed_cover_and_floor_share_world_geometry() {
         let mut transform = Transform::from_xyz(10.0, 0.0, 3.0);
         transform.rotation =
@@ -767,7 +631,7 @@ mod tests {
             )
             .matrix(),
         );
-        assert!(!minimap_state(&scene, player).visible(vec2(6.0, 0.0), 10.0));
+        assert!(!minimap_state(&scene, player).vision.visible(vec2(6.0, 0.0)));
         scene.set_transform(
             cover,
             &Transform::from_components(
@@ -777,6 +641,6 @@ mod tests {
             )
             .matrix(),
         );
-        assert!(minimap_state(&scene, player).visible(vec2(6.0, 0.0), 10.0));
+        assert!(minimap_state(&scene, player).vision.visible(vec2(6.0, 0.0)));
     }
 }
