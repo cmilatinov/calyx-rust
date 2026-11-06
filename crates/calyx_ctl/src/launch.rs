@@ -40,6 +40,9 @@ pub fn launch(
     let discovery_file = discovery_path(project);
     let _ = std::fs::remove_file(&discovery_file);
 
+    // The editor outlives this process; it must not keep our caller's pipes
+    // open, or a caller reading our output to its end would never finish.
+    stop_std_handle_inheritance();
     let mut run = ProcessCommand::new("cargo");
     run.args(["run", "-p", "calyx_editor"]);
     if release {
@@ -100,6 +103,47 @@ pub fn launch(
     }
 }
 
+/// Stops this process's stdin, stdout and stderr from being inherited by
+/// processes it spawns from now on. Windows hands every inheritable handle to
+/// a child, whatever its own stdio is set to, and the editor `launch` spawns
+/// runs on after we exit: holding our stdout, it would keep a pipe our caller
+/// reads from open, and the caller would wait for its end as long as the
+/// editor runs. A child given `Stdio::inherit` still gets its own copy.
+fn stop_std_handle_inheritance() {
+    #[cfg(windows)]
+    for handle in win32::std_handles() {
+        // SAFETY: `handle` is one of this process's standard handles.
+        unsafe { win32::SetHandleInformation(handle, win32::HANDLE_FLAG_INHERIT, 0) };
+    }
+}
+
+#[cfg(windows)]
+mod win32 {
+    pub type Handle = *mut core::ffi::c_void;
+
+    pub const HANDLE_FLAG_INHERIT: u32 = 0x1;
+    const STD_INPUT_HANDLE: u32 = -10i32 as u32;
+    const STD_OUTPUT_HANDLE: u32 = -11i32 as u32;
+    const STD_ERROR_HANDLE: u32 = -12i32 as u32;
+
+    #[link(name = "kernel32")]
+    extern "system" {
+        fn GetStdHandle(std_handle: u32) -> Handle;
+        pub fn SetHandleInformation(handle: Handle, mask: u32, flags: u32) -> i32;
+        #[cfg(test)]
+        pub fn GetHandleInformation(handle: Handle, flags: *mut u32) -> i32;
+    }
+
+    /// This process's standard handles that are set.
+    pub fn std_handles() -> impl Iterator<Item = Handle> {
+        [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE]
+            .into_iter()
+            // SAFETY: `GetStdHandle` only reads the process's handle table.
+            .map(|which| unsafe { GetStdHandle(which) })
+            .filter(|&handle| !handle.is_null() && handle as isize != -1)
+    }
+}
+
 /// Kills `cargo run` together with the editor it spawned. Killing only the
 /// cargo process would leave the editor running on Windows, which does not
 /// take children down with their parent.
@@ -114,4 +158,36 @@ fn kill_process_tree(child: &mut Child) {
     }
     let _ = child.kill();
     let _ = child.wait();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(windows)]
+    #[test]
+    fn launch_stops_its_standard_handles_from_being_inherited() {
+        // Make them inheritable first, as a pipe from the caller may be.
+        for handle in win32::std_handles() {
+            // SAFETY: `handle` is one of this process's standard handles.
+            unsafe {
+                win32::SetHandleInformation(
+                    handle,
+                    win32::HANDLE_FLAG_INHERIT,
+                    win32::HANDLE_FLAG_INHERIT,
+                )
+            };
+        }
+        stop_std_handle_inheritance();
+        let mut checked = 0;
+        for handle in win32::std_handles() {
+            let mut flags = 0;
+            // SAFETY: `handle` is valid and `flags` is a live u32.
+            if unsafe { win32::GetHandleInformation(handle, &mut flags) } != 0 {
+                assert_eq!(flags & win32::HANDLE_FLAG_INHERIT, 0);
+                checked += 1;
+            }
+        }
+        assert!(checked > 0, "the test process has standard handles");
+    }
 }
