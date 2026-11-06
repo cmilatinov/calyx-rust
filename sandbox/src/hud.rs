@@ -440,7 +440,13 @@ fn paint_world(
         if opacity <= 0.0 {
             continue;
         }
-        let faded = |color: UiColor| color.with_alpha(color.a as f32 / 255.0 * opacity);
+        let faded = |color: UiColor| {
+            if opacity >= 1.0 {
+                color
+            } else {
+                color.with_alpha(color.a as f32 / 255.0 * opacity)
+            }
+        };
         let Some(bounds) = projection.visual_bounds(scene, object) else {
             continue;
         };
