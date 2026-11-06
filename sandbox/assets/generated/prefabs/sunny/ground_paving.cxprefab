@@ -1,0 +1,169 @@
+{
+  "data": {
+    "components": {
+      "36069ff7-1469-5603-9dd7-840b11e75d3a": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "36069ff7-1469-5603-9dd7-840b11e75d3a",
+          "name": "ne",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
+          "mesh": "85efa0cc-732f-57d0-a26f-d9322a9db33a"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.25,
+              0.0,
+              -0.25
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "3cd1a6c3-35ea-5d04-aadd-ce7a746b2882": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "3cd1a6c3-35ea-5d04-aadd-ce7a746b2882",
+          "name": "ground_paving",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "bc443f0f-1e48-573c-b6c1-68bc63acee6f": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "bc443f0f-1e48-573c-b6c1-68bc63acee6f",
+          "name": "sw",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
+          "mesh": "0912d8c0-8da3-5522-b8c6-2b4cf1309de0"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -0.25,
+              0.0,
+              0.25
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "cb1feeb1-7528-5756-a2bf-8a0954e1398a": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "cb1feeb1-7528-5756-a2bf-8a0954e1398a",
+          "name": "nw",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
+          "mesh": "486d2197-a4e8-5495-b198-e8b7e4c55ae9"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -0.25,
+              0.0,
+              -0.25
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "cf97d255-26ac-5bc5-94df-864537de546d": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "cf97d255-26ac-5bc5-94df-864537de546d",
+          "name": "se",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
+          "mesh": "04e5a66f-2b26-5a18-96f2-d611a35a905b"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.25,
+              0.0,
+              0.25
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "3cd1a6c3-35ea-5d04-aadd-ce7a746b2882": [
+        "cb1feeb1-7528-5756-a2bf-8a0954e1398a",
+        "36069ff7-1469-5603-9dd7-840b11e75d3a",
+        "bc443f0f-1e48-573c-b6c1-68bc63acee6f",
+        "cf97d255-26ac-5bc5-94df-864537de546d"
+      ]
+    },
+    "roots": [
+      "3cd1a6c3-35ea-5d04-aadd-ce7a746b2882"
+    ]
+  },
+  "root": "3cd1a6c3-35ea-5d04-aadd-ce7a746b2882"
+}

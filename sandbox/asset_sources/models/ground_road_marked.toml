@@ -1,0 +1,17 @@
+# A dashed centre-line tile; use plain road tiles on both sides.
+[[parts]]
+name = "surface"
+kind = "box"
+role = "ground_asphalt"
+size = [1.0, 0.1, 1.0]
+bevel = 0.0
+segments = 1
+
+[[parts]]
+name = "marking"
+kind = "box"
+role = "ground_marking"
+size = [0.12, 0.002, 0.6]
+offset = [0.0, 0.1, 0.0]
+bevel = 0.0005
+segments = 1

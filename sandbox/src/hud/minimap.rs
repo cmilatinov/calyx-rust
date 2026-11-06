@@ -6,7 +6,7 @@ use crate::combat::combat_team;
 use crate::sentry::ComponentSentry;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
-use calyx_engine::component::ComponentCollider;
+use calyx_engine::component::{ColliderShape, ComponentCollider};
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{UiColor, UiPoint, UiRect, UiSize};
@@ -146,38 +146,65 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
     let arena = scene.objects().find_map(|object| {
         scene
             .read_component::<ComponentArena, _, _>(object, |arena| {
-                Some((arena.extent()?, arena.cell_size, arena.cover_positions()))
+                Some((
+                    arena.extent()?,
+                    arena.cell_size,
+                    arena.cover_positions(),
+                    arena.generate_on_start,
+                ))
             })
             .flatten()
             .map(|arena| (object, scene.world_transform(object), arena))
     });
 
     let (view, floor, cover) = match arena {
-        Some((arena_object, transform, ((width, depth), cell_size, cover))) => {
+        Some((object, transform, ((width, depth), cell_size, cover, generated))) => {
             let floor = GroundRect::placed(&transform, Vec3::zeros(), vec2(width, depth));
-            let authored_cover = cover
-                .iter()
-                .map(|position| {
-                    GroundRect::placed(&transform, *position, vec2(cell_size, cell_size))
-                })
-                .collect();
-            let children = scene.children(arena_object).collect::<Vec<_>>();
-            let cover = if children.is_empty() {
-                authored_cover
-            } else {
+            let live = |child: &GameObject| {
+                scene.is_visible_in_hierarchy(*child)
+                    && scene.is_component_enabled::<ComponentCollider>(*child)
+            };
+            let children = scene.children(object).collect::<Vec<_>>();
+            let cover = if generated && children.is_empty() {
+                cover
+                    .iter()
+                    .map(|position| {
+                        GroundRect::placed(&transform, *position, vec2(cell_size, cell_size))
+                    })
+                    .collect()
+            } else if generated {
+                // Generated cover is one unit cube per cell; follow its live
+                // pose and visibility.
                 children
                     .into_iter()
-                    .filter(|object| {
-                        scene.is_visible_in_hierarchy(*object)
-                            && scene.is_component_enabled::<ComponentCollider>(*object)
-                            && scene.transform(*object).position.y > 0.0
-                    })
-                    .map(|object| {
+                    .filter(|child| live(child) && scene.transform(*child).position.y > 0.0)
+                    .map(|child| {
                         GroundRect::placed(
-                            &scene.world_transform(object),
+                            &scene.world_transform(child),
                             Vec3::zeros(),
                             vec2(1.0, 1.0),
                         )
+                    })
+                    .collect()
+            } else {
+                // Authored kit instances have independent collider
+                // children; read their actual pose, including edits.
+                scene
+                    .descendants(object)
+                    .filter(|child| scene.name(*child).starts_with("Arena Cover") && live(child))
+                    .filter_map(|child| {
+                        let ColliderShape::Cuboid { half_extents } = scene
+                            .read_component::<ComponentCollider, _, _>(child, |collider| {
+                                collider.shape
+                            })?
+                        else {
+                            return None;
+                        };
+                        Some(GroundRect::placed(
+                            &scene.world_transform(child),
+                            Vec3::zeros(),
+                            vec2(half_extents.x * 2.0, half_extents.z * 2.0),
+                        ))
                     })
                     .collect()
             };
@@ -305,6 +332,7 @@ fn cover_entry(start: Vec2, end: Vec2, cover: GroundRect) -> Option<f32> {
     }
     (far >= 0.0 && near <= 1.0).then_some(near.max(0.0))
 }
+
 impl MinimapState {
     pub fn visible(&self, position: Vec2, range: f32) -> bool {
         (position - self.player_position).norm() <= range.max(0.0)
@@ -312,6 +340,7 @@ impl MinimapState {
                 cover_entry(self.player_position, position, *cover).is_some_and(|t| t < 0.999)
             })
     }
+
     fn sight_end(&self, angle: f32, range: f32) -> Vec2 {
         let end = self.player_position + vec2(angle.cos(), angle.sin()) * range.max(0.0);
         let t = self
@@ -332,6 +361,7 @@ pub(super) struct BoundaryCache {
     cover: Vec<GroundRect>,
     edges: Vec<(Vec2, Vec2)>,
 }
+
 impl BoundaryCache {
     fn edges(&mut self, floor: Option<GroundRect>, cover: &[GroundRect]) -> &[(Vec2, Vec2)] {
         if self.floor != floor || self.cover != cover {
@@ -353,9 +383,11 @@ fn corners(area: GroundRect) -> [Vec2; 4] {
         area.center - a + b,
     ]
 }
+
 fn contains(area: GroundRect, point: Vec2) -> bool {
     cover_entry(point, point, area).is_some()
 }
+
 /// Boundary of floor minus solid cover. Splitting intersections and checking the
 /// free-space side removes shared tile edges without assuming an axis-aligned grid.
 fn playable_boundary(floor: Option<GroundRect>, cover: &[GroundRect]) -> Vec<(Vec2, Vec2)> {
@@ -419,6 +451,7 @@ fn playable_boundary(floor: Option<GroundRect>, cover: &[GroundRect]) -> Vec<(Ve
     }
     result
 }
+
 fn clip_line_circle(
     a: (f32, f32),
     b: (f32, f32),
@@ -587,6 +620,7 @@ mod tests {
             player_position: Vec2::zeros(),
         }
     }
+
     #[test]
     fn playable_contours_remove_shared_tile_seams_and_keep_obstacle_edges() {
         let floor = GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(20.0, 20.0));
@@ -610,6 +644,58 @@ mod tests {
             .iter()
             .any(|(a, b)| (a.y + 8.0).abs() < 1e-4 && (b.y + 8.0).abs() < 1e-4));
     }
+
+    #[test]
+    fn authored_cover_uses_current_collider_poses_instead_of_grid_cells() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let arena = scene.create(None, None);
+        scene.set_transform(arena, &Transform::from_xyz(0.0, 0.0, 11.0).matrix());
+        scene.add_component(
+            arena,
+            ComponentArena {
+                generate_on_start: false,
+                ..Default::default()
+            },
+        );
+        let cover = scene.create(
+            Some(calyx_engine::component::ComponentID {
+                name: "Arena Cover Test".into(),
+                ..Default::default()
+            }),
+            Some(arena),
+        );
+        scene.add_component(
+            cover,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: vec3(1.2, 0.6, 0.4),
+                },
+                ..Default::default()
+            },
+        );
+        scene.set_transform(
+            cover,
+            &Transform::from_components(
+                vec3(4.0, 0.6, 1.0),
+                nalgebra::UnitQuaternion::from_euler_angles(0.0, std::f32::consts::FRAC_PI_2, 0.0),
+                vec3(1.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
+        let player = scene.create(None, None);
+        let state = minimap_state(&scene, player);
+        assert_eq!(state.cover.len(), 1);
+        assert_eq!(state.cover[0].center, vec2(4.0, 12.0));
+        assert!((state.cover[0].half_axes[0].norm() - 1.2).abs() < 1e-4);
+        assert!((state.cover[0].half_axes[1].norm() - 0.4).abs() < 1e-4);
+        assert!(state.cover[0].half_axes[0].x.abs() < 1e-4);
+        scene.set_transform(cover, &Transform::from_xyz(8.0, 0.6, 1.0).matrix());
+        assert_eq!(
+            minimap_state(&scene, player).cover[0].center,
+            vec2(8.0, 12.0)
+        );
+    }
+
     #[test]
     fn vision_hides_behind_cover_and_beyond_range() {
         let map = state(vec![GroundRect::axis_aligned(
@@ -622,6 +708,7 @@ mod tests {
         assert!(!map.visible(vec2(0.0, 11.0), 10.0));
         assert_eq!(map.sight_end(0.0, 10.0), vec2(3.0, 0.0));
     }
+
     #[test]
     fn transformed_cover_and_floor_share_world_geometry() {
         let mut transform = Transform::from_xyz(10.0, 0.0, 3.0);
@@ -633,6 +720,7 @@ mod tests {
         let rect = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(100.0, 100.0));
         assert_eq!(view.map_point(cover.center, rect), UiPoint::new(50.0, 50.0));
     }
+
     #[test]
     fn contour_clipping_handles_crossings_outside_and_tangents() {
         assert_eq!(
@@ -646,6 +734,7 @@ mod tests {
             Some(((0.0, 0.0), (5.0, 0.0)))
         );
     }
+
     #[test]
     fn contour_cache_reuses_geometry_and_invalidates_moved_cover() {
         let floor = Some(GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(20.0, 20.0)));
@@ -659,6 +748,7 @@ mod tests {
         assert_ne!(cache.edges(floor, &cover), original);
         assert_eq!(cache.edges(None, &[]).len(), 0);
     }
+
     #[test]
     fn live_cover_moves_and_visibility_changes_follow_generated_children() {
         let mut scene = calyx_engine::test_support::test_scene();

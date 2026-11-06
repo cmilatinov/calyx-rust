@@ -64,6 +64,10 @@ const fn role(
 pub const ROLES: &[Role] = &[
     role("ground", "#87BC6C", "#B9AD97", "#44525B", 1.0),
     role("road", "#D0C292", "#B1A289", "#657179", 1.0),
+    role("ground_dirt", "#A2855E", "#968267", "#4C5D62", 1.0),
+    role("ground_paving", "#BFB9AE", "#C0BCB6", "#9FA7AF", 1.0),
+    role("ground_asphalt", "#53565A", "#5C5B55", "#35434D", 1.0),
+    role("ground_marking", "#F3C84B", "#E6B84C", "#CDA559", 1.0),
     role("walls", "#D6B275", "#AAA59D", "#5E6F81", 0.95),
     role("barriers", "#BFB9AE", "#C0BCB6", "#9FA7AF", 0.95),
     role("crates", "#A2855E", "#66635F", "#6B8086", 0.95),
@@ -169,7 +173,7 @@ impl Role {
                 uniform("emission_strength", 12, 4, json!({"Float": strength})),
                 uniform("emission_color", 16, 16, json!({"Color": emission_color})),
                 uniform("base_color_factor", 32, 16, json!({"Color": color})),
-                uniform("outline_style", 60, 4, json!({"Uint": if matches!(self.name, "ground" | "road" | "signals" | "pickup_yellow" | "pickup_blue" | "ink" | "reticle_light" | "reticle_dark") { 0 } else { 1 }})),
+                uniform("outline_style", 60, 4, json!({"Uint": if self.name.starts_with("ground_") || matches!(self.name, "ground" | "road" | "signals" | "pickup_yellow" | "pickup_blue" | "ink" | "reticle_light" | "reticle_dark") { 0 } else { 1 }})),
             ]
         })
     }
@@ -241,6 +245,32 @@ mod tests {
             variable(&material, "base_color_factor"),
             &json!({"Color": [0.13287, 0.12477, 0.11444, 1.0]})
         );
+    }
+
+    #[test]
+    fn ground_tiles_never_draw_ink_or_emit_light() {
+        for name in [
+            "ground",
+            "road",
+            "ground_dirt",
+            "ground_paving",
+            "ground_asphalt",
+            "ground_marking",
+        ] {
+            for map in Map::ALL {
+                let material = find(name).unwrap().material(map);
+                assert_eq!(
+                    variable(&material, "outline_style"),
+                    &json!({"Uint": 0}),
+                    "{name}"
+                );
+                assert_eq!(
+                    variable(&material, "emission_strength"),
+                    &json!({"Float": 0.0})
+                );
+                assert_eq!(variable(&material, "roughness"), &json!({"Float": 1.0}));
+            }
+        }
     }
 
     #[test]

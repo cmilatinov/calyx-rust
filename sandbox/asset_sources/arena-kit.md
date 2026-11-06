@@ -107,3 +107,48 @@ emission (Sunny/Sunbaked/Moonlit) is 12/12/6 for green and 24/24/16 for blue,
 with distinct colored halos at Far. The combat props add `explosive_red`,
 `sentry_armor` and `sentry_optic` roles; existing kit material colors remain unchanged.
 All three look-dev rigs use 2 px inner ink; outer ink and thresholds are unchanged.
+
+## Authored gameplay arena
+
+The gameplay arena uses linked Sunny kit instances inside a closed 60 by 64 m
+pen. The existing Arena object remains at world `(0, 0, 22)` and supplies the
+minimap bounds. Its `generate_on_start` is off: saved kit children and their
+colliders are the layout. Empty test arenas keep the simple grid generator by
+default; adding a decorative child does not disable it.
+
+One-metre grass, sand, dirt, paving and road tiles use flat clay materials
+without ink. Uniform surfaces share scaled tile instances on whole-metre
+rectangles; paving joints and marked road dashes stay on individual tiles.
+The tiles share one uninterrupted collision floor at y = 0, so seams and
+paving joints do not catch tank tracks. The visible foundation extends to
+200 by 200 m, with its top 0.1 m below the tiles, to fill the camera view
+at the walls even with maximum zoom-out and aim lead. It adds no collision
+outside the closed playable pen. The ground materials and meshes are
+generated for all three palettes alongside the prop kit.
+
+The two sand flank lanes stay clear for tanks. Staggered barriers, crates,
+sandbags and rocks break shots across the middle while leaving the player's
+initial firing lane open. The northeast pocket, local X 8 to 24 and Z 14 to 28
+(world Z 36 to 50),
+is reserved for a raised area. Gameplay actor ids and model scales stay
+independent of the kit layout. The player spawns at the origin; targets are
+at (-6, 0.5, 24) and (6, 0.5, 32), and the sentry is at (16, 0.5, 32),
+south of the reserved area. Spawn-side cover begins beyond the first six
+metres, while the broad sand lanes run near X = +/-20.
+
+The straight perimeter uses four continuous box strips matching the wall
+modules, without internal collider seams. Crates use their solid box, and
+barriers and rocks use
+stacked boxes for their changing silhouette. Rock slabs are derived from the
+exported triangles, with narrower height bands at the crown (at most sixteen
+per rock); they conservatively approximate contours rather than exact convex
+geometry. Sandbags use three thin rows matching their stepped pile. Tree
+trunks, flag poles and lamp posts have collision; foliage, lifting loops and paint are decorative.
+This uses the engine's existing primitive colliders. The minimap reads the
+authored cover colliders' current transforms, including scene edits.
+
+`cargo run -p sandbox --example remake_arena` rebuilds only the Arena object's
+authored children with deterministic ids and engine-created prefab links.
+It assigns the explicit actor placements and initial Far camera above,
+preserving other component data and all actor ids/prefab links. Run
+the model generator first after changing a tile or kit parameter file.
