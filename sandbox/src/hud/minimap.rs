@@ -18,6 +18,10 @@ use nalgebra_glm::{vec2, Vec2};
 /// Half the side of the square the map shows when the scene has no arena,
 /// in metres, centred on the player.
 const UNBOUNDED_HALF_EXTENT: f32 = 25.0;
+/// How far the map reaches from the player, in multiples of the player's
+/// vision range: far enough to show the arena past what the main view
+/// already shows.
+const MAP_REACH: f32 = 3.0;
 
 /// Which part of the ground the map shows, and which way it faces.
 ///
@@ -379,7 +383,7 @@ pub(super) fn paint_map(
         UiPoint::new(x - radius, y - radius),
         UiSize::new(radius * 2.0, radius * 2.0),
     );
-    let extent = vision.max(1.0) / 0.70;
+    let extent = vision.max(1.0) * MAP_REACH;
     let view = MinimapView::facing(
         state.player_position,
         vec2(extent, extent),
