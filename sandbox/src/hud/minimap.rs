@@ -129,11 +129,12 @@ pub(crate) struct MinimapState {
 pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
     let right = camera_right(scene, player).unwrap_or_else(|| vec2(1.0, 0.0));
     let arena = arena_geometry(scene);
-    let (view, floor, cover) = match arena {
+    let (view, floor, cover, blockers) = match arena {
         Some(arena) => (
             MinimapView::fitting(arena.floor, right),
             Some(arena.floor),
             arena.cover,
+            arena.sight_blockers,
         ),
         None => (
             MinimapView::facing(
@@ -143,10 +144,11 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
             ),
             None,
             Vec::new(),
+            Vec::new(),
         ),
     };
 
-    let vision = TeamVision::of_player(scene, player, cover.clone());
+    let vision = TeamVision::of_player(scene, player, blockers);
     MinimapState {
         player_position: ground(scene.world_transform(player).position),
         vision_range: scene

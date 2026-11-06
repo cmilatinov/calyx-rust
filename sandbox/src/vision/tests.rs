@@ -117,10 +117,15 @@ fn team_vision_comes_from_every_live_friendly_tank_only() {
     assert!(!vision.visible(vec2(35.0, 0.0)), "a dead ally sees nothing");
 }
 
-/// An authored arena with one wall-height block of cover across +X at x = 4,
-/// a player tank at the origin with the tank HUD, and a sentry behind the
-/// cover, with a light on its model.
+/// An authored arena with one wall-height crate across +X at x = 4, a player
+/// tank at the origin with the tank HUD, and a sentry behind the crate, with
+/// a light on its model.
 fn sentry_behind_cover() -> (Scene, GameObject, GameObject, GameObject) {
+    sentry_behind("Arena Cover Stack Crate")
+}
+
+/// [`sentry_behind_cover`], with the cover named `cover_name`.
+fn sentry_behind(cover_name: &str) -> (Scene, GameObject, GameObject, GameObject) {
     let mut scene = calyx_engine::test_support::test_scene();
     let arena = scene.create(None, None);
     scene.add_component(
@@ -132,7 +137,7 @@ fn sentry_behind_cover() -> (Scene, GameObject, GameObject, GameObject) {
     );
     let cover = scene.create(
         Some(ComponentID {
-            name: "Arena Cover Wall".into(),
+            name: cover_name.into(),
             ..Default::default()
         }),
         Some(arena),
@@ -185,6 +190,23 @@ fn sentry_behind_cover() -> (Scene, GameObject, GameObject, GameObject) {
     let lamp = scene.create(None, Some(sentry));
     scene.add_component(lamp, ComponentPointLight::default());
     (scene, player, sentry, lamp)
+}
+
+#[test]
+fn only_walls_and_boxes_block_sight() {
+    for (cover, blocks) in [
+        ("Arena Cover Stack Crate", true),
+        ("Arena Cover Left Supply", true),
+        ("Arena Wall North 4", true),
+        ("Arena Cover Centre Barrier", false),
+        ("Arena Cover Right Sandbags", false),
+        ("Arena Cover West Boulder", false),
+        ("Arena Cover East Rock", false),
+    ] {
+        let (mut scene, player, sentry, _) = sentry_behind(cover);
+        apply_fog(&mut scene, player, &mut FogState::default());
+        assert_eq!(!scene.is_visible(sentry), blocks, "{cover}");
+    }
 }
 
 #[test]
