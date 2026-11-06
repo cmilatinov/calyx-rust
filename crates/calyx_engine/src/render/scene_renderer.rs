@@ -18,8 +18,8 @@ use crate::render::foliage::FoliageCache;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     drawn_outline_styles, BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass,
-    DepthOfFieldPass, FogPass, FxaaPass, OutlinePass, PostProcessChain, PostProcessSettings,
-    SceneInput, SsaoInputs, SsaoPass, TonemapPass,
+    DepthOfFieldPass, FogOfWarPass, FogPass, FxaaPass, OutlinePass, PostProcessChain,
+    PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -385,6 +385,9 @@ impl SceneRenderer {
         // Ink outlines draw on the graded image, so the ink shows as its
         // colour, and before FXAA, which smooths their stair steps.
         post_process.push(Box::new(OutlinePass::new(context)?));
+        // Fog of war darkens the finished image, ink included, by what the
+        // side sees of each surface; FXAA then smooths its hard edges.
+        post_process.push(Box::new(FogOfWarPass::new(context)?));
         post_process.push(Box::new(FxaaPass::new(context)?));
         let overlay = OverlayCompositor::new(context)?;
 
@@ -523,6 +526,8 @@ impl SceneRenderer {
             tan_half_fov: CameraPlanes::tan_half_fov_of(&camera.projection),
         };
         self.post_process.set_camera(camera_planes);
+        self.post_process
+            .set_view_to_world(camera_transform.matrix());
 
         let mut frame_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),

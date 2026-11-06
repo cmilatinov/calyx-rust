@@ -10,6 +10,7 @@ use rapier3d::dynamics::RigidBodyType;
 
 fn viewer(x: f32, z: f32, range: f32) -> Viewer {
     Viewer {
+        id: Uuid::nil(),
         position: vec2(x, z),
         range,
     }
@@ -26,7 +27,7 @@ fn visibility_needs_range_and_a_clear_line_from_any_viewer() {
     assert!(!vision.visible(vec2(6.0, 0.0)), "behind cover");
     assert!(vision.visible(vec2(6.0, 6.0)), "around cover");
     assert!(!vision.visible(vec2(0.0, 11.0)), "beyond range");
-    assert!((vision.sight_rays(4)[0].entry[0] - 3.0).abs() < 1e-4);
+    assert!((vision.sight_rays(4)[0].through[0] - 5.0).abs() < 1e-4);
 
     // A second tank on the side sees behind the wall from the far side.
     let vision = TeamVision {
@@ -42,7 +43,7 @@ fn visibility_needs_range_and_a_clear_line_from_any_viewer() {
 }
 
 #[test]
-fn sight_rays_stop_at_cover_and_carry_through_touching_blocks() {
+fn sight_rays_carry_through_touching_blocks_of_cover() {
     let vision = TeamVision {
         viewers: vec![viewer(0.0, 0.0, 10.0)],
         cover: vec![
@@ -51,12 +52,9 @@ fn sight_rays_stop_at_cover_and_carry_through_touching_blocks() {
         ],
     };
     let rays = vision.sight_rays(8);
-    assert!((rays[0].entry[0] - 3.0).abs() < 1e-4);
     assert!((rays[0].through[0] - 7.0).abs() < 1e-4);
     // Rays that meet no cover reach the full range.
-    assert_eq!(rays[0].entry[2], 10.0);
     assert_eq!(rays[0].through[2], 10.0);
-    assert!((rays[0].angle(2) - std::f32::consts::FRAC_PI_2).abs() < 1e-6);
 }
 
 fn tank(scene: &mut Scene, name: &str, x: f32, z: f32, team: u32) -> GameObject {

@@ -1,4 +1,3 @@
-mod fog;
 mod kill_feed;
 mod minimap;
 mod paint;
@@ -58,10 +57,11 @@ pub struct ComponentTankHud {
     #[serde(skip)]
     #[reflect_skip]
     pub(crate) fog: crate::vision::FogState,
-    /// The fog painted last frame, so the next one eases from it.
+    /// The side's sight as the renderer's fog of war shows it, eased from
+    /// one update to the next.
     #[serde(skip)]
     #[reflect_skip]
-    fog_fade: std::sync::Arc<std::sync::Mutex<fog::FogFade>>,
+    fog_sight: crate::vision::sight::FogSight,
 }
 
 impl Default for ComponentTankHud {
@@ -77,7 +77,7 @@ impl Default for ComponentTankHud {
             scoreboard_blur: Default::default(),
             map_boundary: Default::default(),
             fog: Default::default(),
-            fog_fade: Default::default(),
+            fog_sight: Default::default(),
         }
     }
 }
@@ -143,6 +143,13 @@ impl ComponentUpdate for ComponentTankHud {
             fog.advance(dt);
             crate::vision::apply_fog(scene, this.game_object(), &mut fog);
             let _ = this.write(scene, |hud| hud.fog = fog);
+        }
+        let vision = crate::vision::TeamVision::in_scene(scene, this.game_object());
+        if let Some(sight) = this.write(scene, |hud| {
+            hud.fog_sight.update(&vision, dt);
+            hud.fog_sight.sight().clone()
+        }) {
+            crate::vision::sight::show_sight(scene, &sight);
         }
     }
 }
@@ -224,20 +231,11 @@ impl ComponentHud for ComponentTankHud {
         for blip in &mut map.blips {
             blip.presence = hud.fog.presence(blip.id);
         }
+        if !hud.fog_sight.sight().viewers.is_empty() {
+            // The map lights what the main view's fog shows, eased alike.
+            map.sight.clone_from(hud.fog_sight.sight());
+        }
         if !hud.scoreboard_open {
-            fog::paint_fog(
-                &mut p,
-                scene,
-                &map.vision,
-                scene.world_transform(player).position.y,
-                width,
-                height,
-                &mut hud
-                    .fog_fade
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
-                hud.elapsed,
-            );
             paint_world(&mut p, scene, player, hud, &map, width, height);
             let feed_width = (width * 0.24).clamp(230.0, 390.0);
             let feed_height = (height * 0.043).clamp(28.0, 42.0);

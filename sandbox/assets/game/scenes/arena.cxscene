@@ -31189,6 +31189,15 @@
         "name": "Post Process",
         "visible": true
       },
+      "0592aa8e-ecd0-4aa4-9509-b4c030e7794c": {
+        "color": [
+          0,
+          0,
+          0,
+          255
+        ],
+        "opacity": 0.6399999856948853
+      },
       "68ac12ac-fc9a-489e-b305-363eaf593966": {
         "exposure_ev": 0.0,
         "preset": "Aces"

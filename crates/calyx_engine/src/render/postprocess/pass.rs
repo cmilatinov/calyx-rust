@@ -5,6 +5,7 @@ use crate::assets::texture::Texture;
 use crate::render::{RenderContext, Shader};
 use egui_wgpu::wgpu;
 use enumflags2::{bitflags, make_bitflags, BitFlags};
+use nalgebra_glm::Mat4;
 use std::fmt;
 use std::sync::Arc;
 
@@ -130,6 +131,10 @@ pub struct PassContext<'a> {
     /// The near and far planes of the camera the scene was drawn with, so a
     /// pass can turn depth into view distance.
     pub camera: CameraPlanes,
+    /// The world transform of that camera: from its view space (left-handed,
+    /// looking down +z, as [`CameraPlanes`] rebuilds positions in) to world
+    /// space, so a pass can turn depth into world positions.
+    pub view_to_world: Mat4,
 }
 
 /// The clip planes of the camera a frame was drawn with.

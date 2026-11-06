@@ -7,7 +7,9 @@ use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
 #[cfg(test)]
 use crate::vision::cover_entry;
+use crate::vision::sight::side_sight;
 use crate::vision::{arena_geometry, ground, GroundRect, TeamVision};
+use calyx_engine::component::FogOfWarSight;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{UiColor, UiPoint, UiRect, UiSize};
 use calyx_engine::utils::Uuid;
@@ -117,6 +119,9 @@ pub(crate) struct MinimapState {
     /// What the player's side sees; the main view hides and darkens by the
     /// same vision.
     pub vision: TeamVision,
+    /// The side's sight as the main view's fog of war shows it, which the
+    /// map lights.
+    pub sight: FogOfWarSight,
 }
 
 /// Reads the map of the scene `player`'s HUD shows: the first arena, facing
@@ -141,6 +146,7 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
         ),
     };
 
+    let vision = TeamVision::of_player(scene, player, cover.clone());
     MinimapState {
         player_position: ground(scene.world_transform(player).position),
         vision_range: scene
@@ -149,7 +155,8 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
             })
             .unwrap_or(0.0)
             .max(0.0),
-        vision: TeamVision::of_player(scene, player, cover.clone()),
+        sight: side_sight(&vision),
+        vision,
         view,
         floor,
         cover,
@@ -390,31 +397,32 @@ pub(super) fn paint_map(
             world
         }
     };
-    // Concentric, vertex-coloured rays produce a soft radial falloff around
-    // every tank lending its sight, with every ray terminated by actual live
-    // cover. Nothing lights behind a wall.
+    // Concentric, vertex-coloured rays light the ground every tank lending
+    // its sight sees, as the main view's fog of war shows it: out along its
+    // sight rays to where cover stops them, fading with distance as the
+    // main view's fog does.
     let mut points = Vec::new();
     let mut colors = Vec::new();
     let mut indices = Vec::new();
-    const RAYS: usize = 192;
+    const RAY_STEP: usize = 3;
     const RINGS: usize = 12;
-    for rays in state.vision.sight_rays(RAYS) {
-        let viewer = rays.viewer;
+    for viewer in &state.sight.viewers {
+        let count = viewer.reach.len();
+        if count == 0 {
+            continue;
+        }
+        let rays = count.div_ceil(RAY_STEP);
         let first = points.len() as u32;
-        let range = viewer.range.max(1.0);
-        for i in 0..=RAYS {
-            let angle = rays.angle(i);
-            let length = rays.entry[i % RAYS];
-            let end = viewer.position + vec2(angle.cos(), angle.sin()) * length;
+        for i in 0..=rays {
+            let ray = (i * RAY_STEP) % count;
+            let angle = ray as f32 * std::f32::consts::TAU / count as f32;
+            let length = viewer.reach[ray].min(viewer.fade_end).max(0.0);
+            let direction = vec2(angle.cos(), angle.sin());
             for ring in 0..=RINGS {
-                let t = ring as f32 / RINGS as f32;
-                points.push(mapped(inside(
-                    viewer.position + (end - viewer.position) * t,
-                )));
-                let distance = t * length / range;
-                let radial = (1.0 - distance.powi(2)).clamp(0.0, 1.0);
-                let edge = if ring == RINGS { 0.0 } else { 1.0 };
-                colors.push(UiColor::rgba(28, 145, 191, (radial * edge * 110.0) as u8));
+                let distance = length * ring as f32 / RINGS as f32;
+                points.push(mapped(inside(viewer.position + direction * distance)));
+                let light = viewer.range_fade(distance);
+                colors.push(UiColor::rgba(28, 145, 191, (light * 110.0) as u8));
                 if i > 0 && ring > 0 {
                     let b = first + (i * (RINGS + 1) + ring) as u32;
                     let a = b - (RINGS + 1) as u32;

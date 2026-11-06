@@ -807,6 +807,7 @@ mod tests {
                 "tonemap",
                 "color_grading",
                 "outline",
+                "fog_of_war",
                 "fxaa"
             ],
             "the renderer runs bloom after fog and depth of field"
@@ -851,6 +852,7 @@ mod tests {
                 render_context: &render_context,
                 size,
                 camera: CameraPlanes::default(),
+                view_to_world: nalgebra_glm::Mat4::identity(),
             };
             pass.prepare(&pass_context, &bloom(1.0, radius));
             let mut encoder = render_context

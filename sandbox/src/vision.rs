@@ -180,154 +180,24 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
 /// from the HUD and minimap before fog hides them.
 pub(crate) const FADE_TIME: f32 = 0.3;
 
-/// How little the reach of the rays around a point may vary, in metres, for
-/// the point's coverage to come from the single ray through it.
-const FLAT_REACH: f32 = 0.02;
-
-/// The widest arc either way of a point that its soft shadow sides blend
-/// over, in radians, so points right next to a viewer stay cheap.
-const MAX_SPREAD: f32 = 0.35;
-
-/// Share of the soft edge that lies inside the edge of sight; the rest
-/// darkens the ground just past it.
-const INNER_EDGE: f32 = 0.25;
-
-/// How much a viewer sees of a point `distance` away along a ray that
-/// reaches `reach`: 1 well inside, falling smoothly to 0 across a soft edge
-/// `soft` metres wide that straddles the end of the ray.
-fn edge(distance: f32, reach: f32, soft: f32) -> f32 {
-    let t = ((distance - reach) / soft + INNER_EDGE).clamp(0.0, 1.0);
-    1.0 - t * t * (3.0 - 2.0 * t)
-}
-
 /// One tank lending its sight to its side.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub(crate) struct Viewer {
+    /// The tank lending its sight.
+    pub id: Uuid,
     pub position: Vec2,
     pub range: f32,
 }
 
 /// How far each of a viewer's evenly spaced sight rays reaches, for drawing
-/// vision as an area rather than testing single points.
+/// vision as an area rather than testing single points. Ray `i` of `n`
+/// points at the angle `i * 2π / n` counterclockwise from +X on the ground.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct SightRays {
     pub viewer: Viewer,
-    /// Where each ray first meets cover, or its full range.
-    pub entry: Vec<f32>,
-    /// Like `entry`, but a ray that meets cover carries on through the
-    /// touching blocks it meets, so the cover itself is not in shadow.
+    /// Where each ray meets cover, carried on through the touching blocks
+    /// it meets so the cover itself is not in shadow, or its full range.
     pub through: Vec<f32>,
-    /// The shortest and longest reach of `through` over runs of rays:
-    /// level `k` holds, for each ray, the extremes over it and the next
-    /// `2^k - 1` rays round the circle.
-    extremes: Vec<Vec<(f32, f32)>>,
-}
-
-impl SightRays {
-    /// Rays of `viewer` reaching `entry` and `through`, in order
-    /// counterclockwise from +X.
-    fn new(viewer: Viewer, entry: Vec<f32>, through: Vec<f32>) -> Self {
-        let count = through.len();
-        let mut extremes = vec![through
-            .iter()
-            .map(|&reach| (reach, reach))
-            .collect::<Vec<_>>()];
-        let mut span = 1;
-        while span * 2 <= count {
-            let below = &extremes[extremes.len() - 1];
-            let level = (0..count)
-                .map(|index| {
-                    let (a, b) = (below[index], below[(index + span) % count]);
-                    (a.0.min(b.0), a.1.max(b.1))
-                })
-                .collect();
-            extremes.push(level);
-            span *= 2;
-        }
-        Self {
-            viewer,
-            entry,
-            through,
-            extremes,
-        }
-    }
-
-    /// The ray angle of ray `index`, counterclockwise from +X on the ground.
-    pub fn angle(&self, index: usize) -> f32 {
-        index as f32 * std::f32::consts::TAU / self.entry.len() as f32
-    }
-
-    /// How far sight reaches at `turns` ray spacings counterclockwise from
-    /// +X, through the cover it first meets, interpolating between the two
-    /// nearest rays.
-    fn reach_at(&self, turns: f32) -> f32 {
-        let count = self.through.len();
-        let index = turns.floor().rem_euclid(count as f32) as usize % count;
-        let next = (index + 1) % count;
-        let blend = turns - turns.floor();
-        self.through[index] * (1.0 - blend) + self.through[next] * blend
-    }
-
-    /// The shortest and longest reach of the rays from `first` to `last`,
-    /// counting round the circle.
-    fn reach_range(&self, first: i64, last: i64) -> (f32, f32) {
-        let count = self.through.len();
-        let length = ((last - first + 1).max(1) as usize).min(count);
-        let level = (usize::BITS - 1 - length.leading_zeros()) as usize;
-        let start = first.rem_euclid(count as i64) as usize;
-        let other = (start + length - (1 << level)) % count;
-        let (a, b) = (self.extremes[level][start], self.extremes[level][other]);
-        (a.0.min(b.0), a.1.max(b.1))
-    }
-
-    /// How much of `point` this viewer sees: 1 inside its sight, falling
-    /// smoothly to 0 across a soft edge `soft` metres wide, both at the end of
-    /// its range and across the sides of cover shadows.
-    ///
-    /// Along a ray the edge is a smoothstep. Where the rays around the point
-    /// reach different distances, as across a shadow side, every ray within
-    /// half the soft edge either way adds its own edge, weighted by a smooth
-    /// window that falls to zero at its ends, so the result moves
-    /// continuously as the point does and has no steps of its own.
-    pub fn coverage(&self, point: Vec2, soft: f32) -> f32 {
-        let soft = soft.max(1e-3);
-        let offset = point - self.viewer.position;
-        let distance = offset.norm();
-        if distance >= self.viewer.range + soft * (1.0 - INNER_EDGE) {
-            return 0.0;
-        }
-        let count = self.through.len() as f32;
-        let tau = std::f32::consts::TAU;
-        let turns = offset.y.atan2(offset.x).rem_euclid(tau) / tau * count;
-        let half = (soft * 0.5 / distance.max(f32::EPSILON)).min(MAX_SPREAD) / tau * count;
-        let first = (turns - half).ceil() as i64;
-        let last = (turns + half).floor() as i64;
-        // Every ray the window or the interpolation could use.
-        let (shortest, longest) = self.reach_range(first - 1, last + 1);
-        if shortest >= distance + soft * INNER_EDGE {
-            return 1.0;
-        }
-        if longest <= distance - soft * (1.0 - INNER_EDGE) {
-            return 0.0;
-        }
-        if half < 1.0 || longest - shortest < FLAT_REACH {
-            return edge(distance, self.reach_at(turns), soft);
-        }
-        let mut total = 0.0;
-        let mut weight = 0.0;
-        for index in first..=last {
-            let x = (index as f32 - turns) / half;
-            let w = (1.0 - x * x).max(0.0).powi(2);
-            let reach = self.through[index.rem_euclid(self.through.len() as i64) as usize];
-            total += w * edge(distance, reach, soft);
-            weight += w;
-        }
-        if weight > 0.0 {
-            total / weight
-        } else {
-            edge(distance, self.reach_at(turns), soft)
-        }
-    }
 }
 
 /// Everything one side can currently see.
@@ -350,6 +220,7 @@ impl TeamVision {
                         controller.vision_range
                     })?;
                 Some(Viewer {
+                    id: scene.uuid(object),
                     position: ground(scene.world_transform(object).position),
                     range: range.max(0.0),
                 })
@@ -396,32 +267,21 @@ impl TeamVision {
                         (cover.center - viewer.position).norm() <= viewer.range + cover.reach()
                     })
                     .collect::<Vec<_>>();
-                let mut entry = Vec::with_capacity(count);
-                let mut through = Vec::with_capacity(count);
-                for index in 0..count {
-                    let angle = index as f32 * std::f32::consts::TAU / count as f32;
-                    let direction = vec2(angle.cos(), angle.sin());
-                    let (hit, beyond) = ray_through_cover(viewer, direction, &near);
-                    entry.push(hit);
-                    through.push(beyond);
-                }
-                SightRays::new(viewer, entry, through)
+                let through = (0..count)
+                    .map(|index| {
+                        let angle = index as f32 * std::f32::consts::TAU / count as f32;
+                        ray_through_cover(viewer, vec2(angle.cos(), angle.sin()), &near)
+                    })
+                    .collect();
+                SightRays { viewer, through }
             })
             .collect()
     }
-
-    /// How much of `point` the side sees, from 0 to 1, with a soft edge of
-    /// `soft` metres; `rays` are this vision's [`Self::sight_rays`].
-    pub fn coverage(rays: &[SightRays], point: Vec2, soft: f32) -> f32 {
-        rays.iter()
-            .map(|rays| rays.coverage(point, soft))
-            .fold(0.0, f32::max)
-    }
 }
 
-/// How far a sight ray reaches before it meets cover, and how far it reaches
-/// once it carries on through the run of touching blocks it met.
-fn ray_through_cover(viewer: Viewer, direction: Vec2, cover: &[GroundRect]) -> (f32, f32) {
+/// How far a sight ray reaches once it carries on through the run of
+/// touching blocks of cover it meets first.
+fn ray_through_cover(viewer: Viewer, direction: Vec2, cover: &[GroundRect]) -> f32 {
     // Reach a little past the range so a block straddling the edge of sight
     // is still carried through.
     let length = viewer.range + 4.0;
@@ -432,12 +292,12 @@ fn ray_through_cover(viewer: Viewer, direction: Vec2, cover: &[GroundRect]) -> (
         .filter_map(|cover| cover_span(start, end, *cover))
         .map(|(near, far)| (near * length, far.min(1.0) * length))
         .collect::<Vec<_>>();
-    let Some(&(entry, mut exit)) = spans
+    let Some(&(_, mut exit)) = spans
         .iter()
         .filter(|(near, _)| *near < viewer.range)
         .min_by(|a, b| a.0.total_cmp(&b.0))
     else {
-        return (viewer.range, viewer.range);
+        return viewer.range;
     };
     // Blocks of one prop touch or overlap; walk through all of them.
     loop {
@@ -451,7 +311,7 @@ fn ray_through_cover(viewer: Viewer, direction: Vec2, cover: &[GroundRect]) -> (
         }
         exit = further;
     }
-    (entry, exit)
+    exit
 }
 
 /// Whether `object` is a tank that is alive and in play.
@@ -759,5 +619,6 @@ pub(crate) fn refresh(scene: &mut Scene, objects: &[GameObject]) {
     let _ = scene.write_component::<ComponentTankHud, _>(viewer, |hud| hud.fog = fog);
 }
 
+pub(crate) mod sight;
 #[cfg(test)]
 mod tests;

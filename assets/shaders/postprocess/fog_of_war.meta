@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "182f5850-3ca3-472f-b581-a47ccf1fa15d",
+    "name": "shaders/postprocess/fog_of_war",
+    "display_name": "fog_of_war",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
