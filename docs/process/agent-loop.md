@@ -92,11 +92,52 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | `focus-game [--release-grab]` | `focus_game` | activates the Game tab and grabs gameplay input focus |
 | `input key/click/move/text/raw` | `inject_input` | see below |
 | `screenshot --target window|game|viewport --out F` | `screenshot` | PNG; `window` includes the whole UI, `game`/`viewport` are the render textures. `game` works without the Game tab active: once the tab has been shown it is rendered every frame at the tab's size, and before that a game capture renders it on demand at the Scene viewport's size (or the window's). It fails with `bad_request` when the scene has no enabled camera, or when nothing has a size yet, naming `focus-game` |
+| `profiler read [--frames N]`, `profiler start`, `profiler stop` | `read_profile`/`set_profiler_capture` | the frame profiler (see below). `read` profiles the next N frames (default 120), turning capture on for them when it is off and back off afterwards, and prints their profile once the GPU has reported their timings; `start`/`stop` turn capture on and off, as the Profiler panel's Capture checkbox does |
 | `raw '<json>'` | any | escape hatch for the full protocol |
 
 Edits to the authoring scene (`object create/delete/parent`,
 `component set/add/enable/disable`, `transform`, `prefab instantiate`) are recorded in the editor's undo history like panel edits; edits
 made while a simulation scene exists are discarded by `stop` and not recorded.
+
+## Profiling
+
+`calyx_ctl profiler read --frames N` measures where the next N editor frames
+go, so a change can be measured before and after without a debugger or
+hand-placed timers. It prints one JSON object (`calyx_engine::profiler::ProfileReport`):
+
+- `frame`, `cpu`, `gpu`: wall-clock frame time, the main thread's time in its
+  top-level scopes (the editor's `update`; eframe's tessellation, painting and
+  present are outside it), and the GPU's time in the timed passes, each as
+  `avg_ms`, `max_ms` and `last_ms` over the window. `frames` and `gpu_frames`
+  count the frames and those whose GPU timings arrived.
+- `threads`: per thread, the main thread first, the tree of CPU scopes, each
+  with `name`, `avg_ms`, `max_ms`, `last_ms`, `calls` (average per frame) and
+  `children`. A frame in which a scope did not run counts as zero. Scopes cover
+  the editor's update phases (`Remote commands`, `Render views`, `Panels` with
+  one `Panel (<name>)` each, `Game update`, ...), the scene's update
+  (`Physics`, `Component updates` with one `Update hook (<type>)` per
+  component type), the HUD (`HUD build`, `HUD hook (<type>)`) and each
+  renderer's preparation steps under `Render scene (<view>)` (`Draw
+  collection`, `Gizmos`, `Draw list`, `Mesh data`, `Lights`, `Materials`,
+  `Shadows`, ...).
+- `gpu_passes`: per view (`Scene view`, `Game view`, their `... finalize`),
+  the timed passes (`Shadows`, `G-buffer`, `SSAO`, `Lighting`, `Forward`,
+  `Skybox`, `Particles`, `Post-process` with one entry per chain pass,
+  `Overlays`), plus `Particle simulation` and `UI`, the egui pass.
+- `gpu_timing`: `available` and, when something is missing, the `reason`:
+  GPU timing needs the adapter's `TIMESTAMP_QUERY` and
+  `TIMESTAMP_QUERY_INSIDE_ENCODERS`, and the `UI` pass also
+  `TIMESTAMP_QUERY_INSIDE_PASSES`. Without them `gpu` and `gpu_passes` stay
+  empty and the CPU numbers still come.
+
+Scopes in project code (the sandbox DLL) record nothing: the DLL has its own
+copy of the profiler, whose capture stays off. The engine's `Update hook` and
+`HUD hook` scopes time project hooks from the editor's side. Capture off costs
+one atomic load per scope; to measure without any scopes, build with
+`RUSTFLAGS="--cfg calyx_no_profiling"` (in its own `CARGO_TARGET_DIR`, as it
+rebuilds everything). The standalone player profiles itself with the
+`CALYX_PROFILE` environment variable set, logging the same JSON every 600
+frames.
 
 ## Input injection
 

@@ -151,8 +151,13 @@ pub fn device_descriptor(adapter: &wgpu::Adapter) -> wgpu::DeviceDescriptor<'sta
 
 /// Features used when the adapter has them, with a fallback otherwise:
 /// `DEPTH_CLIP_CONTROL` lets the shadow cascades clamp casters past their
-/// near plane instead of clipping them.
-const OPTIONAL_FEATURES: wgpu::Features = wgpu::Features::DEPTH_CLIP_CONTROL;
+/// near plane instead of clipping them, and the timestamp queries give the
+/// profiler GPU timings per pass (see [`crate::profiler::gpu`]), which it
+/// reports as unavailable without them.
+const OPTIONAL_FEATURES: wgpu::Features = wgpu::Features::DEPTH_CLIP_CONTROL
+    .union(wgpu::Features::TIMESTAMP_QUERY)
+    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS)
+    .union(wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES);
 
 fn shared_device_descriptor() -> wgpu::DeviceDescriptor<'static> {
     wgpu::DeviceDescriptor {
@@ -360,15 +365,23 @@ mod tests {
     }
 
     #[test]
-    fn device_descriptor_adds_depth_clamping_where_the_adapter_has_it() {
+    fn device_descriptor_adds_depth_clamping_and_timestamps_where_the_adapter_has_them() {
+        use egui_wgpu::wgpu::Features;
         let adapter = crate::test_support::test_adapter();
         let requested = device_descriptor(adapter).required_features;
         assert!(requested.contains(shared_device_descriptor().required_features));
-        let clamp = egui_wgpu::wgpu::Features::DEPTH_CLIP_CONTROL;
-        assert_eq!(
-            requested.contains(clamp),
-            adapter.features().contains(clamp)
-        );
+        for feature in [
+            Features::DEPTH_CLIP_CONTROL,
+            Features::TIMESTAMP_QUERY,
+            Features::TIMESTAMP_QUERY_INSIDE_ENCODERS,
+            Features::TIMESTAMP_QUERY_INSIDE_PASSES,
+        ] {
+            assert_eq!(
+                requested.contains(feature),
+                adapter.features().contains(feature),
+                "{feature:?}"
+            );
+        }
     }
 
     #[test]

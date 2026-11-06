@@ -171,11 +171,29 @@ enum Action {
         #[arg(long)]
         out: PathBuf,
     },
+    /// Read or control the frame profiler.
+    #[command(subcommand)]
+    Profiler(ProfilerAction),
     /// Send a raw protocol command as JSON (see calyx_remote_protocol).
     Raw {
         /// JSON object, e.g. '{"cmd":"step_frames","frames":10}'.
         json: String,
     },
+}
+
+#[derive(Subcommand)]
+enum ProfilerAction {
+    /// Profile the next N frames (turning capture on for them when it is
+    /// off) and print their averages and maximums as JSON.
+    Read {
+        /// Number of frames to profile, at most the 600 the profiler keeps.
+        #[arg(long, default_value_t = 120)]
+        frames: u32,
+    },
+    /// Turn capture on, so the profiler panel keeps recording.
+    Start,
+    /// Turn capture off.
+    Stop,
 }
 
 #[derive(Subcommand)]
@@ -555,6 +573,15 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 frame_timeout(base, *frames),
             )),
             _ => Err("pass exactly one of --frames or --simulating".into()),
+        },
+        Action::Profiler(profiler) => match profiler {
+            // The GPU reports a frame's timings a few frames after it ran.
+            ProfilerAction::Read { frames } => Ok((
+                Command::ReadProfile { frames: *frames },
+                frame_timeout(base, frames.saturating_add(120)),
+            )),
+            ProfilerAction::Start => simple(Command::SetProfilerCapture { enabled: true }),
+            ProfilerAction::Stop => simple(Command::SetProfilerCapture { enabled: false }),
         },
         Action::Scene(scene) => match scene {
             SceneAction::Load { path } => simple(Command::LoadScene { path: path.clone() }),

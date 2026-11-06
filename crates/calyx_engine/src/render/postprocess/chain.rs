@@ -6,6 +6,7 @@ use super::{
 };
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
+use crate::profiler::GpuScope;
 use crate::render::{RenderContext, SceneRendererError};
 use egui_wgpu::wgpu;
 use std::sync::Arc;
@@ -312,7 +313,9 @@ impl PostProcessChain {
                     .flatten(),
             };
             let (input, output) = (io.input, io.output);
-            if let Err(error) = pass.record(&context, encoder, io) {
+            crate::profile_scope!("Post-process pass", pass.name());
+            let mut encoder = GpuScope::new_with(encoder, || pass.name().to_owned());
+            if let Err(error) = pass.record(&context, &mut encoder, io) {
                 crate::logging::warn_once(
                     format!("post-process-no-pipeline:{}:{error}", pass.name()),
                     || {
@@ -322,7 +325,7 @@ impl PostProcessChain {
                         )
                     },
                 );
-                copy(encoder, input, output);
+                copy(&mut encoder, input, output);
             }
         }
         plan

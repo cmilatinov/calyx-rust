@@ -407,6 +407,22 @@ pub enum Command {
         /// Number of frames to wait.
         frames: u32,
     },
+
+    /// Turns the frame profiler's capture on or off from the next frame on,
+    /// as the profiler panel's checkbox does. Responds with `capturing`.
+    SetProfilerCapture {
+        /// Whether to capture.
+        enabled: bool,
+    },
+    /// Profiles the next `frames` editor frames, turning capture on for
+    /// them when it is off, and responds with their profile once the GPU
+    /// has reported their timings: frame, CPU and GPU time and every CPU
+    /// scope per thread and GPU pass, each as averages, maximums and last
+    /// values in milliseconds.
+    ReadProfile {
+        /// Number of frames to profile, at most the 600 the profiler keeps.
+        frames: u32,
+    },
 }
 
 /// How to answer the editor's prompt about the open scene's unsaved changes.
@@ -786,6 +802,8 @@ mod tests {
                 path: PathBuf::from("shot.png"),
             },
             Command::WaitFrames { frames: 3 },
+            Command::SetProfilerCapture { enabled: true },
+            Command::ReadProfile { frames: 120 },
         ] {
             round_trip(command);
         }

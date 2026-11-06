@@ -33,8 +33,9 @@ struct TestGpu {
     queue: wgpu::Queue,
 }
 
-/// Features the editor requests that scene and gizmo shaders rely on; enabled
-/// here when the test adapter supports them.
+/// Features the editor requests that scene and gizmo shaders and the
+/// profiler's GPU timings rely on; enabled here when the test adapter
+/// supports them.
 fn desired_test_features() -> wgpu::Features {
     wgpu::Features::BUFFER_BINDING_ARRAY
         | wgpu::Features::TEXTURE_BINDING_ARRAY
@@ -42,6 +43,9 @@ fn desired_test_features() -> wgpu::Features {
         | wgpu::Features::UNIFORM_BUFFER_AND_STORAGE_TEXTURE_ARRAY_NON_UNIFORM_INDEXING
         | wgpu::Features::FLOAT32_FILTERABLE
         | wgpu::Features::DEPTH_CLIP_CONTROL
+        | wgpu::Features::TIMESTAMP_QUERY
+        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
+        | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
 }
 
 /// Limits matching the editor's device, clamped to what the adapter supports.
