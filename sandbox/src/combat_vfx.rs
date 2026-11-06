@@ -336,7 +336,8 @@ pub(crate) fn spawn_shot(
     [muzzle, smoke]
 }
 
-pub(crate) fn spawn_impact(scene: &mut Scene, position: Vec3, tank: bool) {
+/// Spawns a hit effect at `position` and returns its emitter.
+pub(crate) fn spawn_impact(scene: &mut Scene, position: Vec3, tank: bool) -> GameObject {
     let lifetime = if tank { 0.5 } else { 0.55 };
     let mut system = burst(if tank { 24 } else { 10 }, lifetime);
     system.velocity = ParticleVelocity {
@@ -399,7 +400,7 @@ pub(crate) fn spawn_impact(scene: &mut Scene, position: Vec3, tank: bool) {
         system,
         lifetime + 0.05,
         Default::default(),
-    );
+    )
 }
 
 #[cfg(test)]

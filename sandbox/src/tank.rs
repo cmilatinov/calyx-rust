@@ -882,7 +882,7 @@ pub(crate) fn spawn_round(
     crate::vision::refresh(scene, &[projectile_object, muzzle, smoke]);
 }
 
-fn update_projectile(
+pub(crate) fn update_projectile(
     scene: &mut calyx_engine::scene::Scene,
     game_object: calyx_engine::scene::GameObject,
     dt: f32,
@@ -917,14 +917,17 @@ fn update_projectile(
     if let Some((target, hit_position)) =
         first_projectile_hit(scene, game_object, shooter, start, reach, projectile.radius)
     {
-        crate::combat_vfx::spawn_impact(scene, hit_position, true);
+        let impact = crate::combat_vfx::spawn_impact(scene, hit_position, true);
         apply_projectile_damage(scene, target, projectile.damage, shooter);
         scene.delete(game_object);
+        // A hit out of the player's sight never flashes into view.
+        crate::vision::refresh(scene, &[impact]);
         return;
     }
     if obstacle_time.is_some() {
-        crate::combat_vfx::spawn_impact(scene, reach, false);
+        let impact = crate::combat_vfx::spawn_impact(scene, reach, false);
         scene.delete(game_object);
+        crate::vision::refresh(scene, &[impact]);
         return;
     }
 

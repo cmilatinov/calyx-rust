@@ -395,3 +395,59 @@ fn unseen_rounds_and_their_muzzle_effects_stay_hidden_and_hidden_units_take_dama
         "a hidden sentry takes damage"
     );
 }
+
+#[test]
+fn impacts_out_of_sight_stay_hidden_the_frame_they_spawn() {
+    let (mut scene, _, _, _) = sentry_behind_cover();
+    let enemy = tank(&mut scene, "Enemy", 0.0, 40.0, 2);
+    let shooter = GameObjectRef::new(scene.uuid(enemy));
+    // Start the scene so the cover's collider is in the physics world.
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.step();
+    let scene = runner.scene_mut();
+    // Behind the cover, out of the player's sight: one round into the
+    // hidden sentry and one into the back of the cover.
+    spawn_round(
+        scene,
+        vec3(6.2, 0.5, 0.0),
+        UnitQuaternion::identity(),
+        ComponentProjectile {
+            direction: vec3(1.0, 0.0, 0.0),
+            shooter,
+            ..Default::default()
+        },
+    );
+    spawn_round(
+        scene,
+        vec3(5.2, 0.5, 1.5),
+        UnitQuaternion::identity(),
+        ComponentProjectile {
+            direction: vec3(-1.0, 0.0, 0.0),
+            shooter,
+            ..Default::default()
+        },
+    );
+    // The sentry's own rounds, fired at the player into the cover, are
+    // out of sight too.
+    for round in rounds(scene) {
+        crate::tank::update_projectile(scene, round, 0.1);
+    }
+    let named = |name: &str| {
+        scene
+            .objects()
+            .filter(|&object| {
+                scene
+                    .read_component::<ComponentID, _, _>(object, |id| id.name == name)
+                    .unwrap_or(false)
+            })
+            .collect::<Vec<_>>()
+    };
+    let sparks = named("Tank Impact Sparks");
+    let dust = named("Cover Impact Dust");
+    assert!(!sparks.is_empty(), "the round hits the sentry");
+    assert!(!dust.is_empty(), "the round hits the cover");
+    for impact in sparks.into_iter().chain(dust) {
+        assert!(!scene.is_visible(impact));
+        assert!(!scene.is_component_enabled::<ComponentParticleSystem>(impact));
+    }
+}
