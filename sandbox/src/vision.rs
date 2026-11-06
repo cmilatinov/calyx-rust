@@ -22,7 +22,7 @@ use crate::tank::{
 };
 use calyx_engine::component::{
     ColliderShape, ComponentCollider, ComponentID, ComponentParticleSystem, ComponentPointLight,
-    FogOfWarSight,
+    FogOfWarBlocker, FogOfWarSight,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Scene};
@@ -271,12 +271,22 @@ impl TeamVision {
         Self::of_player(scene, player, cover)
     }
 
-    /// Whether no cover stands between `from` and `to`.
+    /// Whether sight reaches `to` from `from`, by the rule the fog of war
+    /// renders: it carries on through the run of touching cover it meets
+    /// first, so only ground past that run's far side is out of sight.
     pub fn clear_line(&self, from: Vec2, to: Vec2) -> bool {
-        !self
-            .cover
-            .iter()
-            .any(|cover| cover_entry(from, to, *cover).is_some_and(|t| t < 0.999))
+        FogOfWarSight {
+            viewers: Vec::new(),
+            blockers: self
+                .cover
+                .iter()
+                .map(|cover| FogOfWarBlocker {
+                    center: cover.center,
+                    half_axes: cover.half_axes,
+                })
+                .collect(),
+        }
+        .clear_line(from, to)
     }
 
     /// Whether the side sees the ground point `point`.

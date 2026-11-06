@@ -43,6 +43,23 @@ fn visibility_needs_range_and_a_clear_line_from_any_viewer() {
 }
 
 #[test]
+fn units_on_touching_cover_are_seen_as_the_fog_lights_them() {
+    // Two touching crates in a row, then a gap and a third.
+    let vision = TeamVision {
+        viewers: vec![viewer(0.0, 0.0, 10.0)],
+        cover: vec![
+            GroundRect::axis_aligned(vec2(4.0, 0.0), vec2(1.0, 1.0)),
+            GroundRect::axis_aligned(vec2(5.0, 0.0), vec2(1.0, 1.0)),
+            GroundRect::axis_aligned(vec2(7.5, 0.0), vec2(1.0, 1.0)),
+        ],
+    };
+    assert!(vision.visible(vec2(3.8, 0.0)), "on the first crate");
+    assert!(vision.visible(vec2(5.2, 0.0)), "on the crate touching it");
+    assert!(!vision.visible(vec2(6.2, 0.0)), "in the gap behind them");
+    assert!(!vision.visible(vec2(7.5, 0.0)), "on the crate past the gap");
+}
+
+#[test]
 fn sight_rays_carry_through_touching_blocks_of_cover() {
     let vision = TeamVision {
         viewers: vec![viewer(0.0, 0.0, 10.0)],
