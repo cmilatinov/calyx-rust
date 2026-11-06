@@ -1,0 +1,76 @@
+# Raised platform: a 10 x 8 m block as high as the 1.6 m walls, with a paved
+# deck and a 0.5 m kerb round its rim. The rim opens for two ramps, 4 m wide:
+# on the south (-Z) edge centred at X = 0, and on the west (-X) edge centred
+# at Z = +1. A ramp's kerbs meet the rim kerbs either side of its opening.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "body"
+kind = "box"
+role = "walls"
+size = [10, 1.6, 8]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "deck"
+kind = "box"
+role = "ground_paving"
+size = [9, 0.04, 7]
+offset = [0, 1.6, 0]
+bevel = 0.015
+segments = 2
+
+[[parts]]
+name = "kerb_east"
+kind = "box"
+role = "barriers"
+size = [0.5, 0.5, 8]
+offset = [4.75, 1.6, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "kerb_west_south"
+kind = "box"
+role = "barriers"
+size = [0.5, 0.5, 3]
+offset = [-4.75, 1.6, -2.5]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "kerb_west_north"
+kind = "box"
+role = "barriers"
+size = [0.5, 0.5, 1]
+offset = [-4.75, 1.6, 3.5]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "kerb_north"
+kind = "box"
+role = "barriers"
+size = [9, 0.5, 0.5]
+offset = [0, 1.6, 3.75]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "kerb_south_west"
+kind = "box"
+role = "barriers"
+size = [2.5, 0.5, 0.5]
+offset = [-3.25, 1.6, -3.75]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "kerb_south_east"
+kind = "box"
+role = "barriers"
+size = [2.5, 0.5, 0.5]
+offset = [3.25, 1.6, -3.75]
+bevel = 0.12
+segments = 3

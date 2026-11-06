@@ -11,6 +11,7 @@ pub mod sentry;
 pub mod spawn;
 pub mod tank;
 pub mod tank_camera;
+pub mod terrain;
 
 use calyx_engine::reflect::type_registry::TypeRegistry;
 

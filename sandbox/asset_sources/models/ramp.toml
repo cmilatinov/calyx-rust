@@ -1,0 +1,33 @@
+# Drivable ramp: rises 1.6 m (the wall height) over 8 m along +Z, a 1:5 slope,
+# between two kerbs that stand 0.5 m above it. The foot is at Z = -4 and the
+# crest meets a platform edge at Z = +4; the root sits on the 1 m grid.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "deck"
+kind = "wedge"
+role = "walls"
+size = [4, 1.6, 8]
+low = 0
+bevel = 0.03
+segments = 2
+
+[[parts]]
+name = "kerb_left"
+kind = "wedge"
+role = "barriers"
+size = [0.5, 2.1, 8]
+low = 0.5
+offset = [-2.25, 0, 0]
+bevel = 0.12
+segments = 3
+
+[[parts]]
+name = "kerb_right"
+kind = "wedge"
+role = "barriers"
+size = [0.5, 2.1, 8]
+low = 0.5
+offset = [2.25, 0, 0]
+bevel = 0.12
+segments = 3

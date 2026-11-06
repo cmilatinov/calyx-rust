@@ -1,7 +1,8 @@
 mod health_trail;
 use crate::combat::{record_damage, record_kill, ComponentCombatStats, KillEvent};
 use crate::spawn::ComponentRespawnState;
-use crate::tank_camera::{cursor_ground_point, update_tank_camera};
+use crate::tank_camera::{cursor_ray, ground_intersection, update_tank_camera};
+use crate::terrain::{aimed_surface_point, drive_surfaces, surface_height_below};
 use calyx_engine::component::{
     ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentRef,
     ComponentRigidBody, ComponentStart, ComponentTransform, ComponentUpdate, ReflectComponent,
@@ -26,6 +27,19 @@ use std::collections::HashSet;
 const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
 const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
 const COLLISION_SKIN: f32 = 0.01;
+/// How far ahead of and behind its centre the hull feels for the ground,
+/// which sets its pitch on a slope.
+const GROUND_PROBE_REACH: f32 = 0.9;
+/// How far above the hull the ground may rise in one frame, plus a share of
+/// the distance driven: steeper than any ramp, far below any obstacle.
+const GROUND_STEP: f32 = 0.5;
+const GROUND_STEP_PER_METRE: f32 = 0.35;
+/// The steepest the hull tilts to follow the ground, in radians.
+const MAX_HULL_PITCH: f32 = 0.35;
+/// The steepest a shot climbs or dives towards the aimed ground, in radians.
+const MAX_SHOT_PITCH: f32 = 0.5;
+/// Closer than this, horizontally, a shot flies level.
+const MIN_PITCHED_SHOT_DISTANCE: f32 = 1.0;
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "21b467c0-9409-4a7f-b750-418809609eb1"]
@@ -363,8 +377,7 @@ impl ComponentUpdate for ComponentTankController {
             &previous_tank_transform,
             &tank_transform,
         );
-        let aim_point =
-            cursor_ground_intersection(scene, input, &controller, tank_transform.position.y);
+        let aim_point = cursor_aim_point(scene, input, &controller, tank_transform.position.y);
         update_crosshair(scene, &controller, aim_point);
         update_turret(
             scene,
@@ -374,7 +387,15 @@ impl ComponentUpdate for ComponentTankController {
             &tank_transform,
             aim_point,
         );
-        update_shooting(scene, game_object, input, dt, &mut controller);
+        update_shooting(
+            scene,
+            game_object,
+            input,
+            dt,
+            &mut controller,
+            &tank_transform,
+            aim_point,
+        );
         let _ = this.write(scene, |component| {
             component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
             component.reload_remaining = controller.reload_remaining;
@@ -391,7 +412,10 @@ fn update_hull(
     dt: TimeType,
     controller: &mut ComponentTankController,
 ) -> Transform {
-    let mut transform = scene.world_transform(game_object);
+    let initial = scene.world_transform(game_object);
+    let mut transform = initial;
+    // Turn and drive the level hull; it tilts to the ground afterwards.
+    transform.rotation = level_rotation(&transform.rotation);
     let throttle = input.axis("move_forward");
     let steer = input.axis("move_right");
 
@@ -403,6 +427,7 @@ fn update_hull(
     let start_speed = controller.speed;
     let (speed, distance) = advance_speed(start_speed, throttle, controller, dt);
     controller.speed = speed;
+    let mut driven = 0.0;
     if distance.abs() > f32::EPSILON {
         // Drive along the heading halfway through this frame's turn: the
         // chord of the arc the hull follows, whatever the frame time.
@@ -441,7 +466,23 @@ fn update_hull(
             controller.speed = capped_speed;
         }
         transform.translate(&movement);
+        driven = movement.magnitude();
         changed = true;
+    }
+
+    if let Some((height, pitch)) = ground_under_hull(scene, &transform, driven) {
+        // Settle on the ground; on level ground this changes nothing.
+        if (height - transform.position.y).abs() > 1e-4 {
+            transform.position.y = height;
+            changed = true;
+        }
+        if pitch.abs() > 1e-4 {
+            transform.rotation *= UnitQuaternion::from_euler_angles(-pitch, 0.0, 0.0);
+        }
+        changed |= transform.rotation.angle_to(&initial.rotation) > 1e-5;
+    } else if let Some(tilt) = hull_tilt(&initial.rotation) {
+        // No ground to follow: keep whatever tilt the hull had.
+        transform.rotation *= tilt;
     }
 
     if changed {
@@ -452,6 +493,52 @@ fn update_hull(
         });
     }
     scene.world_transform(game_object)
+}
+
+/// `rotation` without its tilt: the same heading, upright. A rotation that
+/// is already level comes back unchanged.
+fn level_rotation(rotation: &UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+    if hull_tilt(rotation).is_none() {
+        *rotation
+    } else {
+        UnitQuaternion::from_euler_angles(0.0, rotation_yaw(rotation), 0.0)
+    }
+}
+
+/// The tilt `rotation` adds to its level heading, if it has one.
+fn hull_tilt(rotation: &UnitQuaternion<f32>) -> Option<UnitQuaternion<f32>> {
+    let up = rotation * Vec3::y();
+    (up.y < 1.0 - 1e-7).then(|| {
+        UnitQuaternion::from_euler_angles(0.0, rotation_yaw(rotation), 0.0).inverse() * rotation
+    })
+}
+
+/// Where the hull at `transform` (level, after driving `driven` metres this
+/// frame) rests: the height of its origin and its nose-up pitch in radians.
+/// It rests on the drive surfaces under its nose and tail, or on the one
+/// under its centre where that is higher, as on the crest of a ramp. None
+/// when no drive surface lies within reach below it, as in a scene without
+/// any: the hull then keeps its height.
+fn ground_under_hull(scene: &Scene, transform: &Transform, driven: f32) -> Option<(f32, f32)> {
+    let surfaces = drive_surfaces(scene);
+    if surfaces.is_empty() {
+        return None;
+    }
+    let step = GROUND_STEP + GROUND_STEP_PER_METRE * driven.abs();
+    let forward = flatten_xz(transform.rotation * Vec3::z());
+    let height_at = |offset: f32| {
+        let mut point = transform.position + forward * offset;
+        point.y += step;
+        surface_height_below(scene, &surfaces, point, step * 2.0)
+    };
+    let centre = height_at(0.0)?;
+    let front = height_at(GROUND_PROBE_REACH).unwrap_or(centre);
+    let rear = height_at(-GROUND_PROBE_REACH).unwrap_or(centre);
+    let height = centre.max((front + rear) * 0.5);
+    let pitch = ((front - rear) / (2.0 * GROUND_PROBE_REACH))
+        .atan()
+        .clamp(-MAX_HULL_PITCH, MAX_HULL_PITCH);
+    Some((height, pitch))
 }
 
 /// Advances the hull's signed forward speed by `dt` seconds towards the speed
@@ -520,7 +607,7 @@ fn advance_speed(
 /// static obstacle it was not already overlapping. Returns whether it turned.
 fn turn_hull(scene: &Scene, transform: &mut Transform, yaw: f32) -> bool {
     let rotation = transform.rotation * UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
-    let obstacles = static_obstacles(scene);
+    let obstacles = hull_obstacles(scene);
     let is_obstacle = |collider: ColliderHandle, _: &Collider| {
         scene
             .physics
@@ -547,9 +634,20 @@ fn turn_hull(scene: &Scene, transform: &mut Transform, yaw: f32) -> bool {
     true
 }
 
-/// Entities whose colliders block the hull: colliders on a fixed rigid body
-/// (on the object itself or an ancestor) or on no rigid body at all. Colliders
-/// of dynamic or kinematic bodies, such as projectiles, never stop the hull.
+/// Static obstacles the hull collides with: all but the drive surfaces it
+/// rides on, so a ramp's slope never catches the front of the hull.
+fn hull_obstacles(scene: &Scene) -> HashSet<Entity> {
+    let mut obstacles = static_obstacles(scene);
+    for surface in drive_surfaces(scene) {
+        obstacles.remove(&surface);
+    }
+    obstacles
+}
+
+/// Entities whose colliders stop the hull and rounds: colliders on a fixed
+/// rigid body (on the object itself or an ancestor) or on no rigid body at
+/// all. Colliders of dynamic or kinematic bodies, such as projectiles, never
+/// stop the hull.
 fn static_obstacles(scene: &Scene) -> HashSet<Entity> {
     scene
         .objects()
@@ -587,7 +685,7 @@ fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -
 /// the obstacle that opposed `movement` most, when it hit one.
 fn sweep_hull(scene: &Scene, transform: &Transform, movement: Vec3) -> (Vec3, Option<Vec3>) {
     let physics = &scene.physics;
-    let obstacles = static_obstacles(scene);
+    let obstacles = hull_obstacles(scene);
     let is_obstacle = |collider: ColliderHandle, _: &Collider| {
         physics
             .collider_entity(collider)
@@ -666,8 +764,9 @@ fn update_turret(
             rotation_yaw(&(previous_tank_transform.rotation * transform.transform.rotation));
         let desired_yaw = aim_direction.x.atan2(aim_direction.z);
         let yaw = turn_towards(current_yaw, desired_yaw, max_turn);
-        transform.transform.rotation =
-            tank_transform.rotation.inverse() * UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
+        // Relative to the level hull, so the turret tilts with it on a slope.
+        transform.transform.rotation = level_rotation(&tank_transform.rotation).inverse()
+            * UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
     });
 }
 
@@ -733,6 +832,8 @@ fn update_shooting(
     input: &Input,
     dt: TimeType,
     controller: &mut ComponentTankController,
+    tank_transform: &Transform,
+    aim_point: Option<Vec3>,
 ) {
     controller.fire_cooldown_remaining =
         advance_fire_cooldown(controller.fire_cooldown_remaining, dt);
@@ -748,7 +849,7 @@ fn update_shooting(
         return;
     }
 
-    if spawn_projectile(scene, tank, controller) {
+    if spawn_projectile(scene, tank, controller, tank_transform, aim_point) {
         controller.ammo = controller.ammo.saturating_sub(1);
         controller.fire_cooldown_remaining = controller.fire_cooldown;
         if controller.ammo == 0 {
@@ -797,21 +898,34 @@ fn spawn_projectile(
     scene: &mut calyx_engine::scene::Scene,
     tank: calyx_engine::scene::GameObject,
     controller: &ComponentTankController,
+    tank_transform: &Transform,
+    aim_point: Option<Vec3>,
 ) -> bool {
     let Some(barrel_object) = controller.barrel.game_object(scene) else {
         return false;
     };
 
     let barrel_transform = scene.world_transform(barrel_object);
-    let direction = flatten_xz(barrel_transform.forward());
-    if direction.magnitude_squared() <= f32::EPSILON {
+    let heading = flatten_xz(barrel_transform.forward());
+    if heading.magnitude_squared() <= f32::EPSILON {
         return false;
     }
+    // The round leaves the barrel's tip, which tilts with the hull on a slope.
+    let tilt = hull_tilt(&tank_transform.rotation).map_or_else(UnitQuaternion::identity, |tilt| {
+        level_rotation(&tank_transform.rotation)
+            * tilt
+            * level_rotation(&tank_transform.rotation).inverse()
+    });
+    let muzzle = barrel_transform.position + tilt * heading * controller.muzzle_offset;
+    let gun_height = muzzle.y - tank_transform.position.y;
+    let direction = shot_direction(muzzle, heading, gun_height, aim_point);
 
     spawn_round(
         scene,
-        barrel_transform.position + direction * controller.muzzle_offset,
-        barrel_transform.rotation,
+        muzzle,
+        UnitQuaternion::rotation_between(&heading, &direction)
+            .unwrap_or_else(UnitQuaternion::identity)
+            * barrel_transform.rotation,
         ComponentProjectile {
             direction,
             speed: controller.projectile_speed,
@@ -822,6 +936,30 @@ fn spawn_projectile(
         },
     );
     true
+}
+
+/// The direction a round leaving `muzzle` along `heading` flies in. It flies
+/// at the gun's height above the ground under the aim point: level over
+/// level ground, climbing towards a raised deck aimed at from below and
+/// diving towards the ground aimed at from above. The same `gun_height` the
+/// round left the shooter's ground at arrives above the aimed ground, so
+/// shots hit a target there as they would on the flat.
+pub(crate) fn shot_direction(
+    muzzle: Vec3,
+    heading: Vec3,
+    gun_height: f32,
+    aim_point: Option<Vec3>,
+) -> Vec3 {
+    let Some(aim_point) = aim_point else {
+        return heading;
+    };
+    let reach = (aim_point - muzzle).dot(&heading);
+    let rise = aim_point.y + gun_height - muzzle.y;
+    if reach < MIN_PITCHED_SHOT_DISTANCE || rise.abs() < 1e-3 {
+        return heading;
+    }
+    let pitch = (rise / reach).atan().clamp(-MAX_SHOT_PITCH, MAX_SHOT_PITCH);
+    (heading * pitch.cos() + Vec3::y() * pitch.sin()).normalize()
 }
 
 /// Spawns a "Projectile" object at `position` that flies as `projectile`
@@ -887,11 +1025,11 @@ fn update_projectile(
         return;
     }
 
-    let direction = flatten_xz(projectile.direction);
-    if direction.magnitude_squared() <= f32::EPSILON {
+    // Rounds fly straight, level or pitched as they were fired.
+    let Some(direction) = projectile.direction.try_normalize(f32::EPSILON) else {
         scene.delete(game_object);
         return;
-    }
+    };
 
     let travel_time = projectile.lifetime_remaining.min(dt.max(0.0));
     let mut transform = scene.world_transform(game_object);
@@ -1072,7 +1210,9 @@ fn follow_camera_xz(
     camera_transform.position.z += tank_delta.z;
 }
 
-fn cursor_ground_intersection(
+/// The point the player aims at: the first drive surface under the cursor,
+/// or, without one, the cursor's point on the level of the tank's ground.
+fn cursor_aim_point(
     scene: &calyx_engine::scene::Scene,
     input: &Input,
     controller: &ComponentTankController,
@@ -1080,7 +1220,8 @@ fn cursor_ground_intersection(
 ) -> Option<Vec3> {
     let camera_object = controller.camera.game_object(scene)?;
     let camera_transform = scene.world_transform(camera_object);
-    cursor_ground_point(scene, input, camera_object, &camera_transform, ground_y)
+    let ray = cursor_ray(scene, input, camera_object, &camera_transform)?;
+    aimed_surface_point(scene, &ray).or_else(|| ground_intersection(&ray, ground_y))
 }
 
 pub(crate) fn flatten_xz(vector: Vec3) -> Vec3 {
@@ -1730,7 +1871,13 @@ mod tests {
             ..Default::default()
         };
 
-        assert!(spawn_projectile(&mut scene, barrel, &controller));
+        assert!(spawn_projectile(
+            &mut scene,
+            barrel,
+            &controller,
+            &Transform::default(),
+            None
+        ));
 
         let projectile = scene
             .objects()

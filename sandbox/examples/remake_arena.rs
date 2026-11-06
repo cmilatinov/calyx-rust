@@ -16,7 +16,9 @@ use calyx_engine::utils::{TypeUuid, Uuid};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, Vec3};
 use rapier3d::dynamics::RigidBodyType;
-use sandbox::{arena::ComponentArena, tank_camera::ComponentTankCamera};
+use sandbox::{
+    arena::ComponentArena, tank_camera::ComponentTankCamera, terrain::ComponentDriveSurface,
+};
 use serde_json::{json, Value};
 
 fn stable(name: &str) -> Uuid {
@@ -58,6 +60,96 @@ struct Author {
 }
 
 impl Author {
+    /// The raised area in the northeast pocket: a platform as high as the
+    /// walls, reached by a ramp continuing the east sand lane from the south
+    /// and a ramp from the middle of the arena on the west.
+    fn raised_area(&mut self) {
+        let platform = self.kit("platform", "Arena Platform", PLATFORM_CENTER, 0.0);
+        // The paved top is a drive surface, so a ramp's crest never catches
+        // the hull; the block below it stops tanks and rounds at its sides.
+        self.drive_surface(
+            platform,
+            "Arena Platform deck",
+            vec3(0.0, PLATFORM_HEIGHT - 0.2, 0.0),
+            vec3(10.0, 0.4, 8.0),
+            UnitQuaternion::identity(),
+        );
+        self.collider(
+            platform,
+            "Arena Platform body",
+            vec3(0.0, (PLATFORM_HEIGHT - 0.4) * 0.5, 0.0),
+            vec3(10.0, PLATFORM_HEIGHT - 0.4, 8.0),
+        );
+        // The rim kerbs, as drawn: low enough to shoot over, high enough to
+        // keep tanks from driving off the edge.
+        for (i, (x, z, width, depth)) in [
+            (4.75, 0.0, 0.5, 8.0),
+            (-4.75, -2.5, 0.5, 3.0),
+            (-4.75, 3.5, 0.5, 1.0),
+            (0.0, 3.75, 9.0, 0.5),
+            (-3.25, -3.75, 2.5, 0.5),
+            (3.25, -3.75, 2.5, 0.5),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            self.collider(
+                platform,
+                &format!("Arena Platform kerb {i}"),
+                vec3(x, PLATFORM_HEIGHT + KERB_HEIGHT * 0.5, z),
+                vec3(width, KERB_HEIGHT, depth),
+            );
+        }
+        for (name, x, z, yaw) in [("South", 20.0, 15.0, 0.0), ("West", 11.0, 24.0, 90.0)] {
+            let name = format!("Arena Ramp {name}");
+            let ramp = self.kit("ramp", &name, vec3(x, 0.0, z), yaw);
+            self.ramp_solids(ramp, &name);
+        }
+        // Cover on the deck, overlooking the middle of the arena.
+        self.prop_at(
+            "sandbag_stack",
+            "Arena Cover Platform Sandbags",
+            vec3(17.0, PLATFORM_HEIGHT, 21.0),
+            0.0,
+        );
+    }
+
+    /// The ramp's slope, as a tilted slab tanks drive on, and its kerbs, as
+    /// tilted blocks reaching from their sloped tops into the ground, which
+    /// close the ramp's sides to tanks and rounds.
+    fn ramp_solids(&mut self, ramp: GameObject, name: &str) {
+        let pitch = (PLATFORM_HEIGHT / RAMP_RUN).atan();
+        let length = PLATFORM_HEIGHT.hypot(RAMP_RUN);
+        let tilt = UnitQuaternion::from_euler_angles(-pitch, 0.0, 0.0);
+        // The slab's top face runs from the foot at (0, 0, -4) to the crest
+        // at (0, 1.6, 4); its centre sits half its thickness below that face.
+        let normal = tilt * Vec3::y();
+        let slab = 0.6;
+        self.drive_surface(
+            ramp,
+            &format!("{name} surface"),
+            vec3(0.0, PLATFORM_HEIGHT * 0.5, 0.0) - normal * slab * 0.5,
+            vec3(RAMP_WIDTH, slab, length),
+            tilt,
+        );
+        // Deep enough that the bottom of the crest end reaches the ground.
+        let depth = 2.3;
+        for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
+            let top = vec3(
+                side * (RAMP_WIDTH + KERB_WIDTH) * 0.5,
+                PLATFORM_HEIGHT * 0.5 + KERB_HEIGHT,
+                0.0,
+            );
+            self.tilted_collider(
+                ramp,
+                &format!("{name} kerb {i}"),
+                top - normal * depth * 0.5,
+                vec3(KERB_WIDTH, depth, length),
+                tilt,
+            );
+        }
+    }
+
     fn object(&mut self, name: &str, parent: GameObject, position: Vec3) -> GameObject {
         let object = self.scene.create(
             Some(ComponentID {
@@ -116,8 +208,26 @@ impl Author {
         object
     }
 
-    fn collider(&mut self, parent: GameObject, name: &str, center: Vec3, size: Vec3) {
+    fn collider(&mut self, parent: GameObject, name: &str, center: Vec3, size: Vec3) -> GameObject {
+        self.tilted_collider(parent, name, center, size, UnitQuaternion::identity())
+    }
+
+    /// A box collider turned by `rotation` about its centre.
+    fn tilted_collider(
+        &mut self,
+        parent: GameObject,
+        name: &str,
+        center: Vec3,
+        size: Vec3,
+        rotation: UnitQuaternion<f32>,
+    ) -> GameObject {
         let object = self.object(name, parent, center);
+        if rotation != UnitQuaternion::identity() {
+            self.scene.set_transform(
+                object,
+                &Transform::from_components(center, rotation, vec3(1.0, 1.0, 1.0)).matrix(),
+            );
+        }
         self.scene.add_component(
             object,
             ComponentRigidBody {
@@ -137,10 +247,32 @@ impl Author {
                 ..Default::default()
             },
         );
+        object
+    }
+
+    /// A collider tanks drive on: they ride its top instead of colliding
+    /// with it, and the cursor aims at it.
+    fn drive_surface(
+        &mut self,
+        parent: GameObject,
+        name: &str,
+        center: Vec3,
+        size: Vec3,
+        rotation: UnitQuaternion<f32>,
+    ) {
+        let object = self.tilted_collider(parent, name, center, size, rotation);
+        self.scene.add_component(object, ComponentDriveSurface {});
     }
 
     fn prop(&mut self, model: &str, name: &str, x: f32, z: f32, yaw: f32) {
-        let root = self.kit(model, name, vec3(x, 0.0, z), yaw);
+        self.prop_at(model, name, vec3(x, 0.0, z), yaw);
+    }
+
+    /// A prop standing at `position`, which may be on a raised deck. Its
+    /// solids live in its own frame, so they rise to the shell-blocking top
+    /// above the ground it stands on.
+    fn prop_at(&mut self, model: &str, name: &str, position: Vec3, yaw: f32) {
+        let root = self.kit(model, name, position, yaw);
         let bounds = |y, w, h, d| (vec3(0.0, y, 0.0), vec3(w, h, d));
         let solids = match model {
             "wall_long" => vec![bounds(0.8, 4.0, 1.6, 1.2)],
@@ -182,13 +314,27 @@ impl Author {
     }
 }
 
-/// Top of every obstacle collider. Rounds fly level at the gun's height,
-/// about 1.6 m with a 0.18 m radius, so cover drawn lower than that would
-/// let them pass over it.
+/// Top of every obstacle collider above the ground the obstacle stands on.
+/// Rounds fly at the gun's height, about 1.6 m with a 0.18 m radius, above
+/// the ground under the shooter and under the aim point, so cover drawn
+/// lower than that would let them pass over it.
 const SHELL_BLOCKING_TOP: f32 = 2.0;
 
-/// Stretches a solid upward to [`SHELL_BLOCKING_TOP`], keeping its bottom
-/// and footprint, so rounds stop at the obstacle instead of flying over it.
+/// Stretches a solid upward to [`SHELL_BLOCKING_TOP`] in its prop's frame,
+/// keeping its bottom and footprint, so rounds stop at the obstacle instead
+/// of flying over it. The frame's origin is the ground the prop stands on,
+/// so cover on a raised deck rises above the deck, not above the floor.
+/// The raised area's platform: centred in the arena's frame, as high as the
+/// perimeter walls, with 0.5 m kerbs round its rim and along its ramps.
+const PLATFORM_CENTER: Vec3 = Vec3::new(20.0, 0.0, 23.0);
+const PLATFORM_HEIGHT: f32 = 1.6;
+const KERB_HEIGHT: f32 = 0.5;
+const KERB_WIDTH: f32 = 0.5;
+/// A ramp climbs the platform's height over this run, a 1:5 slope, between
+/// kerbs either side of a surface this wide.
+const RAMP_RUN: f32 = 8.0;
+const RAMP_WIDTH: f32 = 4.0;
+
 fn blocking_shells(center: Vec3, size: Vec3) -> (Vec3, Vec3) {
     let bottom = center.y - size.y * 0.5;
     let top = (center.y + size.y * 0.5).max(SHELL_BLOCKING_TOP);
@@ -344,11 +490,12 @@ fn main() {
 
     // One uninterrupted collision floor keeps one-metre tile seams from
     // catching tracks. Every visible tile has its top at the same y = 0.
-    author.collider(
+    author.drive_surface(
         arena,
         "Arena Floor",
         vec3(0.0, -0.5, 0.0),
         vec3(60.0, 1.0, 64.0),
+        UnitQuaternion::identity(),
     );
     let foundation = author.object("Arena Foundation", arena, vec3(0.0, -0.6, 0.0));
     // Continue the visible ground beyond the pen, including the camera's
@@ -528,8 +675,7 @@ fn main() {
     ] {
         author.prop(model, &format!("Arena Cover {name}"), x, z, yaw);
     }
-    // Northeast x=8..24, z=14..28 (world z=36..50) stays clear for the
-    // separately authored ramp/platform, south of the perimeter wall.
+    author.raised_area();
     for (model, name, x, z, yaw) in [
         ("tree_small", "Spawn West Tree", -6.0, -9.0, 20.0),
         ("tree_small", "Spawn East Tree", 6.0, -8.0, -20.0),

@@ -199,6 +199,32 @@ def build_prism(shape):
     return [obj]
 
 
+def build_wedge(shape):
+    """A block whose top rises along Calyx +Z from `low` to the full height;
+    Blender's Y is Calyx's Z. Faces wind outward, as Blender expects."""
+    w, h, d = shape["size"]
+    low = shape["low"]
+    x, y = w / 2, d / 2
+    bottom = [(-x, -y, 0), (x, -y, 0), (x, y, 0), (-x, y, 0)]
+    high = [(x, y, h), (-x, y, h)]
+    if low > 0:
+        vertices = bottom + [(-x, -y, low), (x, -y, low)] + high
+        # 0-3 bottom, 4-5 low top edge, 6-7 high top edge.
+        faces = [(3, 2, 1, 0), (4, 5, 6, 7), (0, 1, 5, 4), (2, 3, 7, 6),
+                 (1, 2, 6, 5), (3, 0, 4, 7)]
+    else:
+        vertices = bottom + high
+        # The slope meets the ground at the foot edge 0-1.
+        faces = [(3, 2, 1, 0), (0, 1, 4, 5), (2, 3, 5, 4), (1, 2, 4), (3, 0, 5)]
+    mesh = bpy.data.meshes.new("wedge")
+    mesh.from_pydata(vertices, [], faces)
+    mesh.update()
+    obj = bpy.data.objects.new("Wedge", mesh)
+    bpy.context.collection.objects.link(obj)
+    bevel(obj, shape["bevel"], shape["segments"])
+    return [obj]
+
+
 def build_ring(shape):
     count = shape["vertices"]
     vertices = [
@@ -268,6 +294,7 @@ BUILDERS = {
     "ring": build_ring,
     "prism": build_prism,
     "box": build_box,
+    "wedge": build_wedge,
     "rock": build_rock,
     "cylinder": build_cylinder,
     "blob": build_blob,
