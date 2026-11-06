@@ -902,10 +902,10 @@ fn update_projectile(
     // target only takes damage when it is reached before the first obstacle.
     let obstacle_time = first_obstacle_time(scene, start, end, projectile.radius);
     let reach = obstacle_time.map_or(end, |time| start + (end - start) * time);
+    let shooter = projectile.shooter.game_object(scene);
     if let Some((target, hit_position)) =
-        first_projectile_hit(scene, game_object, start, reach, projectile.radius)
+        first_projectile_hit(scene, game_object, shooter, start, reach, projectile.radius)
     {
-        let shooter = projectile.shooter.game_object(scene);
         crate::combat_vfx::spawn_impact(scene, hit_position, true);
         apply_projectile_damage(scene, target, projectile.damage, shooter);
         scene.delete(game_object);
@@ -1010,16 +1010,20 @@ fn apply_projectile_damage(
     }
 }
 
+/// The first projectile target the round's path enters, never the round
+/// itself or whoever fired it: a round leaves its shooter from inside the
+/// shooter's own hit sphere.
 fn first_projectile_hit(
     scene: &calyx_engine::scene::Scene,
     projectile_object: calyx_engine::scene::GameObject,
+    shooter: Option<calyx_engine::scene::GameObject>,
     start: Vec3,
     end: Vec3,
     projectile_radius: f32,
 ) -> Option<(calyx_engine::scene::GameObject, Vec3)> {
     scene
         .objects()
-        .filter(|&candidate| candidate != projectile_object)
+        .filter(|&candidate| candidate != projectile_object && Some(candidate) != shooter)
         .find_map(|candidate| {
             scene
                 .read_component::<ComponentProjectileTarget, _, _>(candidate, |target| {
