@@ -383,11 +383,20 @@ impl Projection {
     }
 }
 
+/// Fill width of every world health bar, in HUD units. Fixed so a bar never
+/// grows or shrinks with the entity's size, heading or distance; it matches
+/// the player tank's bar at spawn heading under the default chase camera.
+const HP_BAR_WIDTH: f32 = 64.0;
+/// Fill thickness of every world health bar, in HUD units.
+const HP_BAR_THICKNESS: f32 = 7.0;
+
+/// Centre and width of an entity's health bar. Only the position follows the
+/// projected bounds: centred over them, just above their top edge.
 fn hp_anchor(bounds: ScreenBounds) -> (f32, f32, f32) {
     (
         (bounds.left + bounds.right) * 0.5,
         bounds.top - 8.0,
-        ((bounds.right - bounds.left) * 0.9).max(48.0),
+        HP_BAR_WIDTH,
     )
 }
 
@@ -436,9 +445,7 @@ fn paint_world(
             continue;
         };
         let (x, y, w) = hp_anchor(bounds);
-        // Keep the fill thin relative to its projected width, including in
-        // small game views where a fixed minimum height made it look chunky.
-        let h = ((w + 2.0) * 0.14).clamp(4.0, 16.0) - 2.0;
+        let h = HP_BAR_THICKNESS;
         let outer_radius = (h * 0.5 + 3.0) * 0.78;
         p.fill(
             x - w * 0.5 - 3.0,
@@ -670,7 +677,7 @@ mod tests {
     }
 
     #[test]
-    fn health_annotation_width_tracks_projected_geometry_and_anchor_clears_top() {
+    fn health_bar_width_is_fixed_and_anchor_clears_projected_top() {
         let far = hp_anchor(ScreenBounds {
             left: 100.0,
             right: 180.0,
@@ -681,17 +688,125 @@ mod tests {
             right: 260.0,
             top: 200.0,
         });
-        assert_eq!(far, (140.0, 192.0, 72.0));
-        assert_eq!(near.2, far.2 * 2.0);
-        assert_eq!(
-            hp_anchor(ScreenBounds {
-                left: 0.0,
-                right: 10.0,
-                top: 80.0
+        let tiny = hp_anchor(ScreenBounds {
+            left: 0.0,
+            right: 10.0,
+            top: 80.0,
+        });
+        assert_eq!(far, (140.0, 192.0, HP_BAR_WIDTH));
+        assert_eq!(near, (180.0, 192.0, HP_BAR_WIDTH));
+        assert_eq!(tiny, (5.0, 72.0, HP_BAR_WIDTH));
+    }
+
+    /// The outer frame of the one world health bar in a HUD frame: a black
+    /// fill directly followed by its panel fill and its friendly cyan fill.
+    fn health_bar_frame(commands: &[PaintCommand]) -> UiRect {
+        let frames = commands
+            .windows(3)
+            .filter_map(|window| match window {
+                [PaintCommand::FillRect {
+                    rect, color: BLACK, ..
+                }, PaintCommand::FillRect {
+                    color: paint::PANEL,
+                    ..
+                }, PaintCommand::FillRect { color: CYAN, .. }] => Some(*rect),
+                _ => None,
             })
-            .2,
-            48.0
+            .collect::<Vec<_>>();
+        assert_eq!(frames.len(), 1, "expected one health bar");
+        frames[0]
+    }
+
+    #[test]
+    fn turning_a_tank_in_place_keeps_its_health_bar_size() {
+        use calyx_engine::assets::{mesh::Mesh, AssetRef};
+        use calyx_engine::component::{ComponentCamera, ComponentMesh};
+        use calyx_engine::math::Transform;
+        use nalgebra::UnitQuaternion;
+        use nalgebra_glm::vec3;
+
+        let assets = calyx_engine::test_support::test_asset_context_with_assets(Vec::new());
+        let mut hull = Mesh::new(&assets.render_context);
+        // A tank-shaped hull: longer than it is wide, so its projected width
+        // changes as it turns.
+        hull.vertices = vec![vec3(-1.1, 0.0, -1.7), vec3(1.1, 1.3, 1.7)];
+        let hull = assets
+            .registries
+            .assets
+            .read()
+            .create("hud-tank-hull".into(), hull)
+            .unwrap();
+        let mut scene = assets.registries.lock_read().scene();
+        let tank = scene.create(None, None);
+        scene.add_component(tank, ComponentTankController::default());
+        scene.add_component(
+            tank,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 100.0,
+                ..Default::default()
+            },
         );
+        scene.add_component(tank, ComponentTankHud::default());
+        scene.add_component(
+            tank,
+            ComponentMesh {
+                mesh: AssetRef::from_id(hull.id()),
+                ..Default::default()
+            },
+        );
+        // The arena's chase camera, relative to the tank.
+        let camera = scene.create(None, None);
+        scene.add_component(
+            camera,
+            ComponentCamera {
+                fov: 1.117,
+                ..Default::default()
+            },
+        );
+        scene.set_transform(
+            camera,
+            &Transform::from_components(
+                vec3(0.0, 34.0, -13.7),
+                UnitQuaternion::from_euler_angles(68.05f32.to_radians(), 0.0, 0.0),
+                Vec3::repeat(1.0),
+            )
+            .matrix(),
+        );
+        let (width, height) = (1326.0, 746.0);
+        let projection = Projection::scene(&scene, width, height).unwrap();
+        let mut bounds = Vec::new();
+        let mut frames = Vec::new();
+        for degrees in [0.0f32, 40.0, 90.0, 135.0] {
+            scene.set_transform(
+                tank,
+                &Transform::from_components(
+                    Vec3::zeros(),
+                    UnitQuaternion::from_euler_angles(0.0, degrees.to_radians(), 0.0),
+                    Vec3::repeat(1.0),
+                )
+                .matrix(),
+            );
+            let projected = projection.visual_bounds(&scene, tank).unwrap();
+            bounds.push(projected.right - projected.left);
+            frames.push(health_bar_frame(&commands(&scene, width, height)));
+        }
+        // The projected bounds really do change as the tank turns ...
+        let (narrow, wide) = bounds.iter().fold((f32::INFINITY, 0.0f32), |(lo, hi), w| {
+            (lo.min(*w), hi.max(*w))
+        });
+        assert!(wide > narrow * 1.2, "bounds widths {bounds:?}");
+        // ... but the bar keeps one width and thickness.
+        for frame in &frames {
+            assert!(
+                (frame.width() - (HP_BAR_WIDTH + 6.0)).abs() < 1e-3,
+                "{frames:?}"
+            );
+            assert!(
+                (frame.height() - (HP_BAR_THICKNESS + 6.0)).abs() < 1e-3,
+                "{frames:?}"
+            );
+        }
     }
 
     #[test]
