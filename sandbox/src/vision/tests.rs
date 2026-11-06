@@ -310,6 +310,57 @@ fn units_fade_in_and_out_of_sight_over_the_fade_time() {
 }
 
 #[test]
+fn rounds_and_their_effects_hide_at_once_when_sight_of_them_is_lost() {
+    let (mut scene, player, _, _) = sentry_behind_cover();
+    let enemy = tank(&mut scene, "Enemy", 0.0, 40.0, 2);
+    let shooter = GameObjectRef::new(scene.uuid(enemy));
+    // Fired behind the cover, flying away from the player, who watches from
+    // around the cover.
+    scene.set_world_transform(player, Transform::from_xyz(4.0, 0.0, 5.0).matrix());
+    spawn_round(
+        &mut scene,
+        vec3(7.0, 0.5, 0.0),
+        UnitQuaternion::identity(),
+        ComponentProjectile {
+            direction: vec3(1.0, 0.0, 0.0),
+            shooter,
+            ..Default::default()
+        },
+    );
+    let round = rounds(&scene)[0];
+    let parts = scene
+        .objects()
+        .filter(|&object| {
+            object == round
+                || scene
+                    .read_component::<ComponentCombatEffectLifetime, _, _>(object, |_| ())
+                    .is_some()
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        parts.len(),
+        3,
+        "the round, its muzzle flash and smoke trail"
+    );
+
+    // Seen long enough to be fully present.
+    let mut fog = FogState::default();
+    apply_fog(&mut scene, player, &mut fog);
+    fog.advance(FADE_TIME);
+    apply_fog(&mut scene, player, &mut fog);
+    for &part in &parts {
+        assert!(scene.is_visible(part), "seen: {}", scene.name(part));
+    }
+
+    // Back behind the cover: they hide the same frame.
+    scene.set_world_transform(player, Transform::from_xyz(0.0, 0.0, 0.0).matrix());
+    apply_fog(&mut scene, player, &mut fog);
+    for part in parts {
+        assert!(!scene.is_visible(part), "{}", scene.name(part));
+    }
+}
+
+#[test]
 fn fog_leaves_objects_hidden_by_others_alone() {
     let (mut scene, player, sentry, _) = sentry_behind_cover();
     let _ = scene.write_component::<ComponentID, _>(sentry, |id| id.visible = false);

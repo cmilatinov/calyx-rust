@@ -484,15 +484,19 @@ fn sighting(
         }
         return seen(vision.visible(position));
     }
-    let is_unit = scene
-        .read_component::<ComponentTankController, _, _>(object, |_| ())
-        .or_else(|| scene.read_component::<ComponentSentry, _, _>(object, |_| ()))
-        .or_else(|| scene.read_component::<ComponentProjectileTarget, _, _>(object, |_| ()))
-        .is_some();
-    if !is_unit {
+    if !is_unit(scene, object) {
         return None;
     }
     seen(is_friendly(scene, viewer, object) || vision.visible(position))
+}
+
+/// Whether `object` is a unit: a tank, sentry or practice target.
+fn is_unit(scene: &Scene, object: GameObject) -> bool {
+    scene
+        .read_component::<ComponentTankController, _, _>(object, |_| ())
+        .or_else(|| scene.read_component::<ComponentSentry, _, _>(object, |_| ()))
+        .or_else(|| scene.read_component::<ComponentProjectileTarget, _, _>(object, |_| ()))
+        .is_some()
 }
 
 /// Whether `round`, on `object`, is on course to hit `player`: its remaining
@@ -600,11 +604,14 @@ fn apply_fog_to(
         .filter_map(|&object| Some((object, sighting(scene, viewer, vision, object)?)))
         .collect::<Vec<_>>();
     for (object, sighting) in decisions {
-        // What the side stops seeing fades out before it hides; what it sees
-        // shows at once and fades in.
+        // A unit the side stops seeing fades out before it hides; rounds and
+        // effects have no fade to show, so they hide at once rather than
+        // giving away their path behind cover. What the side sees shows at
+        // once and fades in.
+        let fades = is_unit(scene, object);
         let presence = fog.presence.entry(scene.uuid(object)).or_default();
         presence.seen = sighting == Sighting::Seen;
-        let hide = !presence.seen && presence.value <= 0.0;
+        let hide = !presence.seen && (presence.value <= 0.0 || !fades);
         conceal(scene, fog, object, hide);
     }
 }
