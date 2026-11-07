@@ -277,3 +277,52 @@ fn the_match_clock_follows_the_game_state_phase() {
     assert!(!self::rules(&scene, rules).is_over());
     assert_eq!(self::rules(&scene, rules).elapsed(), 0.0);
 }
+
+#[test]
+fn the_game_state_timeout_does_not_end_a_match_the_rules_still_run() {
+    use crate::game_state::update_game_state;
+
+    let mut scene = calyx_engine::test_support::test_scene();
+    tank(&mut scene, "Player", 0);
+    let rules = rules_object(
+        &mut scene,
+        ComponentMatchRules {
+            time_limit: 5.0,
+            ..Default::default()
+        },
+    );
+    let state = scene.create(None, None);
+    scene.add_component(
+        state,
+        ComponentGameState {
+            phase: GamePhase::Playing.as_u32(),
+            match_duration: 1.0,
+            match_time_remaining: 1.0,
+            ..Default::default()
+        },
+    );
+    let phase = |scene: &Scene| {
+        scene
+            .read_component::<ComponentGameState, _, _>(state, |s| s.current_phase())
+            .unwrap()
+    };
+
+    // Two seconds in, past the Game State's own one-second duration.
+    for _ in 0..2 {
+        update_game_state(&mut scene, state, 1.0);
+        assert_eq!(update_match_rules(&mut scene, rules, 1.0), None);
+    }
+    assert_eq!(phase(&scene), GamePhase::Playing, "the rules own the clock");
+    assert!(!self::rules(&scene, rules).is_over());
+
+    for _ in 0..2 {
+        update_game_state(&mut scene, state, 1.0);
+        assert_eq!(update_match_rules(&mut scene, rules, 1.0), None);
+    }
+    update_game_state(&mut scene, state, 1.0);
+    let outcome = update_match_rules(&mut scene, rules, 1.0).expect("the rules' time is up");
+    assert_eq!(outcome.end, MatchEnd::TimeLimit);
+    assert!(crate::match_rules::match_over(&scene));
+    update_game_state(&mut scene, state, 1.0);
+    assert_eq!(phase(&scene), GamePhase::GameOver);
+}
