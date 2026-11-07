@@ -708,7 +708,7 @@ fn the_renderer_draws_outlines_after_colour_grading_and_before_fxaa() {
         .map(|pass| pass.name())
         .collect();
 
-    assert_eq!(ldr, ["color_grading", "outline", "fxaa"]);
+    assert_eq!(ldr, ["color_grading", "outline", "fog_of_war", "fxaa"]);
 }
 
 #[test]
