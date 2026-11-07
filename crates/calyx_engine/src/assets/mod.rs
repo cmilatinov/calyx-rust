@@ -1,6 +1,7 @@
 pub use asset::*;
 pub use asset_registry::*;
 pub use loaded_asset::*;
+pub(crate) use resolved_refs::ResolvedRefs;
 
 /// Skeletal animation clip assets.
 pub mod animation;
@@ -18,6 +19,7 @@ pub mod material;
 pub mod mesh;
 /// Post-processing profile assets shared between volumes.
 pub mod post_process_profile;
+mod resolved_refs;
 /// HDR skybox assets and environment-map generation.
 pub mod skybox;
 /// Texture assets and mip-generation helpers.

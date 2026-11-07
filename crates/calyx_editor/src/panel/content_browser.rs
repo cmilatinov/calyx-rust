@@ -9,6 +9,7 @@ use crate::widgets::{
 };
 use crate::{icons, EditorAppState};
 use calyx_engine::assets::animation_graph::AnimationGraph;
+use calyx_engine::assets::AssetRegistry;
 use egui::load::SizedTexture;
 use egui::text::LayoutJob;
 use egui::{
@@ -17,10 +18,12 @@ use egui::{
 };
 use re_ui::list_item::ShowCollapsingResponse;
 use std::any::Any;
-use std::fs::{DirEntry, OpenOptions, ReadDir};
+use std::collections::HashMap;
+use std::fs;
+use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
-use std::{fs, io};
+use uuid::Uuid;
 
 const CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX: f32 = THUMBNAIL_MIN_SIZE as f32;
 
@@ -31,6 +34,90 @@ pub struct PanelContentBrowser {
     /// Whether the last press landed in the content browser, so Enter opens
     /// its selected file.
     has_focus: bool,
+    listings: FolderListings,
+}
+
+/// One entry of a listed folder.
+#[derive(Clone)]
+struct ListedEntry {
+    path: PathBuf,
+    is_dir: bool,
+    /// The asset the file is, when it is one.
+    asset_id: Option<Uuid>,
+}
+
+/// The folders the content browser has listed, kept until the watcher
+/// reports a file created, removed or renamed, or the registry's assets
+/// change, so drawing the panel reads no directory and resolves no path when
+/// nothing changed.
+#[derive(Default)]
+struct FolderListings {
+    /// The registry's file change count and change epoch the listings
+    /// reflect.
+    stamp: Option<(u64, u64)>,
+    /// Each listed folder's subfolders, in the order the filesystem gives.
+    subfolders: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Each listed folder's entries other than `.meta` files.
+    entries: HashMap<PathBuf, Vec<ListedEntry>>,
+}
+
+impl FolderListings {
+    /// Forgets every listing when the registry reports a change since they
+    /// were made.
+    fn refresh(&mut self, registry: &AssetRegistry) {
+        let stamp = (registry.file_change_count(), registry.change_epoch());
+        if self.stamp != Some(stamp) {
+            self.subfolders.clear();
+            self.entries.clear();
+            self.stamp = Some(stamp);
+        }
+    }
+
+    fn subfolders(&mut self, folder: &Path) -> &[PathBuf] {
+        self.subfolders
+            .entry(folder.to_path_buf())
+            .or_insert_with(|| {
+                fs::read_dir(folder)
+                    .map(|entries| {
+                        entries
+                            .flatten()
+                            .filter(|entry| entry.file_type().is_ok_and(|ty| ty.is_dir()))
+                            .map(|entry| entry.path())
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            })
+    }
+
+    fn entries(&mut self, folder: &Path, registry: &AssetRegistry) -> &[ListedEntry] {
+        self.entries.entry(folder.to_path_buf()).or_insert_with(|| {
+            let Ok(entries) = fs::read_dir(folder) else {
+                return Vec::new();
+            };
+            entries
+                .flatten()
+                .filter_map(|entry| {
+                    let path = entry.path();
+                    if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("meta") {
+                        return None;
+                    }
+                    if file_name_str(&path).is_none() {
+                        warn_skipped_entry(&path);
+                        return None;
+                    }
+                    let is_dir = path.is_dir();
+                    let asset_id = (!is_dir)
+                        .then(|| registry.asset_id_from_path(&path))
+                        .flatten();
+                    Some(ListedEntry {
+                        path,
+                        is_dir,
+                        asset_id,
+                    })
+                })
+                .collect()
+        })
+    }
 }
 
 impl PanelContentBrowser {
@@ -40,6 +127,7 @@ impl PanelContentBrowser {
             selected_file: None,
             thumbnail_size_px: CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX,
             has_focus: false,
+            listings: FolderListings::default(),
         }
     }
 }
@@ -57,39 +145,25 @@ impl Panel for PanelContentBrowser {
             state.selection = Selection::none();
         }
         self.open_selected_file_on_enter(ui, state);
+        let nodes = {
+            let registry = state.game.assets.registries.assets.read();
+            self.listings.refresh(&registry);
+            self.listings
+                .entries(&self.selected_folder, &registry)
+                .to_vec()
+        };
 
         egui::SidePanel::left("file_tree")
             .resizable(true)
             .show_inside(ui, |ui| {
                 egui::ScrollArea::both().show(ui, |ui| {
                     re_ui::list_item::list_item_scope(ui, "file_tree_scope", |ui| {
-                        if let Ok(entries) = fs::read_dir(&root_path) {
-                            for entry in entries.flatten() {
-                                let entry_path = entry.path();
-                                self.render_directory(ui, state, entry, fs::read_dir(entry_path));
-                            }
+                        for folder in self.listings.subfolders(&root_path).to_vec() {
+                            self.render_directory(ui, state, folder);
                         }
                     });
                 });
             });
-
-        let mut nodes = Vec::new();
-        let fs = fs::read_dir(&self.selected_folder);
-        if let Ok(entries) = fs {
-            for entry in entries.flatten() {
-                let curr_path = entry.path();
-                if curr_path.is_file()
-                    && curr_path.extension().and_then(|e| e.to_str()) == Some("meta")
-                {
-                    continue;
-                }
-                if file_name_str(&curr_path).is_none() {
-                    warn_skipped_entry(&curr_path);
-                    continue;
-                }
-                nodes.push(curr_path);
-            }
-        }
 
         egui::TopBottomPanel::top("file_path")
             .exact_height(30.0)
@@ -177,14 +251,16 @@ impl Panel for PanelContentBrowser {
                         ui.style_mut().spacing.item_spacing = Vec2::ZERO;
                         let num_nodes_per_row = ((width / total_width) as usize).max(1);
                         ui.horizontal_wrapped(|ui| {
-                            for (idx, node) in nodes.iter().enumerate() {
-                                let is_dir = node.is_dir();
-                                let is_selected = self.is_selected(state, node, is_dir);
+                            for (idx, entry) in nodes.iter().enumerate() {
+                                let node = &entry.path;
+                                let is_dir = entry.is_dir;
+                                let is_selected = self.is_selected(state, entry);
                                 let image_size = Vec2::splat(icon_size);
-                                let thumbnail = if is_dir {
-                                    ThumbnailView::Unsupported
-                                } else {
-                                    Self::asset_thumbnail(state, node)
+                                let thumbnail = match entry.asset_id {
+                                    Some(asset_id) if !is_dir => {
+                                        Self::asset_thumbnail(state, asset_id)
+                                    }
+                                    _ => ThumbnailView::Unsupported,
                                 };
                                 let image_src = match thumbnail.texture_id() {
                                     Some(id) => ImageSource::Texture(SizedTexture {
@@ -281,13 +357,14 @@ impl PanelContentBrowser {
             .clamp(THUMBNAIL_MIN_SIZE as f32, THUMBNAIL_MAX_SIZE as f32);
     }
 
-    /// Requests the thumbnail of the file at `path` and returns what to draw.
-    fn asset_thumbnail(state: &EditorAppState, path: &Path) -> ThumbnailView {
+    /// Requests the thumbnail of the asset `asset_id` and returns what to
+    /// draw.
+    fn asset_thumbnail(state: &EditorAppState, asset_id: Uuid) -> ThumbnailView {
         let registry = state.game.assets.registries.assets.read();
         state
             .thumbnails
             .handle()
-            .view_for_path(&registry, path, ThumbnailPriority::Normal)
+            .view_for_asset(&registry, asset_id, ThumbnailPriority::Normal)
     }
 
     fn empty_space_interaction(&mut self, ui: &mut Ui, rect: Rect) {
@@ -407,31 +484,34 @@ impl PanelContentBrowser {
         if !self.has_focus || ui.memory(|memory| memory.focused().is_some()) {
             return;
         }
+        if !ui.input(|input| input.key_pressed(Key::Enter)) {
+            return;
+        }
         let Some(path) = self.selected_file.clone() else {
             return;
         };
         // The selection may have moved elsewhere since the file was clicked.
-        if !path.is_file() || !self.is_selected(state, &path, false) {
+        let entry = ListedEntry {
+            asset_id: state
+                .game
+                .assets
+                .registries
+                .assets
+                .read()
+                .asset_id_from_path(&path),
+            path,
+            is_dir: false,
+        };
+        if !entry.path.is_file() || !self.is_selected(state, &entry) {
             return;
         }
+        let path = entry.path;
         if ui.input_mut(|input| input.consume_key(Modifiers::NONE, Key::Enter)) {
             Self::open_file(state, &path);
         }
     }
 
-    fn render_directory(
-        &mut self,
-        ui: &mut Ui,
-        state: &mut EditorAppState,
-        entry: DirEntry,
-        children: io::Result<ReadDir>,
-    ) {
-        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
-        if !is_dir {
-            return;
-        }
-
-        let curr_path = entry.path();
+    fn render_directory(&mut self, ui: &mut Ui, state: &mut EditorAppState, curr_path: PathBuf) {
         let collapsing_id = ui.make_persistent_id(&curr_path);
         let is_selected = self.selected_folder == curr_path;
         let Some(text) = file_name_str(&curr_path) else {
@@ -443,14 +523,7 @@ impl PanelContentBrowser {
             .draggable(true)
             .selected(is_selected);
 
-        let child_entries: Vec<DirEntry> = children
-            .map(|nodes| {
-                nodes
-                    .flatten()
-                    .filter(|e| e.file_type().map(|t| t.is_dir()).unwrap_or(false))
-                    .collect()
-            })
-            .unwrap_or_default();
+        let child_entries = self.listings.subfolders(&curr_path).to_vec();
         let response;
         if !child_entries.is_empty() {
             ShowCollapsingResponse {
@@ -463,8 +536,7 @@ impl PanelContentBrowser {
                 re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
                 |ui| {
                     for child in child_entries {
-                        let path = child.path();
-                        self.render_directory(ui, state, child, fs::read_dir(path));
+                        self.render_directory(ui, state, child);
                     }
                 },
             );
@@ -547,21 +619,17 @@ impl PanelContentBrowser {
         self.selected_file = Some(path);
     }
 
-    fn is_selected(&self, state: &EditorAppState, path: &PathBuf, is_dir: bool) -> bool {
-        if is_dir {
+    fn is_selected(&self, state: &EditorAppState, entry: &ListedEntry) -> bool {
+        let path = &entry.path;
+        if entry.is_dir {
             if let Some(selection) = self.selected_file.as_ref() {
                 *selection == *path
             } else {
                 false
             }
         } else {
-            state
-                .game
-                .assets
-                .registries
-                .assets
-                .read()
-                .asset_id_from_path(path)
+            entry
+                .asset_id
                 .map(|id| state.selection.contains(SelectionType::Asset, id))
                 // A file that is not an asset has no selection of its own; it
                 // stays highlighted until something else is selected.

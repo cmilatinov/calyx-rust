@@ -328,6 +328,10 @@ impl GBufferRenderer {
         };
         pass.set_pipeline(&pipeline);
         pass.set_bind_group(0, &camera_bind_group, &[]);
+        // The draw list is sorted by material, then mesh: bind each only when
+        // it changes.
+        let mut bound_material = None;
+        let mut bound_mesh = None;
         for batch in draw_list
             .iter()
             .filter(|batch| binds_materials && batch.shader_id == self.pbr_shader_id)
@@ -344,9 +348,15 @@ impl GBufferRenderer {
             let Some(instance_group) = mesh.instance_bind_group() else {
                 continue;
             };
-            pass.set_bind_group(1, instance_group, &[]);
-            pass.set_bind_group(2, material_group, &[]);
-            RenderUtils::bind_mesh_buffers(&mut pass, mesh);
+            if bound_mesh != Some(batch.mesh_id) {
+                pass.set_bind_group(1, instance_group, &[]);
+                RenderUtils::bind_mesh_buffers(&mut pass, mesh);
+                bound_mesh = Some(batch.mesh_id);
+            }
+            if bound_material != Some(batch.mat_id) {
+                pass.set_bind_group(2, material_group, &[]);
+                bound_material = Some(batch.mat_id);
+            }
             RenderUtils::draw_mesh_instanced(&mut pass, mesh, batch.instances.clone());
             self.drawn_instances += batch.instances.len() as u32;
         }

@@ -8,6 +8,7 @@ pub use self::dropped_components::{dropped_components_report, DropReason, Droppe
 pub use self::error::*;
 pub use self::game_object_ref::*;
 pub use self::game_object_store::*;
+pub use self::hierarchy_visibility::HierarchyVisibility;
 pub use self::hud::*;
 pub use self::prefab::*;
 pub use self::prefab_link::{PrefabLink, PrefabUpdate};
@@ -21,6 +22,7 @@ pub(crate) mod disabled_components;
 mod dropped_components;
 mod error;
 pub(crate) mod game_object_ref;
+mod hierarchy_visibility;
 mod hud;
 mod prefab;
 pub(crate) mod prefab_link;

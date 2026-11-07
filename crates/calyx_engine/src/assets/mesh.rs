@@ -129,6 +129,23 @@ pub struct Mesh {
     /// frames, with the `(instance, bone)` buffer generations it was built
     /// over.
     pub(crate) instance_bind_group: Option<(wgpu::BindGroup, (u64, u64))>,
+    /// What the instance and bone buffers hold, so a frame, or a second view
+    /// in the same frame, that draws the same instances writes nothing.
+    pub(crate) uploaded: UploadedInstances,
+    /// The interleaved vertices and the indices the vertex and index buffers
+    /// hold, kept by [`Self::rebuild_mesh_data_if_changed`] only.
+    pub(crate) uploaded_geometry: Option<(Vec<Vertex>, Vec<u32>)>,
+}
+
+/// The contents of a mesh's instance and bone buffers, as last written.
+#[derive(Default)]
+pub(crate) struct UploadedInstances {
+    /// The `(instance, bone)` buffer generations written to; a reallocated
+    /// buffer holds nothing.
+    generations: Option<(u64, u64)>,
+    num_bones: u32,
+    instances: Vec<Instance>,
+    bone_transforms: Vec<BoneTransform>,
 }
 
 impl Mesh {
@@ -210,6 +227,8 @@ impl Mesh {
             ),
             instance_bind_group_layout,
             instance_bind_group: None,
+            uploaded: Default::default(),
+            uploaded_geometry: None,
         }
     }
 }
@@ -374,6 +393,16 @@ impl Mesh {
     }
 
     fn rebuild_vertex_buffer(&mut self, device: &wgpu::Device) {
+        let vertices = self.interleaved_vertices();
+        self.vertex_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
+            wgpu::BufferUsages::VERTEX,
+            vertices.as_slice(),
+        )));
+    }
+
+    /// The vertex attributes interleaved as the vertex buffer holds them.
+    /// Call after [`Self::normalize_mesh_data`].
+    fn interleaved_vertices(&self) -> Vec<Vertex> {
         let vertex_count = self.vertices.len();
         let mut vertices: Vec<Vertex> = Vec::new();
         vertices.resize(vertex_count, Vertex::default());
@@ -388,21 +417,13 @@ impl Mesh {
             vertex.bone_weights = self.bone_weights[i].into();
             vertex.tangent = self.tangents[i].into();
         }
-        self.vertex_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
-            wgpu::BufferUsages::VERTEX,
-            vertices.as_slice(),
-        )));
+        vertices
     }
 
     fn rebuild_instance_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
         let header_size = std::mem::size_of::<MeshInstancesHeader>() as u64;
-        // Sized up front so the header written first survives a growth, and
-        // for at least one instance: the binding must hold the header and one
-        // element of the runtime-sized instance array.
-        self.instance_buffer.resize(
-            device,
-            header_size + (self.instances.len().max(1) * std::mem::size_of::<Instance>()) as u64,
-        );
+        self.instance_buffer
+            .resize(device, self.instance_buffer_size());
         let header = MeshInstancesHeader {
             num_bones: self.bones.len() as u32,
             _padding: Default::default(),
@@ -414,11 +435,7 @@ impl Mesh {
     }
 
     fn rebuild_bone_buffer(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.bone_buffer.resize(
-            device,
-            16 + (self.bone_transforms.len() * std::mem::size_of::<BoneTransform>())
-                .max(std::mem::size_of::<BoneTransform>()) as u64,
-        );
+        self.bone_buffer.resize(device, self.bone_buffer_size());
         self.bone_buffer
             .write_buffer(device, queue, &[self.bone_transforms.len() as u32], None);
         self.bone_buffer
@@ -441,12 +458,87 @@ impl Mesh {
         self.normalize_mesh_data();
         self.rebuild_index_buffer(device);
         self.rebuild_vertex_buffer(device);
+        self.uploaded_geometry = None;
+    }
+
+    /// Rebuilds the vertex and index buffers as [`Self::rebuild_mesh_data`]
+    /// does, unless they already hold this geometry, for a mesh rewritten
+    /// every frame, such as the gizmos', that mostly stays the same.
+    pub(crate) fn rebuild_mesh_data_if_changed(&mut self, device: &wgpu::Device) {
+        self.normalize_mesh_data();
+        let vertices = self.interleaved_vertices();
+        let unchanged = self.vertex_buffer.is_some()
+            && self.index_buffer.is_some()
+            && self.uploaded_geometry.as_ref().is_some_and(
+                |(uploaded_vertices, uploaded_indices)| {
+                    bytemuck::cast_slice::<_, u8>(uploaded_vertices)
+                        == bytemuck::cast_slice::<_, u8>(&vertices)
+                        && *uploaded_indices == self.indices
+                },
+            );
+        if unchanged {
+            return;
+        }
+        self.rebuild_index_buffer(device);
+        self.vertex_buffer = Some(device.create_buffer_init(&wgpu_buffer_init_desc(
+            wgpu::BufferUsages::VERTEX,
+            vertices.as_slice(),
+        )));
+        self.uploaded_geometry = Some((vertices, self.indices.clone()));
     }
 
     pub(crate) fn rebuild_instance_data(&mut self, device: &wgpu::Device, queue: &wgpu::Queue) {
-        self.rebuild_instance_buffer(device, queue);
-        self.rebuild_bone_buffer(device, queue);
+        self.reserve_instance_buffers(device);
+        if !self.instances_uploaded() {
+            self.rebuild_instance_buffer(device, queue);
+            self.rebuild_bone_buffer(device, queue);
+            let uploaded = &mut self.uploaded;
+            uploaded.generations = Some((
+                self.instance_buffer.generation(),
+                self.bone_buffer.generation(),
+            ));
+            uploaded.num_bones = self.bones.len() as u32;
+            uploaded.instances.clone_from(&self.instances);
+            uploaded.bone_transforms.clone_from(&self.bone_transforms);
+        }
         self.refresh_instance_bind_group(device);
+    }
+
+    /// Grows the instance and bone buffers to hold this frame's instances
+    /// and bone transforms.
+    fn reserve_instance_buffers(&mut self, device: &wgpu::Device) {
+        self.instance_buffer
+            .resize(device, self.instance_buffer_size());
+        self.bone_buffer.resize(device, self.bone_buffer_size());
+    }
+
+    /// Whether the instance and bone buffers already hold this frame's
+    /// instances and bone transforms.
+    fn instances_uploaded(&self) -> bool {
+        let uploaded = &self.uploaded;
+        uploaded.generations
+            == Some((
+                self.instance_buffer.generation(),
+                self.bone_buffer.generation(),
+            ))
+            && uploaded.num_bones == self.bones.len() as u32
+            && bytemuck::cast_slice::<_, u8>(&uploaded.instances)
+                == bytemuck::cast_slice::<_, u8>(&self.instances)
+            && bytemuck::cast_slice::<_, u8>(&uploaded.bone_transforms)
+                == bytemuck::cast_slice::<_, u8>(&self.bone_transforms)
+    }
+
+    fn instance_buffer_size(&self) -> u64 {
+        // Sized up front so the header written first survives a growth, and
+        // for at least one instance: the binding must hold the header and one
+        // element of the runtime-sized instance array.
+        std::mem::size_of::<MeshInstancesHeader>() as u64
+            + (self.instances.len().max(1) * std::mem::size_of::<Instance>()) as u64
+    }
+
+    fn bone_buffer_size(&self) -> u64 {
+        16 + (self.bone_transforms.len() * std::mem::size_of::<BoneTransform>())
+            .max(std::mem::size_of::<BoneTransform>()) as u64
     }
 
     /// Keeps the instance bind group, rebuilding it only when a buffer it

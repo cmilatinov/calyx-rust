@@ -11,7 +11,9 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::BufWriter;
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Condvar, Mutex, RwLock, RwLockReadGuard, RwLockWriteGuard};
 use std::thread::{JoinHandle, ThreadId};
 use std::time::{Duration, Instant};
@@ -111,6 +113,38 @@ struct AssetData {
     /// Ids assets had before their `.meta` changed on disk to name another,
     /// with the id each moved to; see [`meta_sync`].
     aliases: HashMap<Uuid, Uuid>,
+}
+
+/// A write lock on the registry's metadata or cache that moves the
+/// registry's [`AssetRegistry::change_epoch`] on when it is released after a
+/// write. Reading through it changes nothing.
+struct ChangeGuard<'a, T> {
+    guard: RwLockWriteGuard<'a, T>,
+    epoch: &'a AtomicU64,
+    changed: bool,
+}
+
+impl<T> Deref for ChangeGuard<'_, T> {
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.guard
+    }
+}
+
+impl<T> DerefMut for ChangeGuard<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        self.changed = true;
+        &mut self.guard
+    }
+}
+
+impl<T> Drop for ChangeGuard<'_, T> {
+    fn drop(&mut self) {
+        if self.changed {
+            self.epoch.fetch_add(1, Ordering::AcqRel);
+        }
+    }
 }
 
 /// Loader registered for one asset type. Cloned out of the registry before it
@@ -261,6 +295,13 @@ pub struct AssetRegistry {
     asset_cache: RwLock<AssetCache>,
     color_texture_cache: RwLock<ColorTextureCache>,
     asset_data: RwLock<AssetData>,
+    /// Counts the writes to the asset metadata and cache, so a caller can
+    /// keep what it resolved through the registry until the next one; see
+    /// [`Self::change_epoch`].
+    change_epoch: AtomicU64,
+    /// Counts the watcher's reports of files and folders created, removed
+    /// or renamed under the asset roots; see [`Self::file_change_count`].
+    file_changes: AtomicU64,
     asset_constructors: RwLock<HashMap<Uuid, AssetConstructor>>,
     loading: LoadSlots,
     background_loads: Mutex<HashMap<Uuid, BackgroundLoadState>>,
@@ -300,6 +341,8 @@ impl AssetRegistry {
                 asset_cache: Default::default(),
                 color_texture_cache: Default::default(),
                 asset_data: Default::default(),
+                change_epoch: Default::default(),
+                file_changes: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
                 background_loads: Default::default(),
@@ -348,6 +391,8 @@ impl AssetRegistry {
             asset_cache: Default::default(),
             color_texture_cache: Default::default(),
             asset_data: Default::default(),
+            change_epoch: Default::default(),
+            file_changes: Default::default(),
             asset_constructors: Default::default(),
             loading: Default::default(),
             background_loads: Default::default(),
@@ -379,6 +424,8 @@ impl AssetRegistry {
                 asset_cache: Default::default(),
                 color_texture_cache: Default::default(),
                 asset_data: Default::default(),
+                change_epoch: Default::default(),
+                file_changes: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
                 background_loads: Default::default(),
@@ -1142,16 +1189,41 @@ impl AssetRegistry {
         self.asset_data.read().unwrap()
     }
 
-    fn asset_data_mut(&self) -> RwLockWriteGuard<'_, AssetData> {
-        self.asset_data.write().unwrap()
+    fn asset_data_mut(&self) -> ChangeGuard<'_, AssetData> {
+        ChangeGuard {
+            guard: self.asset_data.write().unwrap(),
+            epoch: &self.change_epoch,
+            changed: false,
+        }
     }
 
     fn asset_cache(&self) -> RwLockReadGuard<'_, AssetCache> {
         self.asset_cache.read().unwrap()
     }
 
-    fn asset_cache_mut(&self) -> RwLockWriteGuard<'_, AssetCache> {
-        self.asset_cache.write().unwrap()
+    fn asset_cache_mut(&self) -> ChangeGuard<'_, AssetCache> {
+        ChangeGuard {
+            guard: self.asset_cache.write().unwrap(),
+            epoch: &self.change_epoch,
+            changed: false,
+        }
+    }
+
+    /// A counter that moves on whenever an asset is registered, forgotten,
+    /// loaded, reloaded, renamed or evicted: any write to the metadata or the
+    /// cache. While it holds still, resolving an asset id gives the same
+    /// reference, or the same failure, as last time, so callers that resolve
+    /// many references every frame can keep their results until it moves.
+    pub fn change_epoch(&self) -> u64 {
+        self.change_epoch.load(Ordering::Acquire)
+    }
+
+    /// A counter that moves on whenever the watcher reports a file or folder
+    /// created, removed or renamed under the asset roots, whether or not it
+    /// is an asset. While it holds still, a listing of the asset folders is
+    /// current.
+    pub fn file_change_count(&self) -> u64 {
+        self.file_changes.load(Ordering::Acquire)
     }
 
     fn asset_constructors(&self) -> RwLockReadGuard<'_, HashMap<Uuid, AssetConstructor>> {
@@ -1182,6 +1254,12 @@ impl AssetRegistry {
     pub(crate) fn recv_notify_event(&self, event: Event) {
         log::trace!("Received asset notification: {:?}", event.kind);
         let paths_iter = Self::notify_event_paths(&event);
+        if matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))
+        ) {
+            self.file_changes.fetch_add(1, Ordering::AcqRel);
+        }
         match event.kind {
             EventKind::Create(_) => {
                 for file in paths_iter {
@@ -3310,6 +3388,46 @@ mod tests {
                 .get(&asset_id)
                 .map(|(generation, _)| *generation),
             before
+        );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn the_change_epoch_moves_on_a_load_and_a_file_event_but_not_on_reads() {
+        let root = temp_asset_root("calyx-change-epoch");
+        let (asset_path, _, asset_id) = write_scene_with_meta(&root);
+        let registries = test_registries_with_assets(vec![root.clone()]);
+        let registry = registries.assets.read();
+        let (epoch, files) = (registry.change_epoch(), registry.file_change_count());
+
+        registry.reload_assets();
+        let _ = registry.asset_id_from_path(&asset_path);
+        let _ = registry.loaded_by_id::<Scene>(asset_id);
+        assert_eq!(registry.change_epoch(), epoch, "reads change nothing");
+        assert_eq!(registry.file_change_count(), files);
+
+        let created = registry
+            .create("epoch_graph".to_string(), AnimationGraph::default())
+            .expect("the graph is created");
+        let cached = registry.change_epoch();
+        assert!(cached > epoch, "creating an asset caches it");
+        registry
+            .load_by_id::<AnimationGraph>(created.id())
+            .expect("the graph is cached");
+        assert_eq!(
+            registry.change_epoch(),
+            cached,
+            "a cached load changes nothing"
+        );
+
+        registry.recv_notify_event(
+            Event::new(EventKind::Create(notify::event::CreateKind::Folder))
+                .add_path(root.join("new_folder")),
+        );
+        assert!(
+            registry.file_change_count() > files,
+            "a created folder is a file change"
         );
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");

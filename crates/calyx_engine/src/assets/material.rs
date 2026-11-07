@@ -208,6 +208,18 @@ pub struct Material {
     /// built for. [`Material::follow_shader`] rebuilds them when the shader's differs.
     #[serde(skip)]
     shader_layout_generation: Option<u64>,
+    /// What [`Material::load_buffers`] last wrote for each variable, by its index: the
+    /// buffer, the offset and the bytes. A variable whose value, buffer and offset are the
+    /// ones it last wrote is not written again.
+    #[serde(skip)]
+    uploaded_values: Vec<Option<UploadedValue>>,
+}
+
+/// One variable's value as [`Material::load_buffers`] last wrote it.
+struct UploadedValue {
+    buffer: wgpu::Buffer,
+    offset: wgpu::BufferAddress,
+    bytes: Vec<u8>,
 }
 
 /// Cached metadata for one bind-group entry.
@@ -312,6 +324,7 @@ impl Material {
             bind_group_entries: Default::default(),
             buffers: Default::default(),
             shader_layout_generation: None,
+            uploaded_values: Default::default(),
         };
         material.init(assets);
         material
@@ -531,15 +544,38 @@ impl Material {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn collect_textures(
         &self,
         assets: &ReadOnlyAssetContext,
         textures: &mut HashMap<AssetId, Ref<Texture>>,
         default_texture: Ref<Texture>,
     ) {
+        self.collect_textures_with(
+            assets,
+            textures,
+            default_texture,
+            |texture: &AssetRef<Texture>| texture.get_ref(&assets.registries),
+        );
+    }
+
+    /// Collects the textures the material binds as [`Self::collect_textures`] does, resolving
+    /// each texture asset through `resolve`.
+    pub(crate) fn collect_textures_with(
+        &self,
+        assets: &ReadOnlyAssetContext,
+        textures: &mut HashMap<AssetId, Ref<Texture>>,
+        default_texture: Ref<Texture>,
+        mut resolve: impl FnMut(&AssetRef<Texture>) -> Option<Ref<Texture>>,
+    ) {
         for var in self.variables.iter() {
-            let texture = var.value.as_texture(assets, default_texture.clone());
-            textures.insert(texture.id(), texture);
+            let texture = match &var.value {
+                ShaderVariableValue::Texture2D(MaterialTexture::Asset(texture)) => {
+                    resolve(texture).unwrap_or_else(|| default_texture.clone())
+                }
+                value => value.as_texture(assets, default_texture.clone()),
+            };
+            textures.entry(texture.id()).or_insert(texture);
         }
     }
 
@@ -867,11 +903,31 @@ impl Material {
     /// reflected default, and rebuilds the bind-group entries and buffers for the new layout. A
     /// variable the shader no longer declares is dropped. Does nothing while the shader's
     /// [`Shader::layout_generation`] is the one the material was built for.
+    #[cfg(test)]
     pub(crate) fn follow_shader(&mut self, assets: &ReadOnlyAssetContext) {
         let generation = self.shader_layout_generation(assets);
         if generation == self.shader_layout_generation {
             return;
         }
+        self.rebuild_for_shader(assets);
+    }
+
+    /// Follows the material's shader as [`Self::follow_shader`] does, given `shader`, the
+    /// shader the material's [`Self::shader`] resolves to, so a renderer that resolved it
+    /// already does not resolve it again.
+    pub(crate) fn follow_resolved_shader(
+        &mut self,
+        assets: &ReadOnlyAssetContext,
+        shader: Option<&Ref<Shader>>,
+    ) {
+        let generation = shader.map(|shader| shader.read().layout_generation());
+        if generation == self.shader_layout_generation {
+            return;
+        }
+        self.rebuild_for_shader(assets);
+    }
+
+    fn rebuild_for_shader(&mut self, assets: &ReadOnlyAssetContext) {
         if let Some(shader) = self.shader.get_ref(&assets.registries) {
             let mut previous = std::mem::take(&mut self.variables);
             self.variables = Self::reflect_variables(&shader.read().module)
@@ -962,14 +1018,27 @@ impl Material {
 
     pub(crate) fn load_buffers(&mut self, render_context: &RenderContext) {
         let queue = render_context.queue();
-        for var in self.variables.iter() {
-            if let Some(buffer) = self.buffers.get(&(var.group, var.binding)) {
-                queue.write_buffer(
-                    buffer,
-                    var.offset.unwrap_or_default() as wgpu::BufferAddress,
-                    var.value.as_slice(),
-                );
+        self.uploaded_values
+            .resize_with(self.variables.len(), Default::default);
+        for (var, uploaded) in self.variables.iter().zip(&mut self.uploaded_values) {
+            let Some(buffer) = self.buffers.get(&(var.group, var.binding)) else {
+                continue;
+            };
+            let offset = var.offset.unwrap_or_default() as wgpu::BufferAddress;
+            let bytes = var.value.as_slice();
+            // Both views of the editor prepare the same materials every frame,
+            // and a material's values rarely change: write only what did.
+            if uploaded.as_ref().is_some_and(|uploaded| {
+                uploaded.buffer == *buffer && uploaded.offset == offset && uploaded.bytes == bytes
+            }) {
+                continue;
             }
+            queue.write_buffer(buffer, offset, bytes);
+            *uploaded = Some(UploadedValue {
+                buffer: buffer.clone(),
+                offset,
+                bytes: bytes.to_vec(),
+            });
         }
     }
 }
@@ -990,6 +1059,7 @@ impl From<(&ReadOnlyAssetContext, MaterialData)> for Material {
             bind_group_entries: Default::default(),
             buffers: Default::default(),
             shader_layout_generation: None,
+            uploaded_values: Default::default(),
         };
         value.init(assets);
         value
