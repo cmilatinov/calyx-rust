@@ -469,9 +469,13 @@ impl ParticleSimulation {
         };
         let device = render_context.device();
         let queue = render_context.queue();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
-            label: Some("particle_simulation"),
-        });
+        crate::profile_scope!("Particle simulation");
+        let mut simulation_encoder =
+            device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("particle_simulation"),
+            });
+        let mut encoder =
+            crate::profiler::GpuScope::new(&mut simulation_encoder, "Particle simulation");
         let mut seen = HashSet::new();
         let mut query = <(Entity, &ComponentParticleSystem)>::query();
         for (entity, component) in query.iter(scene.world()) {
@@ -519,7 +523,8 @@ impl ParticleSimulation {
                 system.emitter.finish_frame();
             }
         }
-        queue.submit(Some(encoder.finish()));
+        drop(encoder);
+        queue.submit(Some(simulation_encoder.finish()));
     }
 
     /// Brings the bound scene's systems up to date with their components

@@ -7,6 +7,7 @@ pub use self::animator::*;
 pub use self::content_browser::*;
 pub use self::game::*;
 pub use self::inspector::*;
+pub use self::profiler::*;
 pub use self::scene_hierarchy::*;
 pub use self::terminal::*;
 pub use self::viewport::*;
@@ -19,6 +20,7 @@ mod animator;
 mod content_browser;
 mod game;
 mod inspector;
+mod profiler;
 mod scene_hierarchy;
 mod terminal;
 mod viewport;
@@ -56,6 +58,7 @@ impl Panels {
         panels.insert(PanelViewport::name(), Box::<PanelViewport>::default());
         panels.insert(PanelGame::name(), Box::<PanelGame>::default());
         panels.insert(PanelAnimator::name(), Box::<PanelAnimator>::default());
+        panels.insert(PanelProfiler::name(), Box::<PanelProfiler>::default());
         Panels { inner: panels }
     }
 
@@ -94,6 +97,7 @@ pub struct PanelManager<'a> {
 impl egui_tiles::Behavior<&'static str> for PanelManager<'_> {
     fn pane_ui(&mut self, ui: &mut Ui, _tile_id: TileId, pane: &mut &'static str) -> UiResponse {
         if let Some(panel) = self.panels.inner.get_mut(pane) {
+            calyx_engine::profile_scope!("Panel", *pane);
             panel.ui(ui, self.state);
         }
         UiResponse::None

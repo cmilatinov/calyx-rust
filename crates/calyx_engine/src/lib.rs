@@ -35,6 +35,8 @@ pub mod math;
 pub mod net;
 /// Physics configuration, state, and debug helpers.
 pub mod physics;
+/// CPU and GPU frame profiling.
+pub mod profiler;
 /// Runtime reflection APIs and type metadata.
 pub mod reflect;
 /// Rendering contexts, shaders, and scene rendering APIs.

@@ -546,6 +546,20 @@ impl EditorApp {
                 });
                 Ok(None)
             }
+            Command::SetProfilerCapture { enabled } => {
+                calyx_engine::profiler::set_capture(enabled);
+                Ok(Some(serde_json::json!({ "capturing": enabled })))
+            }
+            Command::ReadProfile { frames } => {
+                if !calyx_engine::profiler::COMPILED_IN {
+                    return Err((
+                        ErrorKind::BadRequest,
+                        "this editor was built with --cfg calyx_no_profiling".to_string(),
+                    ));
+                }
+                runtime.push_profile_read(ResponseSlot { ..*slot }, frames)?;
+                Ok(None)
+            }
         }
     }
 

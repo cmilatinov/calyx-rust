@@ -6,8 +6,10 @@ use super::{
 };
 use crate::assets::texture::Texture;
 use crate::context::ReadOnlyAssetContext;
+use crate::profiler::GpuScope;
 use crate::render::{RenderContext, SceneRendererError};
 use egui_wgpu::wgpu;
+use nalgebra_glm::Mat4;
 use std::sync::Arc;
 
 /// A texture a planned pass reads or writes.
@@ -141,6 +143,7 @@ pub struct PostProcessChain {
     depth: DepthResolve,
     particle_depth: DepthResolve,
     camera: CameraPlanes,
+    view_to_world: Mat4,
 }
 
 impl PostProcessChain {
@@ -152,6 +155,7 @@ impl PostProcessChain {
             depth: DepthResolve::new(context)?,
             particle_depth: DepthResolve::new(context)?,
             camera: CameraPlanes::default(),
+            view_to_world: Mat4::identity(),
         })
     }
 
@@ -170,6 +174,12 @@ impl PostProcessChain {
     /// passes that read depth see in [`PassContext::camera`].
     pub fn set_camera(&mut self, camera: CameraPlanes) {
         self.camera = camera;
+    }
+
+    /// Sets the world transform of the camera the next frames are drawn
+    /// with, which passes see in [`PassContext::view_to_world`].
+    pub fn set_view_to_world(&mut self, view_to_world: Mat4) {
+        self.view_to_world = view_to_world;
     }
 
     /// The passes, in the order they run.
@@ -243,6 +253,7 @@ impl PostProcessChain {
             depth,
             particle_depth,
             camera,
+            view_to_world,
         } = self;
         let size = (
             targets.output.descriptor.size.width,
@@ -271,6 +282,7 @@ impl PostProcessChain {
             render_context,
             size,
             camera: *camera,
+            view_to_world: *view_to_world,
         };
         for planned in &plan.passes {
             passes[planned.pass].prepare(&context, settings);
@@ -312,7 +324,9 @@ impl PostProcessChain {
                     .flatten(),
             };
             let (input, output) = (io.input, io.output);
-            if let Err(error) = pass.record(&context, encoder, io) {
+            crate::profile_scope!("Post-process pass", pass.name());
+            let mut encoder = GpuScope::new_with(encoder, || pass.name().to_owned());
+            if let Err(error) = pass.record(&context, &mut encoder, io) {
                 crate::logging::warn_once(
                     format!("post-process-no-pipeline:{}:{error}", pass.name()),
                     || {
@@ -322,7 +336,7 @@ impl PostProcessChain {
                         )
                     },
                 );
-                copy(encoder, input, output);
+                copy(&mut encoder, input, output);
             }
         }
         plan

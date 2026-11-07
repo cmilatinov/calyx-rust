@@ -33,6 +33,7 @@ use calyx_engine::render::{
 };
 use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use calyx_engine::scene::{Scene, SceneManager};
+use calyx_engine::{profile_scope, profiler};
 use eframe::{wgpu, NativeOptions};
 use egui::{include_image, Button, CornerRadius, ImageSource, Response, Sense, Ui, Vec2};
 use egui::{Align, Layout};
@@ -180,6 +181,7 @@ impl EditorAppState {
                 samples: 1,
                 clear_color: prefab_mode::SCENE_VIEW_BACKDROP,
                 shadows: true,
+                profile_name: "Scene view",
                 ..Default::default()
             },
             initial_render_size,
@@ -189,6 +191,7 @@ impl EditorAppState {
             SceneRendererOptions {
                 clear_color: Color32::from_rgb(0, 0, 0),
                 shadows: true,
+                profile_name: "Game view",
                 ..Default::default()
             },
             initial_render_size,
@@ -336,6 +339,9 @@ impl EditorApp {
         let tree = Self::create_tree();
         let project_path = project_path.into();
         log::info!("Starting editor for project {}", project_path.display());
+        if let Some(render_state) = &cc.wgpu_render_state {
+            profiler::gpu::install(&render_state.device, &render_state.queue);
+        }
         let asset_context = AssetContext::new(cc, project_path.join("assets"))?;
         let content_browser_root = {
             let registry = asset_context.registries.assets.read();
@@ -407,9 +413,10 @@ impl EditorApp {
         let inspector = tiles.insert_pane(PanelInspector::name());
         let content_browser = tiles.insert_pane(PanelContentBrowser::name());
         let terminal = tiles.insert_pane(PanelTerminal::name());
+        let profiler = tiles.insert_pane(PanelProfiler::name());
 
         let center = tiles.insert_tab_tile(vec![viewport, game, animator]);
-        let bottom = tiles.insert_tab_tile(vec![content_browser, terminal]);
+        let bottom = tiles.insert_tab_tile(vec![content_browser, terminal, profiler]);
 
         let mut middle_linear = Linear::new(LinearDir::Vertical, vec![center, bottom]);
         middle_linear.shares.set_share(center, 0.75);
@@ -430,11 +437,20 @@ impl EditorApp {
 
 impl eframe::App for EditorApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        self.load_completed_build();
+        profiler::new_frame();
+        profile_scope!("Editor update");
+        profiler::time_ui_pass(ctx);
+        {
+            profile_scope!("Load completed build");
+            self.load_completed_build();
+        }
         self.state.game.resources.time_mut().update_time();
         self.state.game_response = None;
         self.state.viewport_response = None;
-        self.remote_update_begin(ctx);
+        {
+            profile_scope!("Remote commands");
+            self.remote_update_begin(ctx);
+        }
         // A press outside the inspector starts any edit another panel makes
         // (hierarchy, gizmo, menus) and ends a pending text-field session, so
         // the session's undo step is committed before that panel writes the
@@ -452,14 +468,23 @@ impl eframe::App for EditorApp {
                 self.state.flush_pending_inspector_value_edits();
             }
         }
-        self.render_views(ctx, frame);
-        self.process_thumbnail_jobs(frame);
+        {
+            profile_scope!("Render views");
+            self.render_views(ctx, frame);
+        }
+        {
+            profile_scope!("Thumbnails");
+            self.process_thumbnail_jobs(frame);
+        }
         // Asset selectors drawn by inspectors reach the thumbnail service
         // through the egui context, since they never see `EditorAppState`.
         self.state.thumbnails.handle().install(ctx);
 
-        self.menu_bar(ctx);
-        prefab_mode::show_banner(ctx, &mut self.state);
+        {
+            profile_scope!("Menu bar");
+            self.menu_bar(ctx);
+            prefab_mode::show_banner(ctx, &mut self.state);
+        }
 
         egui::CentralPanel::default()
             .frame(Frame {
@@ -471,6 +496,7 @@ impl eframe::App for EditorApp {
                 stroke: Default::default(),
             })
             .show(ctx, |ui| {
+                profile_scope!("Panels");
                 if let Some(name) = self.state.focus_panel.take() {
                     self.tree.make_active(
                         |_, tile| matches!(tile, egui_tiles::Tile::Pane(pane) if *pane == name),
@@ -485,8 +511,14 @@ impl eframe::App for EditorApp {
         self.status_bar(ctx);
 
         let simulated = self.state.game.scenes.is_simulating();
-        self.update_game(ctx);
-        self.render_view_outline();
+        {
+            profile_scope!("Game update");
+            self.update_game(ctx);
+        }
+        {
+            profile_scope!("Scene view finalize");
+            self.render_view_outline();
+        }
         self.update_window_title(ctx);
         self.state.show_scene_recovery_prompt(ctx);
         prefab_mode::show_unsaved_changes_prompt(ctx, &mut self.state);
@@ -495,14 +527,20 @@ impl eframe::App for EditorApp {
         self.frame_counter.tick(self.state.game.resources.time());
 
         self.state.game.scenes.current_scene_mut().flush_deletes();
-        self.state.update_scene_document();
-        self.state
-            .game
-            .assets
-            .registries
-            .assets
-            .read()
-            .reload_assets();
+        {
+            profile_scope!("Scene document");
+            self.state.update_scene_document();
+        }
+        {
+            profile_scope!("Reload assets");
+            self.state
+                .game
+                .assets
+                .registries
+                .assets
+                .read()
+                .reload_assets();
+        }
 
         self.remote_update_end(simulated);
         ctx.request_repaint();

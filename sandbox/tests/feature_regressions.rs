@@ -760,7 +760,17 @@ fn campfire_prefab_loads_with_every_particle_module_field_known() {
 #[test]
 fn sandbox_campfire_emits_from_each_of_its_systems() {
     let (copy, assets) = sandbox_assets();
-    let scene = load_sandbox_scene(&copy, &assets);
+    // The arena no longer places a campfire; drop the shared prefab into it.
+    let prefab = assets
+        .registries
+        .assets
+        .read()
+        .reload_by_path::<Prefab>(&copy.sandbox_root().join("shared/prefabs/campfire.cxprefab"))
+        .expect("campfire prefab should load");
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    scene
+        .instantiate_prefab_reporting(&prefab.read(), None)
+        .expect("campfire prefab should instantiate");
     let puff = assets
         .registries
         .assets

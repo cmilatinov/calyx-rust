@@ -118,6 +118,20 @@ fn erased_effect_operations_preserve_all_builtin_blend_rules() {
             opacity: 0.4,
         },
     );
+    check_effect(
+        ComponentFogOfWar::default(),
+        ComponentFogOfWar {
+            color: Color32::from_rgb(10, 20, 30),
+            opacity: 0.3,
+            sight: Some(FogOfWarSight {
+                viewers: vec![FogOfWarViewer {
+                    weight: 0.5,
+                    ..Default::default()
+                }],
+                blockers: vec![FogOfWarBlocker::default(); 2],
+            }),
+        },
+    );
     let outline = |count| ComponentOutline {
         styles: (0..count)
             .map(|index| OutlineStyle {

@@ -406,6 +406,7 @@ fn the_effect_types_are_the_registered_effect_components() {
         ComponentVignette::type_uuid(),
         crate::component::ComponentAntiAliasing::type_uuid(),
         ComponentFog::type_uuid(),
+        crate::component::ComponentFogOfWar::type_uuid(),
         crate::component::ComponentOutline::type_uuid(),
     ];
     expected.sort();

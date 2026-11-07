@@ -16,7 +16,9 @@ use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
-use calyx_engine::ui::{PaintCommand, PointerEvents, UiArena, UiLength, UiNodeHandle, UiRect};
+use calyx_engine::ui::{
+    PaintCommand, PointerEvents, UiArena, UiColor, UiLength, UiNodeHandle, UiRect,
+};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
 use nalgebra_glm::{vec2, vec4, Mat4, Vec3};
 use paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED};
@@ -34,7 +36,6 @@ pub struct ComponentTankHud {
     /// Standalone scenes count down this duration; zero selects elapsed time.
     /// A scene Game State component supplies the authoritative clock instead.
     pub timer_duration: f32,
-    pub vision_range: f32,
     pub low_damage_ratio: f32,
     pub high_damage_ratio: f32,
     #[serde(skip)]
@@ -52,6 +53,15 @@ pub struct ComponentTankHud {
     #[serde(skip)]
     #[reflect_skip]
     map_boundary: std::sync::Arc<std::sync::Mutex<minimap::BoundaryCache>>,
+    /// What fog of war hid from this HUD's player.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) fog: crate::vision::FogState,
+    /// The side's sight as the renderer's fog of war shows it, eased from
+    /// one update to the next.
+    #[serde(skip)]
+    #[reflect_skip]
+    fog_sight: crate::vision::sight::FogSight,
 }
 
 impl Default for ComponentTankHud {
@@ -59,7 +69,6 @@ impl Default for ComponentTankHud {
         Self {
             screen_margin: 34.0,
             timer_duration: 300.0,
-            vision_range: 15.0,
             low_damage_ratio: 0.15,
             high_damage_ratio: 0.5,
             scoreboard_open: false,
@@ -67,6 +76,8 @@ impl Default for ComponentTankHud {
             scoreboard_page: 0,
             scoreboard_blur: Default::default(),
             map_boundary: Default::default(),
+            fog: Default::default(),
+            fog_sight: Default::default(),
         }
     }
 }
@@ -109,6 +120,7 @@ impl ComponentUpdate for ComponentTankHud {
         input: &Input,
     ) {
         let open = input.action("scoreboard").pressed();
+        let dt = resources.time().delta_time();
         let pages = scoreboard::page_count(&scoreboard::scoreboard_rows(scene, this.game_object()));
         let _ = this.write(scene, |hud| {
             if !open {
@@ -120,13 +132,25 @@ impl ComponentUpdate for ComponentTankHud {
             }
             hud.scoreboard_page = hud.scoreboard_page.min(pages - 1);
             hud.scoreboard_open = open;
-            hud.advance(resources.time().delta_time());
+            hud.advance(dt);
         });
         let previous = this
             .read(scene, |hud| hud.scoreboard_blur)
             .unwrap_or_default();
         let blur = update_scoreboard_blur(scene, this.game_object(), open, previous);
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
+        if let Some(mut fog) = this.write(scene, |hud| std::mem::take(&mut hud.fog)) {
+            fog.advance(dt);
+            crate::vision::apply_fog(scene, this.game_object(), &mut fog);
+            let _ = this.write(scene, |hud| hud.fog = fog);
+        }
+        let vision = crate::vision::TeamVision::in_scene(scene, this.game_object());
+        if let Some(sight) = this.write(scene, |hud| {
+            hud.fog_sight.update(&vision, dt);
+            hud.fog_sight.sight().clone()
+        }) {
+            crate::vision::sight::show_sight(scene, &sight);
+        }
     }
 }
 
@@ -203,7 +227,14 @@ impl ComponentHud for ComponentTankHud {
         let width = viewport.width() / p.scale;
         let height = viewport.height() / p.scale;
         let margin = hud.screen_margin.max(12.0).min(width * 0.1);
-        let map = minimap::minimap_state(scene, player);
+        let mut map = minimap::minimap_state(scene, player);
+        for blip in &mut map.blips {
+            blip.presence = hud.fog.presence(blip.id);
+        }
+        if !hud.fog_sight.sight().viewers.is_empty() {
+            // The map lights what the main view's fog shows, eased alike.
+            map.sight.clone_from(hud.fog_sight.sight());
+        }
         if !hud.scoreboard_open {
             paint_world(&mut p, scene, player, hud, &map, width, height);
             let feed_width = (width * 0.24).clamp(230.0, 390.0);
@@ -225,7 +256,6 @@ impl ComponentHud for ComponentTankHud {
                 margin + radius + 4.0,
                 margin + radius + 14.0,
                 radius,
-                hud.vision_range,
             );
             let tw = (width * 0.16).clamp(160.0, 270.0) * 0.82;
             let th = (height * 0.09).clamp(60.0, 88.0) * 0.82;
@@ -351,11 +381,20 @@ impl Projection {
     }
 }
 
+/// Fill width of every world health bar, in HUD units. Fixed so a bar never
+/// grows or shrinks with the entity's size, heading or distance; it matches
+/// the player tank's bar at spawn heading under the default chase camera.
+const HP_BAR_WIDTH: f32 = 64.0;
+/// Fill thickness of every world health bar, in HUD units.
+const HP_BAR_THICKNESS: f32 = 7.0;
+
+/// Centre and width of an entity's health bar. Only the position follows the
+/// projected bounds: centred over them, just above their top edge.
 fn hp_anchor(bounds: ScreenBounds) -> (f32, f32, f32) {
     (
         (bounds.left + bounds.right) * 0.5,
         bounds.top - 8.0,
-        ((bounds.right - bounds.left) * 0.9).max(48.0),
+        HP_BAR_WIDTH,
     )
 }
 
@@ -387,23 +426,37 @@ fn paint_world(
             || player_team
                 .zip(combat_team(scene, object))
                 .is_some_and(|(a, b)| a == b);
-        if !friendly && !map.visible(vec2(position.x, position.z), hud.vision_range) {
+        // An enemy's bar fades with it as fog closes over or clears from it.
+        let opacity = if friendly {
+            1.0
+        } else {
+            let visible = map.vision.visible(vec2(position.x, position.z));
+            hud.fog
+                .presence(scene.uuid(object))
+                .unwrap_or(if visible { 1.0 } else { 0.0 })
+        };
+        if opacity <= 0.0 {
             continue;
         }
+        let faded = |color: UiColor| {
+            if opacity >= 1.0 {
+                color
+            } else {
+                color.with_alpha(color.a as f32 / 255.0 * opacity)
+            }
+        };
         let Some(bounds) = projection.visual_bounds(scene, object) else {
             continue;
         };
         let (x, y, w) = hp_anchor(bounds);
-        // Keep the fill thin relative to its projected width, including in
-        // small game views where a fixed minimum height made it look chunky.
-        let h = ((w + 2.0) * 0.14).clamp(4.0, 16.0) - 2.0;
+        let h = HP_BAR_THICKNESS;
         let outer_radius = (h * 0.5 + 3.0) * 0.78;
         p.fill(
             x - w * 0.5 - 3.0,
             y - h * 0.5 - 3.0,
             w + 6.0,
             h + 6.0,
-            BLACK,
+            faded(BLACK),
             outer_radius,
         );
         let left = x - w * 0.5 - 1.0;
@@ -415,7 +468,7 @@ fn paint_world(
             top,
             inner_w,
             inner_h,
-            paint::PANEL,
+            faded(paint::PANEL),
             outer_radius - 2.0,
         );
         let trail = health
@@ -429,7 +482,7 @@ fn paint_world(
                 top,
                 trailing_width,
                 inner_h,
-                LIGHT,
+                faded(LIGHT),
                 outer_radius - 2.0,
             );
         }
@@ -439,7 +492,7 @@ fn paint_world(
                 top,
                 fill,
                 inner_h,
-                if friendly { CYAN } else { RED },
+                faded(if friendly { CYAN } else { RED }),
                 outer_radius - 2.0,
             );
         }
@@ -450,7 +503,7 @@ fn paint_world(
                     (x + 8.0, y + h * 0.5 + 7.0),
                     (x, y + h * 0.5 + 19.0),
                 ],
-                BLACK,
+                faded(BLACK),
             );
             p.polygon(
                 &[
@@ -458,7 +511,7 @@ fn paint_world(
                     (x + 5.5, y + h * 0.5 + 8.5),
                     (x, y + h * 0.5 + 16.0),
                 ],
-                RED,
+                faded(RED),
             );
         }
     }
@@ -471,9 +524,16 @@ fn paint_world(
             if hit.age >= crate::combat::DAMAGE_FEEDBACK_LIFETIME {
                 continue;
             }
-            let bounds = GameObjectRef::new(hit.target)
-                .game_object(scene)
-                .and_then(|target| projection.visual_bounds(scene, target));
+            let target = GameObjectRef::new(hit.target).game_object(scene);
+            let at = target.map_or(hit.position, |target| {
+                scene.world_transform(target).position
+            });
+            if !target.is_some_and(|target| crate::vision::is_friendly(scene, player, target))
+                && !map.vision.visible(vec2(at.x, at.z))
+            {
+                continue;
+            }
+            let bounds = target.and_then(|target| projection.visual_bounds(scene, target));
             let anchor = bounds
                 .map(hp_anchor)
                 .map(|(x, y, w)| (x - w * 0.4, y - 25.0))
@@ -621,7 +681,7 @@ mod tests {
     }
 
     #[test]
-    fn health_annotation_width_tracks_projected_geometry_and_anchor_clears_top() {
+    fn health_bar_width_is_fixed_and_anchor_clears_projected_top() {
         let far = hp_anchor(ScreenBounds {
             left: 100.0,
             right: 180.0,
@@ -632,17 +692,125 @@ mod tests {
             right: 260.0,
             top: 200.0,
         });
-        assert_eq!(far, (140.0, 192.0, 72.0));
-        assert_eq!(near.2, far.2 * 2.0);
-        assert_eq!(
-            hp_anchor(ScreenBounds {
-                left: 0.0,
-                right: 10.0,
-                top: 80.0
+        let tiny = hp_anchor(ScreenBounds {
+            left: 0.0,
+            right: 10.0,
+            top: 80.0,
+        });
+        assert_eq!(far, (140.0, 192.0, HP_BAR_WIDTH));
+        assert_eq!(near, (180.0, 192.0, HP_BAR_WIDTH));
+        assert_eq!(tiny, (5.0, 72.0, HP_BAR_WIDTH));
+    }
+
+    /// The outer frame of the one world health bar in a HUD frame: a black
+    /// fill directly followed by its panel fill and its friendly cyan fill.
+    fn health_bar_frame(commands: &[PaintCommand]) -> UiRect {
+        let frames = commands
+            .windows(3)
+            .filter_map(|window| match window {
+                [PaintCommand::FillRect {
+                    rect, color: BLACK, ..
+                }, PaintCommand::FillRect {
+                    color: paint::PANEL,
+                    ..
+                }, PaintCommand::FillRect { color: CYAN, .. }] => Some(*rect),
+                _ => None,
             })
-            .2,
-            48.0
+            .collect::<Vec<_>>();
+        assert_eq!(frames.len(), 1, "expected one health bar");
+        frames[0]
+    }
+
+    #[test]
+    fn turning_a_tank_in_place_keeps_its_health_bar_size() {
+        use calyx_engine::assets::{mesh::Mesh, AssetRef};
+        use calyx_engine::component::{ComponentCamera, ComponentMesh};
+        use calyx_engine::math::Transform;
+        use nalgebra::UnitQuaternion;
+        use nalgebra_glm::vec3;
+
+        let assets = calyx_engine::test_support::test_asset_context_with_assets(Vec::new());
+        let mut hull = Mesh::new(&assets.render_context);
+        // A tank-shaped hull: longer than it is wide, so its projected width
+        // changes as it turns.
+        hull.vertices = vec![vec3(-1.1, 0.0, -1.7), vec3(1.1, 1.3, 1.7)];
+        let hull = assets
+            .registries
+            .assets
+            .read()
+            .create("hud-tank-hull".into(), hull)
+            .unwrap();
+        let mut scene = assets.registries.lock_read().scene();
+        let tank = scene.create(None, None);
+        scene.add_component(tank, ComponentTankController::default());
+        scene.add_component(
+            tank,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 100.0,
+                ..Default::default()
+            },
         );
+        scene.add_component(tank, ComponentTankHud::default());
+        scene.add_component(
+            tank,
+            ComponentMesh {
+                mesh: AssetRef::from_id(hull.id()),
+                ..Default::default()
+            },
+        );
+        // The arena's chase camera, relative to the tank.
+        let camera = scene.create(None, None);
+        scene.add_component(
+            camera,
+            ComponentCamera {
+                fov: 1.117,
+                ..Default::default()
+            },
+        );
+        scene.set_transform(
+            camera,
+            &Transform::from_components(
+                vec3(0.0, 34.0, -13.7),
+                UnitQuaternion::from_euler_angles(68.05f32.to_radians(), 0.0, 0.0),
+                Vec3::repeat(1.0),
+            )
+            .matrix(),
+        );
+        let (width, height) = (1326.0, 746.0);
+        let projection = Projection::scene(&scene, width, height).unwrap();
+        let mut bounds = Vec::new();
+        let mut frames = Vec::new();
+        for degrees in [0.0f32, 40.0, 90.0, 135.0] {
+            scene.set_transform(
+                tank,
+                &Transform::from_components(
+                    Vec3::zeros(),
+                    UnitQuaternion::from_euler_angles(0.0, degrees.to_radians(), 0.0),
+                    Vec3::repeat(1.0),
+                )
+                .matrix(),
+            );
+            let projected = projection.visual_bounds(&scene, tank).unwrap();
+            bounds.push(projected.right - projected.left);
+            frames.push(health_bar_frame(&commands(&scene, width, height)));
+        }
+        // The projected bounds really do change as the tank turns ...
+        let (narrow, wide) = bounds.iter().fold((f32::INFINITY, 0.0f32), |(lo, hi), w| {
+            (lo.min(*w), hi.max(*w))
+        });
+        assert!(wide > narrow * 1.2, "bounds widths {bounds:?}");
+        // ... but the bar keeps one width and thickness.
+        for frame in &frames {
+            assert!(
+                (frame.width() - (HP_BAR_WIDTH + 6.0)).abs() < 1e-3,
+                "{frames:?}"
+            );
+            assert!(
+                (frame.height() - (HP_BAR_THICKNESS + 6.0)).abs() < 1e-3,
+                "{frames:?}"
+            );
+        }
     }
 
     #[test]

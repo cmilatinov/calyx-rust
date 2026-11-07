@@ -1326,6 +1326,7 @@ impl Scene {
     /// Flushes pending deletions and prepares the physics scene for the next
     /// frame.
     pub fn prepare(&mut self) {
+        crate::profile_scope!("Scene prepare");
         self.flush_deletes();
         PhysicsContext::prepare(self);
     }
@@ -1371,11 +1372,14 @@ impl Scene {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
+        crate::profile_scope!("Scene update");
         {
+            crate::profile_scope!("Physics");
             let time = resources.time();
             let physics_config = resources.physics_configuration();
             PhysicsContext::update(self, time, physics_config);
         }
+        crate::profile_scope!("Component updates");
         let component_registry = registries.components.read();
 
         // Collect once; each hook runs only on the objects holding its
@@ -1388,6 +1392,7 @@ impl Scene {
 
         for (type_uuid, hook) in component_registry.components_with_update() {
             let prototype = component_registry.component(type_uuid);
+            crate::profile_scope!("Update hook", hook_label(registries, type_uuid));
             for &game_object in &game_objects {
                 if !self.runs_hooks(game_object, prototype) {
                     continue;
@@ -1741,5 +1746,15 @@ impl Scene {
             return true;
         };
         c_netobj.is_owner(network)
+    }
+}
+
+/// Names a component type's hook scope in the profiler: the type's name
+/// without its module path.
+#[cfg_attr(calyx_no_profiling, allow(dead_code))]
+pub(crate) fn hook_label(registries: &ReadOnlyRegistryContext, type_uuid: Uuid) -> String {
+    match registered_type_name(&registries.types.read(), type_uuid) {
+        Some(name) => name.rsplit("::").next().unwrap_or(&name).to_owned(),
+        None => type_uuid.to_string(),
     }
 }

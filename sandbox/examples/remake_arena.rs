@@ -452,7 +452,6 @@ fn main() {
         ("Target A", -6.0, 24.0),
         ("Target B", 6.0, 32.0),
         ("Sentry", 16.0, 32.0),
-        ("Campfire", -10.0, 6.0),
     ] {
         let object = scene.objects().find(|o| scene.name(*o) == name).unwrap();
         let mut pose = scene.transform(object);

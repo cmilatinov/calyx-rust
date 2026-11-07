@@ -12,13 +12,14 @@ use crate::component::{
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
+use crate::profiler::GpuScope;
 use crate::render::asset_render_state::{AssetRenderState, LockedAssetRenderState};
 use crate::render::foliage::FoliageCache;
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     drawn_outline_styles, BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass,
-    DepthOfFieldPass, FogPass, FxaaPass, OutlinePass, PostProcessChain, PostProcessSettings,
-    SceneInput, SsaoInputs, SsaoPass, TonemapPass,
+    DepthOfFieldPass, FogOfWarPass, FogPass, FxaaPass, OutlinePass, PostProcessChain,
+    PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -128,6 +129,9 @@ pub struct SceneRendererOptions {
     /// `None` for the lit image. The G-buffer is the one the frame shades
     /// from.
     pub gbuffer_view: Option<GBufferView>,
+    /// The name this view's CPU scopes and GPU passes go under in the
+    /// profiler.
+    pub profile_name: &'static str,
 }
 
 /// Lighting a view supplies itself instead of taking it from the scene: an
@@ -155,6 +159,7 @@ impl Default for SceneRendererOptions {
             environment: None,
             shadows: false,
             gbuffer_view: None,
+            profile_name: "Scene renderer",
         }
     }
 }
@@ -380,6 +385,9 @@ impl SceneRenderer {
         // Ink outlines draw on the graded image, so the ink shows as its
         // colour, and before FXAA, which smooths their stair steps.
         post_process.push(Box::new(OutlinePass::new(context)?));
+        // Fog of war darkens the finished image, ink included, by what the
+        // side sees of each surface; FXAA then smooths its hard edges.
+        post_process.push(Box::new(FogOfWarPass::new(context)?));
         post_process.push(Box::new(FxaaPass::new(context)?));
         let overlay = OverlayCompositor::new(context)?;
 
@@ -505,6 +513,8 @@ impl SceneRenderer {
         particles: Option<&ParticleSimulation>,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
+        let profile_name = self.options.profile_name;
+        crate::profile_scope!("Render scene", profile_name);
         let render_context = self.asset_context.render_context.clone();
         let queue = render_context.queue();
         let device = render_context.device();
@@ -516,10 +526,13 @@ impl SceneRenderer {
             tan_half_fov: CameraPlanes::tan_half_fov_of(&camera.projection),
         };
         self.post_process.set_camera(camera_planes);
+        self.post_process
+            .set_view_to_world(camera_transform.matrix());
 
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut frame_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("encoder"),
         });
+        let mut encoder = GpuScope::new(&mut frame_encoder, profile_name);
         self.poll_object_id_readback();
         let options = PipelineOptions::builder()
             .samples(self.options.samples)
@@ -530,10 +543,17 @@ impl SceneRenderer {
                 write_mask: Default::default(),
             })])
             .build();
-        self.build_asset_data(&render_context, scene);
-        self.post_process_settings
-            .resolve_into(scene, &camera_transform.position);
+        {
+            crate::profile_scope!("Draw collection");
+            self.build_asset_data(&render_context, scene);
+        }
+        {
+            crate::profile_scope!("Post-process settings");
+            self.post_process_settings
+                .resolve_into(scene, &camera_transform.position);
+        }
         if let Some(gizmo_options) = &self.options.gizmos {
+            crate::profile_scope!("Gizmos");
             let object_id_lookup = &mut self.object_id_lookup;
             let object_ids_build = &mut self.object_ids_build;
             self.gizmo_renderer.draw_gizmos(
@@ -554,18 +574,33 @@ impl SceneRenderer {
             );
         }
         self.finish_object_ids();
-        let draw_list = self.build_draw_list();
-        self.build_mesh_data(&render_context);
-        let shadow_camera = self
-            .options
-            .shadows
-            .then(|| ShadowCamera::new(camera, camera_transform));
-        self.light_manager
-            .build_data(&render_context, scene, shadow_camera.as_ref());
+        let draw_list = {
+            crate::profile_scope!("Draw list");
+            self.build_draw_list()
+        };
+        {
+            crate::profile_scope!("Mesh data");
+            self.build_mesh_data(&render_context);
+        }
+        {
+            crate::profile_scope!("Lights");
+            let shadow_camera = self
+                .options
+                .shadows
+                .then(|| ShadowCamera::new(camera, camera_transform));
+            self.light_manager
+                .build_data(&render_context, scene, shadow_camera.as_ref());
+        }
         // Compute the skybox's environment maps before the meshes that are lit
         // by them and the skybox pass that draws its cubemap.
-        self.skybox_renderer
-            .prepare(&render_context, &mut encoder, &self.assets);
+        {
+            crate::profile_scope!("Skybox prepare");
+            self.skybox_renderer.prepare(
+                &render_context,
+                &mut encoder.scope("Skybox prepare"),
+                &self.assets,
+            );
+        }
         let assets = self.assets.lock();
         if let Some(outline) = self.post_process_settings.get::<ComponentOutline>() {
             warn_unknown_outline_styles(
@@ -576,23 +611,30 @@ impl SceneRenderer {
                 drawn_outline_styles(outline).len(),
             );
         }
-        let material_bind_groups = self.mesh_renderer.build_material_bind_groups(
-            device,
-            &self.asset_context,
-            self.default_assets.white_texture.clone(),
-            &assets,
-        );
+        let material_bind_groups = {
+            crate::profile_scope!("Materials");
+            self.mesh_renderer.build_material_bind_groups(
+                device,
+                &self.asset_context,
+                self.default_assets.white_texture.clone(),
+                &assets,
+            )
+        };
         // Shadow maps render before the scene pass that samples them.
-        self.shadow_renderer.render(
-            device,
-            queue,
-            &mut encoder,
-            self.light_manager.shadow_plan(),
-            &assets,
-            &material_bind_groups,
-            &draw_list,
-        );
+        {
+            crate::profile_scope!("Shadows");
+            self.shadow_renderer.render(
+                device,
+                queue,
+                &mut encoder.scope("Shadows"),
+                self.light_manager.shadow_plan(),
+                &assets,
+                &material_bind_groups,
+                &draw_list,
+            );
+        }
         let lighting = {
+            crate::profile_scope!("Lighting bind groups");
             let black_texture_cube = self.default_assets.black_texture_cube.read();
             let black_texture_2d = self.default_assets.black_texture_2d.read();
             self.mesh_renderer.lighting_bind_groups(
@@ -619,9 +661,10 @@ impl SceneRenderer {
         // measures their ambient occlusion, the lighting pass shades them,
         // and the forward pass draws every other mesh after them, against the
         // deferred depth.
+        crate::profile_scope!("Record passes");
         self.gbuffer_renderer.render(
             &render_context,
-            &mut encoder,
+            &mut encoder.scope("G-buffer"),
             &assets,
             &material_bind_groups,
             &draw_list,
@@ -659,7 +702,7 @@ impl SceneRenderer {
         // so the depth, normals and occlusion all describe the PBR surfaces.
         let occlusion = self.ssao.render(
             &render_context,
-            &mut encoder,
+            &mut encoder.scope("SSAO"),
             self.post_process_settings
                 .get::<ComponentAmbientOcclusion>(),
             SsaoInputs {
@@ -670,7 +713,7 @@ impl SceneRenderer {
         );
         self.deferred_lighting.render(
             &render_context,
-            &mut encoder,
+            &mut encoder.scope("Lighting"),
             gbuffer,
             gbuffer_depth,
             &lighting,
@@ -680,7 +723,7 @@ impl SceneRenderer {
             self.options.clear_color,
         );
         self.mesh_renderer.render(
-            &mut encoder,
+            &mut encoder.scope("Forward"),
             &assets,
             &material_bind_groups,
             &lighting,
@@ -690,7 +733,7 @@ impl SceneRenderer {
         );
         self.mesh_renderer.render_object_ids(
             device,
-            &mut encoder,
+            &mut encoder.scope("Object ids"),
             &assets,
             MeshRenderTargets {
                 color: &self.scene_object_id_texture,
@@ -706,7 +749,7 @@ impl SceneRenderer {
         drop(assets);
         self.skybox_renderer.render(
             &render_context,
-            &mut encoder,
+            &mut encoder.scope("Skybox"),
             &self.assets,
             &self.default_assets.cube,
             &self.scene_texture_msaa,
@@ -716,7 +759,7 @@ impl SceneRenderer {
         );
         self.particle_renderer.render(
             &render_context,
-            &mut encoder,
+            &mut encoder.scope("Particles"),
             &self.asset_context,
             scene,
             particles,
@@ -728,7 +771,8 @@ impl SceneRenderer {
             self.post_process
                 .reads(&self.post_process_settings, SceneInput::ParticleDepth),
         );
-        queue.submit(Some(encoder.finish()));
+        drop(encoder);
+        queue.submit(Some(frame_encoder.finish()));
     }
 
     /// Resolves the scene, runs the post-processing chain into the scene
@@ -745,12 +789,16 @@ impl SceneRenderer {
     /// With a G-buffer view selected, the view of the G-buffer replaces the
     /// post-processed image, and the chain does not run.
     pub fn finalize_scene(&mut self) {
+        let profile_name = self.options.profile_name;
+        crate::profile_scope!("Finalize scene", profile_name);
         let render_context = self.asset_context.render_context.clone();
         let device = render_context.device();
         let queue = render_context.queue();
-        let mut encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+        let mut finalize_encoder = device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
             label: Some("scene_finalize_encoder"),
         });
+        let mut encoder =
+            GpuScope::new_with(&mut finalize_encoder, || format!("{profile_name} finalize"));
         if let Some(view) = self.options.gbuffer_view {
             if self.gbuffer_renderer.render_view(
                 &render_context,
@@ -759,8 +807,9 @@ impl SceneRenderer {
                 &self.scene_texture,
             ) {
                 self.last_post_process_plan = Default::default();
-                self.render_overlays(&render_context, &mut encoder);
-                queue.submit(Some(encoder.finish()));
+                self.render_overlays(&render_context, &mut encoder.scope("Overlays"));
+                drop(encoder);
+                queue.submit(Some(finalize_encoder.finish()));
                 return;
             }
         }
@@ -771,12 +820,13 @@ impl SceneRenderer {
             }
             None => &self.scene_texture_msaa,
         };
+        let mut post_process = encoder.scope("Post-process");
         // The G-buffer is single-sample at every sample count, so passes read
         // its targets as they are: nothing is resolved or copied for them.
         let gbuffer = self.gbuffer_renderer.targets();
         self.last_post_process_plan = self.post_process.run(
             &render_context,
-            &mut encoder,
+            &mut post_process,
             &self.post_process_settings,
             ChainTargets {
                 source,
@@ -791,8 +841,10 @@ impl SceneRenderer {
                 material: gbuffer.map(|gbuffer| &gbuffer.material),
             },
         );
-        self.render_overlays(&render_context, &mut encoder);
-        queue.submit(Some(encoder.finish()));
+        drop(post_process);
+        self.render_overlays(&render_context, &mut encoder.scope("Overlays"));
+        drop(encoder);
+        queue.submit(Some(finalize_encoder.finish()));
     }
 
     /// Drops resolved effects before unloading an assembly that may define them.

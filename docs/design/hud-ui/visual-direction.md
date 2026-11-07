@@ -35,10 +35,11 @@ The original images are preserved without alteration:
   clean edge throughout the HUD and scoreboard. Size elements against the rendered playfield, not the concept image pixels. The radar
   diameter is about 13.6% of the view width, including compact layouts.
 - Show rounded black HP tracks above combatants, filled with their side colour.
-  Width follows 90% of each tank's projected visible mesh bounds (48px minimum);
-  anchor the pill 8px above the projected top so it sits close to the tank. Preserve its projected width
-  and scale thickness with that width so smaller views retain the thin proportions;
-  use slightly less rounded corners and
+  Every bar, on tanks, sentries and targets alike, has one fixed size: a
+  64-unit fill, 7 units thick, so it never changes with the entity's size,
+  heading or distance. Only its position follows the projected visible mesh
+  bounds: centre the pill over them, 8px above the projected top so it sits
+  close to the entity. Use slightly less rounded corners and
   expand the coloured fill into the removed inner border. Keep enemy arrows
   between it and the tank. The existing scene crosshair stays visible until #526 supplies
   its ground model; the HUD must not draw a substitute ground reticle. Four
@@ -71,11 +72,36 @@ deaths, assists and score. The timer advances with simulation time. The minimap
 shows continuous playable-area and obstacle contours, without filled tiles or
 shared tile seams, with a circular visibility area, occlusion and friendly
 or detected hostile contacts. The map follows the player, with vision covering
-70% of its radius. Near-black fog surrounds a soft cyan falloff clipped by
-live cover; visible contours are brighter. Compact contact dots keep a dark
+70% of its radius. Near-black fog surrounds a cyan light clipped by live
+cover, lighting the same sight the main view's fog shows and fading with
+distance as it does; visible contours are brighter. Compact contact dots keep a dark
 outline (6.5px outer radius, 5px fill); preserve the larger player chevron. Keep
-the cached contours current when floor or cover geometry changes. Keep
-these presentation rules separate from
+the cached contours current when floor or cover geometry changes.
+
+The main view follows the same vision (`sandbox/src/vision.rs`): a side sees
+what any of its live tanks sees within that tank's vision range, unless cover
+is in the way. Enemy tanks, sentries and targets outside it are not drawn, nor
+their HP bars and damage numbers, and enemy rounds and muzzle effects follow
+the same rule except a round on course to hit the player. What the side
+does not see is darkened with near-black ink by the renderer's fog of war
+(`ComponentFogOfWar` on the arena's global post-process volume, fed by
+`sandbox/src/vision/sight.rs`), under the HUD and health bars: each pixel by
+the ground position of the surface it shows, so cover a tank sees is lit up
+to its top. Only walls and boxes (crates and supply crates) block sight;
+low cover such as barriers, sandbags and rocks does not. Sight fades out with
+distance, fully lit to 8 m inside a tank's vision range and fading along an
+exponential to dark 12 m past it, and cover shadows have hard, radial sides,
+traced per pixel so they stay crisp and antialiased while tanks move. Fog
+does not pop when the side changes: a tank that joins it fades its sight in
+over 0.3 s and one that dies fades it out, and an enemy that leaves sight
+stays drawn
+while its HP bar and minimap blip fade out over the same time, then hides.
+An enemy that comes into sight shows at once and its HP bar and blip fade
+in. Fog is current vision only and changes
+nothing but what is drawn: hidden enemies still collide, shoot and take
+damage.
+
+Keep these presentation rules separate from
 configurable scoring, timing and damage rules.
 
 The initial scoring defaults are 100 points per enemy kill and 50 per assist,

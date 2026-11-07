@@ -3,8 +3,8 @@
 
 use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
-    ComponentDepthOfField, ComponentFog, ComponentOutline, ComponentTonemap, ComponentVignette,
-    OutlineStyle, MAX_OUTLINE_STYLES,
+    ComponentDepthOfField, ComponentFog, ComponentFogOfWar, ComponentOutline, ComponentTonemap,
+    ComponentVignette, OutlineStyle, MAX_OUTLINE_STYLES,
 };
 use egui::{Color32, Rgba};
 
@@ -160,6 +160,43 @@ impl BlendEffect for ComponentFog {
             opacity: 0.0,
             ..*target
         })
+    }
+}
+
+impl BlendEffect for ComponentFogOfWar {
+    fn copy_in_place(&mut self, source: &Self) {
+        self.color = source.color;
+        self.opacity = source.opacity;
+        // Reuses the viewers' reach storage once warm.
+        self.sight.clone_from(&source.sight);
+    }
+
+    /// The colour and opacity interpolate. The sight is game state, not a
+    /// look, so it switches to the target's at 0.5, and stays where the
+    /// target has none.
+    fn blend(&self, target: &Self, factor: f32) -> Self {
+        let sight = match (&self.sight, &target.sight) {
+            (Some(_), None) => self.sight.clone(),
+            _ => switch(&self.sight, &target.sight, factor).clone(),
+        };
+        Self {
+            color: lerp_color(self.color, target.color, factor),
+            opacity: lerp(self.opacity, target.opacity, factor),
+            sight,
+        }
+    }
+
+    /// No darkening.
+    fn neutral(target: &Self) -> Option<Self> {
+        Some(Self {
+            opacity: 0.0,
+            ..target.clone()
+        })
+    }
+
+    fn reset_neutral_in_place(&mut self) -> bool {
+        self.opacity = 0.0;
+        true
     }
 }
 
