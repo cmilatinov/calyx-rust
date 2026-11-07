@@ -67,6 +67,9 @@ impl ComponentUpdate for ComponentSentry {
 }
 
 fn update_sentry(scene: &mut Scene, game_object: GameObject, dt: f32) {
+    if crate::match_rules::match_over(scene) {
+        return;
+    }
     let Some(mut sentry) =
         scene.read_component::<ComponentSentry, _, _>(game_object, |sentry| *sentry)
     else {

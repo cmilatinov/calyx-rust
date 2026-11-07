@@ -91,6 +91,17 @@ impl ComponentGameState {
     }
 
     pub fn tick(&mut self, dt: f32) -> Option<GamePhase> {
+        self.advance(dt, true)
+    }
+
+    /// Advances like [`Self::tick`], but `match_duration` running out does
+    /// not end the match: the scene's Match Rules own the match clock and
+    /// end it through `finish_match_requested`.
+    pub fn tick_under_match_rules(&mut self, dt: f32) -> Option<GamePhase> {
+        self.advance(dt, false)
+    }
+
+    fn advance(&mut self, dt: f32, own_timeout: bool) -> Option<GamePhase> {
         self.phase = self.current_phase().as_u32();
         self.phase_elapsed += dt.max(0.0);
 
@@ -98,7 +109,7 @@ impl ComponentGameState {
             self.match_time_remaining = (self.match_time_remaining - dt.max(0.0)).max(0.0);
         }
 
-        let next_phase = self.next_phase();
+        let next_phase = self.next_phase(own_timeout);
         self.clear_one_shot_requests();
 
         next_phase.and_then(|phase| self.transition_to(phase).then_some(phase))
@@ -134,7 +145,7 @@ impl ComponentGameState {
         true
     }
 
-    fn next_phase(&self) -> Option<GamePhase> {
+    fn next_phase(&self, own_timeout: bool) -> Option<GamePhase> {
         if self.return_to_menu_requested {
             return Some(GamePhase::MainMenu);
         }
@@ -145,7 +156,9 @@ impl ComponentGameState {
                 (self.start_match_requested && self.players_ready).then_some(GamePhase::Playing)
             }
             GamePhase::Playing => (self.finish_match_requested
-                || (self.match_duration > 0.0 && self.match_time_remaining <= f32::EPSILON))
+                || (own_timeout
+                    && self.match_duration > 0.0
+                    && self.match_time_remaining <= f32::EPSILON))
                 .then_some(GamePhase::GameOver),
             GamePhase::GameOver => self.restart_match_requested.then_some(GamePhase::Lobby),
         }
@@ -171,10 +184,17 @@ impl ComponentUpdate for ComponentGameState {
     }
 }
 
+/// Advances the scene's Game State. When the scene has Match Rules, they
+/// decide when the match ends, so the Game State's own timeout is off.
 pub fn update_game_state(scene: &mut Scene, game_object: GameObject, dt: f32) -> Option<GamePhase> {
+    let ruled = crate::match_rules::match_rules(scene).is_some();
     let mut transition = None;
     let _ = scene.write_component::<ComponentGameState, _>(game_object, |state| {
-        transition = state.tick(dt);
+        transition = if ruled {
+            state.tick_under_match_rules(dt)
+        } else {
+            state.tick(dt)
+        };
     });
     transition
 }
