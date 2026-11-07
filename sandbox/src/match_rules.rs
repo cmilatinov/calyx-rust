@@ -235,8 +235,9 @@ impl ComponentUpdate for ComponentMatchRules {
 
 /// Runs the match clock and the limits for one frame. A scene's Game State,
 /// when it has one, decides when the match is played: the clock only runs
-/// while it is playing, a new match starts from its lobby or menu, and the
-/// end of the match finishes it.
+/// while it is playing, a new match starts from its lobby or menu with the
+/// clock and every tank's totals cleared, and the end of the match finishes
+/// it.
 pub fn update_match_rules(
     scene: &mut Scene,
     game_object: GameObject,
@@ -248,10 +249,16 @@ pub fn update_match_rules(
         })
     });
     if let Some((_, phase)) = phase {
-        if matches!(phase, GamePhase::MainMenu | GamePhase::Lobby) {
+        let played = scene
+            .read_component::<ComponentMatchRules, _, _>(game_object, |rules| {
+                rules.elapsed > 0.0 || rules.is_over()
+            })
+            .unwrap_or(false);
+        if played && matches!(phase, GamePhase::MainMenu | GamePhase::Lobby) {
             let _ = scene.write_component::<ComponentMatchRules, _>(game_object, |rules| {
                 rules.reset();
             });
+            reset_match_stats(scene);
         }
         if phase != GamePhase::Playing {
             return None;
@@ -300,6 +307,20 @@ pub fn match_over(scene: &Scene) -> bool {
     <&ComponentMatchRules>::query()
         .iter(scene.world())
         .any(ComponentMatchRules::is_over)
+}
+
+/// Clears every tank's kills, deaths, assists, score and damage credit, so
+/// a rematch starts from zero.
+fn reset_match_stats(scene: &mut Scene) {
+    let tanks: Vec<_> = scene
+        .objects()
+        .filter(|&object| is_tank_combatant(scene, object))
+        .collect();
+    for tank in tanks {
+        let _ = scene.write_component::<ComponentCombatStats, _>(tank, |stats| {
+            stats.reset_match();
+        });
+    }
 }
 
 #[cfg(test)]

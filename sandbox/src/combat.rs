@@ -281,6 +281,17 @@ impl Default for ComponentCombatStats {
 }
 
 impl ComponentCombatStats {
+    /// Clears one match's totals and damage credit, keeping the tank's team
+    /// and scoring settings for the next match.
+    pub fn reset_match(&mut self) {
+        self.kills = 0;
+        self.deaths = 0;
+        self.assists = 0;
+        self.score = 0;
+        self.feedback.clear();
+        self.contributions.clear();
+    }
+
     pub(crate) fn advance(&mut self, dt: f32) {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
         for entry in &mut self.feedback {

@@ -326,3 +326,50 @@ fn the_game_state_timeout_does_not_end_a_match_the_rules_still_run() {
     update_game_state(&mut scene, state, 1.0);
     assert_eq!(phase(&scene), GamePhase::GameOver);
 }
+
+#[test]
+fn a_rematch_starts_from_zero_kills_and_score() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    let red = tank(&mut scene, "Red", 0);
+    let blue = tank(&mut scene, "Blue", 1);
+    let rules = rules_object(
+        &mut scene,
+        ComponentMatchRules {
+            kill_limit: 1,
+            ..Default::default()
+        },
+    );
+    let state = scene.create(None, None);
+    scene.add_component(
+        state,
+        ComponentGameState {
+            phase: GamePhase::Playing.as_u32(),
+            ..Default::default()
+        },
+    );
+    kill(&mut scene, red, blue);
+    assert!(update_match_rules(&mut scene, rules, 0.1).is_some());
+
+    for phase in [GamePhase::GameOver, GamePhase::Lobby] {
+        scene.write_component::<ComponentGameState, _>(state, |s| {
+            s.transition_to(phase);
+        });
+        update_match_rules(&mut scene, rules, 0.1);
+    }
+    let totals = |scene: &Scene, object| {
+        scene
+            .read_component::<ComponentCombatStats, _, _>(object, |s| {
+                (s.kills, s.deaths, s.assists, s.score, s.team)
+            })
+            .unwrap()
+    };
+    assert_eq!(totals(&scene, red), (0, 0, 0, 0, 0));
+    assert_eq!(totals(&scene, blue), (0, 0, 0, 0, 1));
+
+    scene.write_component::<ComponentGameState, _>(state, |s| {
+        s.transition_to(GamePhase::Playing);
+    });
+    assert_eq!(update_match_rules(&mut scene, rules, 0.1), None);
+    assert!(!match_over(&scene), "the rematch does not end on old kills");
+    assert_eq!(kills(&scene, red), 0);
+}
