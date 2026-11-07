@@ -237,7 +237,8 @@ impl ComponentUpdate for ComponentMatchRules {
 /// when it has one, decides when the match is played: the clock only runs
 /// while it is playing, a new match starts from its lobby or menu with the
 /// clock and every tank's totals cleared, and the end of the match finishes
-/// it.
+/// it. Kills made outside play, before the match starts, do not count: the
+/// match's first playing frame clears them.
 pub fn update_match_rules(
     scene: &mut Scene,
     game_object: GameObject,
@@ -262,6 +263,9 @@ pub fn update_match_rules(
         }
         if phase != GamePhase::Playing {
             return None;
+        }
+        if !played {
+            reset_match_stats(scene);
         }
     }
     let mode = scene.read_component::<ComponentMatchRules, _, _>(game_object, |rules| {

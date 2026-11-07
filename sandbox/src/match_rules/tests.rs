@@ -347,6 +347,7 @@ fn a_rematch_starts_from_zero_kills_and_score() {
             ..Default::default()
         },
     );
+    assert_eq!(update_match_rules(&mut scene, rules, 0.1), None);
     kill(&mut scene, red, blue);
     assert!(update_match_rules(&mut scene, rules, 0.1).is_some());
 
@@ -372,4 +373,40 @@ fn a_rematch_starts_from_zero_kills_and_score() {
     assert_eq!(update_match_rules(&mut scene, rules, 0.1), None);
     assert!(!match_over(&scene), "the rematch does not end on old kills");
     assert_eq!(kills(&scene, red), 0);
+}
+
+#[test]
+fn kills_made_before_the_match_starts_do_not_count() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    let red = tank(&mut scene, "Red", 0);
+    let blue = tank(&mut scene, "Blue", 1);
+    let rules = rules_object(
+        &mut scene,
+        ComponentMatchRules {
+            kill_limit: 1,
+            ..Default::default()
+        },
+    );
+    let state = scene.create(None, None);
+    scene.add_component(
+        state,
+        ComponentGameState {
+            phase: GamePhase::Lobby.as_u32(),
+            ..Default::default()
+        },
+    );
+    update_match_rules(&mut scene, rules, 0.1);
+    kill(&mut scene, red, blue);
+    assert_eq!(update_match_rules(&mut scene, rules, 0.1), None);
+
+    scene.write_component::<ComponentGameState, _>(state, |s| {
+        s.transition_to(GamePhase::Playing);
+    });
+    assert_eq!(update_match_rules(&mut scene, rules, 0.1), None);
+    assert!(!match_over(&scene), "a lobby kill does not reach the limit");
+    assert_eq!(kills(&scene, red), 0);
+
+    kill(&mut scene, red, blue);
+    let outcome = update_match_rules(&mut scene, rules, 0.1).expect("a kill in play counts");
+    assert_eq!(outcome.end, MatchEnd::KillLimit);
 }
