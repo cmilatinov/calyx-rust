@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "5d0b6f0e-4f7a-4c39-9a51-2b7f0c4e7472",
+    "name": "terrain/heightmap",
+    "display_name": "heightmap",
+    "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
+  },
+  "inner": []
+}

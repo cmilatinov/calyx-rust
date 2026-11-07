@@ -18,6 +18,7 @@ pub use rigid_body::*;
 pub use skinned_mesh::*;
 pub use sky_light::*;
 pub use spot_light::*;
+pub use terrain::*;
 pub use transform::*;
 
 mod ambient_light;
@@ -40,6 +41,7 @@ mod rigid_body;
 mod skinned_mesh;
 mod sky_light;
 mod spot_light;
+mod terrain;
 mod tps_camera;
 mod transform;
 
