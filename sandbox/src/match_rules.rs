@@ -244,6 +244,38 @@ pub fn update_match_rules(
     game_object: GameObject,
     dt: f32,
 ) -> Option<MatchOutcome> {
+    run_match_rules(scene, game_object, dt, true)
+}
+
+/// Ends the match the moment a recorded kill reaches the kill limit, rather
+/// than at the rules' next update, so further kills in the same frame cannot
+/// change the result. Before a Game State's match has started, kills are
+/// left for the start of the match to clear.
+pub(crate) fn settle_kill_limit(scene: &mut Scene) {
+    if match_rules(scene).is_none() {
+        return;
+    }
+    let rules: Vec<_> = scene
+        .objects()
+        .filter(|&object| {
+            scene
+                .read_component::<ComponentMatchRules, _, _>(object, |_| ())
+                .is_some()
+        })
+        .collect();
+    for object in rules {
+        run_match_rules(scene, object, 0.0, false);
+    }
+}
+
+/// One rules update. `may_start` lets it start a Game State's match, which
+/// clears the totals of kills made before it.
+fn run_match_rules(
+    scene: &mut Scene,
+    game_object: GameObject,
+    dt: f32,
+    may_start: bool,
+) -> Option<MatchOutcome> {
     let phase = scene.objects().find_map(|object| {
         scene.read_component::<ComponentGameState, _, _>(object, |state| {
             (object, state.current_phase())
@@ -265,6 +297,9 @@ pub fn update_match_rules(
             return None;
         }
         if !played {
+            if !may_start {
+                return None;
+            }
             reset_match_stats(scene);
         }
     }

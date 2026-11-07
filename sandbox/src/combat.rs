@@ -177,6 +177,8 @@ impl KillEvent {
 /// Hazards keep their display identity but award no kill, score or assist, and
 /// a kill of the killer's own side counts only the death. Once the match is
 /// over nothing more is recorded, so the final scoreboard stays as it ended.
+/// A kill that reaches the kill limit ends the match at once, so a later kill
+/// in the same frame cannot change the result.
 pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
     if match_over(scene) {
         return;
@@ -232,6 +234,9 @@ pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
         .collect();
     for feed in feeds {
         let _ = scene.write_component::<ComponentKillFeed, _>(feed, |feed| feed.push(event));
+    }
+    if eligible_kill {
+        crate::match_rules::settle_kill_limit(scene);
     }
 }
 

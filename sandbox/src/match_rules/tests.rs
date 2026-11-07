@@ -349,7 +349,7 @@ fn a_rematch_starts_from_zero_kills_and_score() {
     );
     assert_eq!(update_match_rules(&mut scene, rules, 0.1), None);
     kill(&mut scene, red, blue);
-    assert!(update_match_rules(&mut scene, rules, 0.1).is_some());
+    assert!(match_over(&scene));
 
     for phase in [GamePhase::GameOver, GamePhase::Lobby] {
         scene.write_component::<ComponentGameState, _>(state, |s| {
@@ -407,6 +407,34 @@ fn kills_made_before_the_match_starts_do_not_count() {
     assert_eq!(kills(&scene, red), 0);
 
     kill(&mut scene, red, blue);
-    let outcome = update_match_rules(&mut scene, rules, 0.1).expect("a kill in play counts");
+    let outcome = self::rules(&scene, rules)
+        .outcome()
+        .expect("a kill in play counts");
     assert_eq!(outcome.end, MatchEnd::KillLimit);
+}
+
+#[test]
+fn the_kill_that_reaches_the_limit_ends_the_match_before_the_next_kill() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    let red = tank(&mut scene, "Red", 0);
+    let blue = tank(&mut scene, "Blue", 1);
+    let rules = rules_object(
+        &mut scene,
+        ComponentMatchRules {
+            kill_limit: 1,
+            ..Default::default()
+        },
+    );
+    assert_eq!(update_match_rules(&mut scene, rules, 0.1), None);
+
+    // Two kills in one frame, with no rules update between them.
+    kill(&mut scene, red, blue);
+    kill(&mut scene, blue, red);
+
+    let outcome = self::rules(&scene, rules)
+        .outcome()
+        .expect("the first kill to the limit ends the match");
+    assert_eq!(outcome.winner, MatchWinner::Team(0));
+    assert_eq!(outcome.end, MatchEnd::KillLimit);
+    assert_eq!((kills(&scene, red), kills(&scene, blue)), (1, 0));
 }
