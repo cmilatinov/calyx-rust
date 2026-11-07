@@ -136,6 +136,30 @@ fn thumbnail_request_source_version_includes_referenced_asset_sources() {
 }
 
 #[test]
+fn referenced_asset_ids_are_parsed_once_per_file_version() {
+    let root = std::env::temp_dir().join(format!("calyx-thumbnail-file-uuids-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("failed to create temp dir");
+    let path = root.join("mat.cxmat");
+    let referenced = Uuid::new_v4();
+    fs::write(&path, format!("{{\"texture\": \"{referenced}\"}}"))
+        .expect("failed to write material source");
+    let version = source_version(Some(&path));
+
+    assert_eq!(file_uuids(&path, version), vec![referenced]);
+    fs::remove_file(&path).expect("failed to remove material source");
+    assert_eq!(
+        file_uuids(&path, version),
+        vec![referenced],
+        "an unchanged version is answered from the memo, without reading the file"
+    );
+    assert!(
+        file_uuids(&path, version.wrapping_add(1)).is_empty(),
+        "a new version reads the file again"
+    );
+    fs::remove_dir_all(root).expect("failed to remove temp dir");
+}
+
+#[test]
 fn thumbnail_type_names_cover_supported_and_unknown_assets() {
     assert_eq!(thumbnail_asset_type_name(Texture::type_uuid()), "texture");
     assert_eq!(thumbnail_asset_type_name(Material::type_uuid()), "material");

@@ -87,14 +87,39 @@ fn request_memo_reuses_request_until_the_refresh_interval_passes() {
         Some(request(1, version))
     };
 
+    let reuse = memo.reuse_interval(asset_id);
+    assert!(reuse >= Duration::from_millis(500) && reuse <= Duration::from_secs(1));
+
     let first = memo.get_or_compute(asset_id, start, || compute(1));
-    let cached = memo.get_or_compute(asset_id, start + Duration::from_millis(999), || compute(2));
-    let refreshed = memo.get_or_compute(asset_id, start + Duration::from_secs(1), || compute(3));
+    let cached = memo.get_or_compute(asset_id, start + reuse - Duration::from_millis(1), || {
+        compute(2)
+    });
+    let refreshed = memo.get_or_compute(asset_id, start + reuse, || compute(3));
 
     assert_eq!(first.map(|r| r.source_version), Some(1));
     assert_eq!(cached.map(|r| r.source_version), Some(1));
     assert_eq!(refreshed.map(|r| r.source_version), Some(3));
     assert_eq!(computed.get(), 2);
+}
+
+#[test]
+fn request_memo_spreads_a_folders_refreshes_over_the_interval() {
+    let memo = ThumbnailRequestMemo::new(Duration::from_secs(1));
+    let intervals = (0..120)
+        .map(|_| memo.reuse_interval(Uuid::new_v4()))
+        .collect::<Vec<_>>();
+
+    for interval in &intervals {
+        assert!(*interval >= Duration::from_millis(500) && *interval <= Duration::from_secs(1));
+    }
+    let distinct = intervals
+        .iter()
+        .map(|interval| interval.as_millis() / 50)
+        .collect::<HashSet<_>>();
+    assert!(
+        distinct.len() >= 8,
+        "a folder's requests come due across the interval, not in one frame"
+    );
 }
 
 #[test]

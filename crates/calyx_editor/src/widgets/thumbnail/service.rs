@@ -379,7 +379,7 @@ fn thumbnail_worker_loop(
     }
 }
 
-fn process_thumbnail_job(
+pub(super) fn process_thumbnail_job(
     shared: &ThumbnailShared,
     context: &ReadOnlyAssetContext,
     generator: &mut ThumbnailGenerator,
@@ -401,7 +401,34 @@ fn process_thumbnail_job(
         return;
     }
 
-    match generator.generate(context, gpu, &job.request) {
+    // Generating loads the source asset and whatever it pulls in through the
+    // shared registry. Once the thumbnail is made, whatever of that the job
+    // loaded itself and nothing else holds leaves the cache again, so a
+    // folder of thumbnails does not stay loaded.
+    let record = AssetLoadRecord::start();
+    let generated = generator.generate(context, gpu, &job.request);
+    let loaded = record.finish();
+    store_generated_thumbnail(shared, gpu, &cache, cache_epoch, job, started_at, generated);
+    let evicted = context.registries.assets.read().evict_unheld(&loaded);
+    log::debug!(
+        "Thumbnail job asset={} loaded={} evicted={}",
+        key.asset_id,
+        loaded.len(),
+        evicted
+    );
+}
+
+fn store_generated_thumbnail(
+    shared: &ThumbnailShared,
+    gpu: &RenderContext,
+    cache: &ThumbnailCache,
+    cache_epoch: u64,
+    job: ThumbnailJob,
+    started_at: Instant,
+    generated: Result<Texture, String>,
+) {
+    let key = job.key();
+    match generated {
         Ok(texture) => {
             let should_store = {
                 let state = lock_thumbnail_state(shared);
