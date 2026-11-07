@@ -1,7 +1,9 @@
 //#include "shaders/common/fullscreen_pass.wgsl"
 
-// FXAA 3.11 Quality, preset 12, ported from Timothy Lottes' reference
-// (NVIDIA, public domain): `FxaaPixelShader`'s PC quality path.
+// FXAA 3.11 Quality, ported from Timothy Lottes' reference (NVIDIA, public
+// domain): `FxaaPixelShader`'s PC quality path. The quality preset's search
+// steps and minimum edge threshold come from the uniform, so one pipeline
+// runs every preset.
 //
 // It runs after tone mapping on display-linear color. Edge detection needs a
 // perceptual luma, so luma is the square root of linear Rec. 601 luma, close
@@ -14,7 +16,12 @@ struct FxaaUniform {
     edge_threshold: f32,
     // How much sub-pixel aliasing is removed, 0 (none) to 1 (softest).
     subpixel: f32,
-    _padding: vec2f,
+    // Contrast below this is never an edge, so dark noise is left alone.
+    edge_threshold_min: f32,
+    // How many search steps the preset takes along the edge, at most 12.
+    search_steps: u32,
+    // The preset's search step sizes in pixels, four to a vector.
+    search_step_sizes: array<vec4f, 3>,
 };
 
 @group(0) @binding(0)
@@ -26,12 +33,10 @@ var input_sampler: sampler;
 @group(0) @binding(2)
 var<uniform> fxaa: FxaaUniform;
 
-// Contrast below this is never an edge, so dark noise is left alone.
-const EDGE_THRESHOLD_MIN: f32 = 0.0833;
-
-// Preset 12's search steps along the edge, in pixels.
-const SEARCH_STEPS: u32 = 5u;
-const SEARCH_STEP_SIZES = array<f32, 5>(1.0, 1.5, 2.0, 4.0, 12.0);
+// The `index`th search step size, in pixels.
+fn search_step_size(index: u32) -> f32 {
+    return fxaa.search_step_sizes[index / 4u][index % 4u];
+}
 
 fn luma(color: vec3f) -> f32 {
     return sqrt(dot(clamp(color, vec3f(0.0), vec3f(1.0)), vec3f(0.299, 0.587, 0.114)));
@@ -65,7 +70,7 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     let range_max = max(max(luma_n, luma_w), max(luma_e, max(luma_s, luma_m)));
     let range_min = min(min(luma_n, luma_w), min(luma_e, min(luma_s, luma_m)));
     let range = range_max - range_min;
-    if range < max(EDGE_THRESHOLD_MIN, range_max * fxaa.edge_threshold) {
+    if range < max(fxaa.edge_threshold_min, range_max * fxaa.edge_threshold) {
         return center;
     }
 
@@ -122,20 +127,20 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
     } else {
         pos_b.x += length_sign * 0.5;
     }
-    var pos_n = pos_b - search_step * SEARCH_STEP_SIZES[0];
-    var pos_p = pos_b + search_step * SEARCH_STEP_SIZES[0];
+    var pos_n = pos_b - search_step * search_step_size(0u);
+    var pos_p = pos_b + search_step * search_step_size(0u);
     var luma_end_n = sample_luma(pos_n) - luma_edge;
     var luma_end_p = sample_luma(pos_p) - luma_edge;
     var done_n = abs(luma_end_n) >= gradient_scaled;
     var done_p = abs(luma_end_p) >= gradient_scaled;
     // As in the reference, each side steps once more after its last sample.
     if !done_n {
-        pos_n -= search_step * SEARCH_STEP_SIZES[1];
+        pos_n -= search_step * search_step_size(1u);
     }
     if !done_p {
-        pos_p += search_step * SEARCH_STEP_SIZES[1];
+        pos_p += search_step * search_step_size(1u);
     }
-    for (var i = 2u; i < SEARCH_STEPS; i++) {
+    for (var i = 2u; i < fxaa.search_steps; i++) {
         if done_n && done_p {
             break;
         }
@@ -148,10 +153,10 @@ fn fs_main(in: FullscreenVertexOut) -> @location(0) vec4f {
             done_p = abs(luma_end_p) >= gradient_scaled;
         }
         if !done_n {
-            pos_n -= search_step * SEARCH_STEP_SIZES[i];
+            pos_n -= search_step * search_step_size(i);
         }
         if !done_p {
-            pos_p += search_step * SEARCH_STEP_SIZES[i];
+            pos_p += search_step * search_step_size(i);
         }
     }
 

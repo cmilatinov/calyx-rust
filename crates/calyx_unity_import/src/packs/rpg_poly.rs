@@ -264,7 +264,11 @@ fn post_process(render_settings: Option<&Value>) -> Vec<(String, Json)> {
         ),
         (
             C_FXAA.into(),
-            Json::object([("edge_threshold", f(0.063)), ("subpixel", f(1.0))]),
+            Json::object([
+                ("edge_threshold", f(0.063)),
+                ("quality", Json::Str("Low".into())),
+                ("subpixel", f(1.0)),
+            ]),
         ),
     ];
     components.extend(fog(render_settings));

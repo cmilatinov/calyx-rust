@@ -6,7 +6,7 @@ use crate::component::{
     ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading,
     ComponentDepthOfField, ComponentFog, ComponentGlobalPostProcessVolume,
     ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
-    FogMode, LocalVolumeShape, OutlineStyle, TonemappingPreset,
+    FogMode, FxaaQuality, LocalVolumeShape, OutlineStyle, TonemappingPreset,
 };
 use crate::math::{compose_transform, Transform};
 use crate::scene::{GameObject, Scene};
@@ -385,6 +385,43 @@ fn fxaa_has_no_neutral_value_and_switches_on_at_half() {
 }
 
 #[test]
+fn the_fxaa_quality_switches_at_half_while_its_thresholds_interpolate() {
+    let low = ComponentAntiAliasing {
+        edge_threshold: 0.2,
+        ..Default::default()
+    };
+    let high = ComponentAntiAliasing {
+        edge_threshold: 0.1,
+        quality: FxaaQuality::High,
+        ..Default::default()
+    };
+    let below = PostProcessSettings::default().with(low);
+    let effects = PostProcessSettings::empty().with(high);
+    let at = |factor| {
+        below
+            .blend(&effects, factor)
+            .get::<ComponentAntiAliasing>()
+            .copied()
+            .unwrap()
+    };
+
+    assert_eq!(at(0.49).quality, FxaaQuality::Low, "below half");
+    assert_close(at(0.49).edge_threshold, 0.151, "threshold below half");
+    assert_eq!(at(0.5).quality, FxaaQuality::High, "at half");
+    assert_close(at(0.5).edge_threshold, 0.15, "threshold at half");
+    assert_eq!(at(1.0), high);
+
+    // Off below, it switches on at half with the volume's quality.
+    let off = PostProcessSettings::default();
+    assert_eq!(
+        off.blend(&effects, 0.5)
+            .get::<ComponentAntiAliasing>()
+            .copied(),
+        Some(high)
+    );
+}
+
+#[test]
 fn integer_and_enum_fields_switch_at_half_while_floats_interpolate() {
     let below =
         PostProcessSettings::default()
@@ -542,6 +579,11 @@ fn a_local_volume_and_its_effects_save_and_load_with_the_scene() {
         *v = volume.clone()
     });
     scene.add_component(local, bloom(0.9, 5));
+    let fxaa = ComponentAntiAliasing {
+        quality: FxaaQuality::High,
+        ..Default::default()
+    };
+    scene.add_component(local, fxaa);
     scene.set_component_enabled::<ComponentLocalPostProcessVolume>(local, false);
 
     let saved = serde_json::to_string(&scene).unwrap();
@@ -560,6 +602,10 @@ fn a_local_volume_and_its_effects_save_and_load_with_the_scene() {
     assert_eq!(
         loaded.read_component(object, |b: &ComponentBloom| *b),
         Some(bloom(0.9, 5))
+    );
+    assert_eq!(
+        loaded.read_component(object, |a: &ComponentAntiAliasing| *a),
+        Some(fxaa)
     );
     assert!(!loaded.is_component_enabled::<ComponentLocalPostProcessVolume>(object));
 

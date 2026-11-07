@@ -104,6 +104,7 @@ fn erased_effect_operations_preserve_all_builtin_blend_rules() {
         ComponentAntiAliasing {
             edge_threshold: 0.05,
             subpixel: 0.25,
+            quality: FxaaQuality::High,
         },
     );
     check_effect(

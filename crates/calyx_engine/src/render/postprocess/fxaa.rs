@@ -3,21 +3,41 @@
 use super::{
     NoPipeline, PassContext, PassIo, PostProcessPass, PostProcessSettings, PostProcessStage,
 };
-use crate::component::ComponentAntiAliasing;
+use crate::component::{ComponentAntiAliasing, FxaaQuality};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::{CachedBindGroup, PipelineOptions, RenderUtils, SceneRendererError, Shader};
 use egui_wgpu::wgpu;
 
 #[repr(C)]
-#[derive(Clone, Copy, Debug, Default, bytemuck::Pod, bytemuck::Zeroable)]
-struct FxaaUniform {
-    edge_threshold: f32,
-    subpixel: f32,
-    _padding: [f32; 2],
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct FxaaUniform {
+    pub(crate) edge_threshold: f32,
+    pub(crate) subpixel: f32,
+    pub(crate) edge_threshold_min: f32,
+    pub(crate) search_steps: u32,
+    pub(crate) search_step_sizes: [[f32; 4]; 3],
 }
 
-/// FXAA 3.11 Quality on display-linear color, in the `Ldr` stage. Alpha
+impl FxaaUniform {
+    pub(crate) fn new(settings: &ComponentAntiAliasing) -> Self {
+        let steps = settings.quality.search_step_sizes();
+        let mut sizes = [0.0; FxaaQuality::MAX_SEARCH_STEPS];
+        sizes[..steps.len()].copy_from_slice(steps);
+        Self {
+            edge_threshold: settings.edge_threshold,
+            subpixel: settings.subpixel,
+            edge_threshold_min: settings.quality.edge_threshold_min(),
+            search_steps: steps.len() as u32,
+            search_step_sizes: std::array::from_fn(|row| {
+                std::array::from_fn(|column| sizes[row * 4 + column])
+            }),
+        }
+    }
+}
+
+/// FXAA 3.11 Quality on display-linear color, in the `Ldr` stage, at the
+/// component's [`FxaaQuality`] preset, which the uniform carries. Alpha
 /// passes through. It runs while the settings hold an
 /// [`ComponentAntiAliasing`](crate::component::ComponentAntiAliasing).
 pub struct FxaaPass {
@@ -75,11 +95,7 @@ impl PostProcessPass for FxaaPass {
         let Some(anti_aliasing) = settings.get::<ComponentAntiAliasing>() else {
             return;
         };
-        let uniform = FxaaUniform {
-            edge_threshold: anti_aliasing.edge_threshold,
-            subpixel: anti_aliasing.subpixel,
-            _padding: Default::default(),
-        };
+        let uniform = FxaaUniform::new(anti_aliasing);
         context.render_context.queue().write_buffer(
             &self.uniform_buffer,
             0,

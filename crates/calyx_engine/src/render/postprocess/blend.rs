@@ -357,6 +357,7 @@ impl BlendEffect for ComponentAntiAliasing {
         Self {
             edge_threshold: lerp(self.edge_threshold, target.edge_threshold, factor),
             subpixel: lerp(self.subpixel, target.subpixel, factor),
+            quality: switch(self.quality, target.quality, factor),
         }
     }
 

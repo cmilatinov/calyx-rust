@@ -3,7 +3,7 @@ use crate::assets::texture::Texture;
 use crate::component::{
     Component, ComponentAntiAliasing, ComponentBloom, ComponentColorGrading, ComponentDepthOfField,
     ComponentFog, ComponentGlobalPostProcessVolume, ComponentOutline, ComponentTonemap,
-    ComponentVignette, TonemappingPreset,
+    ComponentVignette, FxaaQuality, TonemappingPreset,
 };
 use crate::render::scene_renderer::{half_to_f32, linear_to_srgb};
 use crate::render::{
@@ -1415,14 +1415,18 @@ fn f32_to_half(value: f32) -> u16 {
     sign | ((exponent as u16) << 10) | fraction
 }
 
-fn image_target(render_context: &Arc<RenderContext>, label: &'static str) -> Texture {
+fn image_target(
+    render_context: &Arc<RenderContext>,
+    label: &'static str,
+    (width, height): ImageSize,
+) -> Texture {
     Texture::new(
         render_context.clone(),
         &wgpu::TextureDescriptor {
             label: Some(label),
             size: wgpu::Extent3d {
-                width: EDGE_SIZE,
-                height: EDGE_SIZE,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
@@ -1441,10 +1445,17 @@ fn image_target(render_context: &Arc<RenderContext>, label: &'static str) -> Tex
     )
 }
 
-/// An `EDGE_SIZE` square image, row-major, one texel per pixel.
+/// A row-major image, one texel per pixel.
 type Image = Vec<[f32; 4]>;
 
+/// An image's width and height in pixels.
+type ImageSize = (u32, u32);
+
+/// The `EDGE_SIZE` square the FXAA tests use unless they need a longer edge.
+const EDGE_SQUARE: ImageSize = (EDGE_SIZE, EDGE_SIZE);
+
 fn upload_image(render_context: &RenderContext, texture: &Texture, image: &Image) {
+    let wgpu::Extent3d { width, height, .. } = texture.descriptor.size;
     let bytes: Vec<u8> = image
         .iter()
         .flat_map(|texel| texel.map(f32_to_half))
@@ -1455,8 +1466,8 @@ fn upload_image(render_context: &RenderContext, texture: &Texture, image: &Image
         &bytes,
         wgpu::TexelCopyBufferLayout {
             offset: 0,
-            bytes_per_row: Some(EDGE_SIZE * 8),
-            rows_per_image: Some(EDGE_SIZE),
+            bytes_per_row: Some(width * 8),
+            rows_per_image: Some(height),
         },
         texture.descriptor.size,
     );
@@ -1464,10 +1475,11 @@ fn upload_image(render_context: &RenderContext, texture: &Texture, image: &Image
 
 fn read_image(render_context: &RenderContext, texture: &Texture) -> Image {
     let device = render_context.device();
-    let row = wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+    let wgpu::Extent3d { width, height, .. } = texture.descriptor.size;
+    let row = (width * 8).next_multiple_of(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT);
     let buffer = device.create_buffer(&wgpu::BufferDescriptor {
         label: Some("fxaa_test_readback"),
-        size: (row * EDGE_SIZE) as u64,
+        size: (row * height) as u64,
         usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
         mapped_at_creation: false,
     });
@@ -1479,7 +1491,7 @@ fn read_image(render_context: &RenderContext, texture: &Texture) -> Image {
             layout: wgpu::TexelCopyBufferLayout {
                 offset: 0,
                 bytes_per_row: Some(row),
-                rows_per_image: Some(EDGE_SIZE),
+                rows_per_image: Some(height),
             },
         },
         texture.descriptor.size,
@@ -1489,8 +1501,8 @@ fn read_image(render_context: &RenderContext, texture: &Texture) -> Image {
     slice.map_async(wgpu::MapMode::Read, |result| result.expect("map failed"));
     let _ = device.poll(wgpu::Maintain::Wait);
     let data = slice.get_mapped_range();
-    let image = (0..EDGE_SIZE as usize)
-        .flat_map(|y| (0..EDGE_SIZE as usize).map(move |x| (x, y)))
+    let image = (0..height as usize)
+        .flat_map(|y| (0..width as usize).map(move |x| (x, y)))
         .map(|(x, y)| {
             let texel = y * row as usize + x * 8;
             std::array::from_fn(|channel| {
@@ -1508,13 +1520,29 @@ fn fxaa_on() -> PostProcessSettings {
     PostProcessSettings::default().with(ComponentAntiAliasing::default())
 }
 
-/// Runs a chain holding only the FXAA pass over `image`.
+/// Runs a chain holding only the FXAA pass, at its default settings, over
+/// an `EDGE_SIZE` square `image`.
 fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Image {
+    run_fxaa_with(
+        context,
+        ComponentAntiAliasing::default(),
+        EDGE_SQUARE,
+        image,
+    )
+}
+
+/// Runs a chain holding only the FXAA pass, with `settings`, over `image`.
+fn run_fxaa_with(
+    context: &crate::context::ReadOnlyAssetContext,
+    settings: ComponentAntiAliasing,
+    size: ImageSize,
+    image: &Image,
+) -> Image {
     let render_context = context.render_context.clone();
     let mut chain = PostProcessChain::new(context).expect("chain shaders load");
     chain.push(Box::new(FxaaPass::new(context).expect("fxaa loads")));
-    let source = image_target(&render_context, "fxaa_test_source");
-    let output = image_target(&render_context, "fxaa_test_output");
+    let source = image_target(&render_context, "fxaa_test_source", size);
+    let output = image_target(&render_context, "fxaa_test_output", size);
     let depth = depth_target(&render_context, 1);
     upload_image(&render_context, &source, image);
     let mut encoder = render_context
@@ -1523,7 +1551,7 @@ fn run_fxaa(context: &crate::context::ReadOnlyAssetContext, image: &Image) -> Im
     let plan = chain.run(
         &render_context,
         &mut encoder,
-        &fxaa_on(),
+        &PostProcessSettings::default().with(settings),
         ChainTargets {
             source: &source,
             output: &output,
@@ -1551,11 +1579,86 @@ fn fxaa_is_off_by_default_and_a_partial_component_loads_with_defaults() {
     let defaults = ComponentAntiAliasing::default();
     assert_eq!(defaults.edge_threshold, 0.166);
     assert_eq!(defaults.subpixel, 0.75);
+    assert_eq!(defaults.quality, FxaaQuality::Low);
 
-    let partial = r#"{"edge_threshold":0.1}"#;
+    // Saved before the quality setting existed.
+    let partial = r#"{"edge_threshold":0.1,"subpixel":0.5}"#;
     let settings: ComponentAntiAliasing = serde_json::from_str(partial).expect("partial loads");
     assert_eq!(settings.edge_threshold, 0.1);
-    assert_eq!(settings.subpixel, 0.75);
+    assert_eq!(settings.subpixel, 0.5);
+    assert_eq!(settings.quality, FxaaQuality::Low);
+
+    let high: ComponentAntiAliasing =
+        serde_json::from_str(r#"{"quality":"High"}"#).expect("the quality loads");
+    assert_eq!(
+        high,
+        ComponentAntiAliasing {
+            quality: FxaaQuality::High,
+            ..defaults
+        }
+    );
+    assert_eq!(
+        serde_json::to_value(high).unwrap()["quality"],
+        serde_json::json!("High")
+    );
+}
+
+#[test]
+fn the_low_preset_is_fxaa_3_11_preset_12_and_the_high_preset_is_preset_39() {
+    let uniform = |quality| {
+        FxaaUniform::new(&ComponentAntiAliasing {
+            quality,
+            ..Default::default()
+        })
+    };
+    // The constants the shader held before the quality setting.
+    assert_eq!(
+        uniform(FxaaQuality::Low),
+        FxaaUniform {
+            edge_threshold: 0.166,
+            subpixel: 0.75,
+            edge_threshold_min: 0.0833,
+            search_steps: 5,
+            search_step_sizes: [[1.0, 1.5, 2.0, 4.0], [12.0, 0.0, 0.0, 0.0], [0.0; 4]],
+        }
+    );
+    assert_eq!(
+        uniform(FxaaQuality::High),
+        FxaaUniform {
+            edge_threshold: 0.166,
+            subpixel: 0.75,
+            edge_threshold_min: 0.0312,
+            search_steps: 12,
+            search_step_sizes: [
+                [1.0, 1.0, 1.0, 1.0],
+                [1.0, 1.5, 2.0, 2.0],
+                [2.0, 2.0, 4.0, 8.0]
+            ],
+        }
+    );
+}
+
+#[test]
+fn the_fxaa_shader_struct_matches_the_rust_one() {
+    let source =
+        crate::render::test_kernel::preprocess("//#include \"shaders/postprocess/fxaa.wgsl\"\n")
+            .expect("the FXAA shader preprocesses");
+    let module = naga::front::wgsl::parse_str(&source).expect("the FXAA shader parses");
+
+    let (size, members) = crate::render::test_kernel::wgsl_layout(&module, "FxaaUniform");
+
+    assert_eq!(size as usize, size_of::<FxaaUniform>());
+    assert_eq!(
+        members,
+        [
+            ("edge_threshold", 0),
+            ("subpixel", 4),
+            ("edge_threshold_min", 8),
+            ("search_steps", 12),
+            ("search_step_sizes", 16),
+        ]
+        .map(|(name, offset)| (name.to_string(), offset))
+    );
 }
 
 #[test]
@@ -1625,6 +1728,68 @@ fn fxaa_smooths_a_hard_diagonal_edge_and_keeps_alpha() {
         if x.abs_diff(y) > 2 {
             assert_eq!(out[0], input[0], "({x}, {y}) is away from the edge");
         }
+    }
+}
+
+#[test]
+fn the_high_preset_smooths_a_long_edge_the_low_preset_leaves_aliased() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    // A nearly horizontal edge with one step at x = STEP: white above row
+    // 8 left of it and above row 9 right of it. Each side of the step runs
+    // to the image border, further than either preset searches.
+    const WIDTH: u32 = 64;
+    const HEIGHT: u32 = 16;
+    const STEP: usize = 32;
+    let width = WIDTH as usize;
+    let image: Image = (0..width * HEIGHT as usize)
+        .map(|index| {
+            let (x, y) = (index % width, index / width);
+            let edge_row = if x < STEP { 8 } else { 9 };
+            if y < edge_row {
+                [1.0, 1.0, 1.0, 1.0]
+            } else {
+                [0.0, 0.0, 0.0, 1.0]
+            }
+        })
+        .collect();
+    // No sub-pixel blend, so a pixel changes only where the search finds
+    // the end of the edge.
+    let run = |quality| {
+        run_fxaa_with(
+            &context,
+            ComponentAntiAliasing {
+                subpixel: 0.0,
+                quality,
+                ..Default::default()
+            },
+            (WIDTH, HEIGHT),
+            &image,
+        )
+    };
+    let low = run(FxaaQuality::Low);
+    let high = run(FxaaQuality::High);
+
+    // FXAA blends row 8, the row whose colour changes at the step, toward
+    // the row across the edge, most at the step and less further out. Check
+    // its pixels 10 to 18 pixels from the step on both sides: past the
+    // furthest the low preset samples (8.5) and within the high preset's
+    // (18.5). A pixel FXAA leaves alone keeps its hard value.
+    let changed = |output: &Image, (x, y): (usize, usize)| {
+        let index = y * width + x;
+        (output[index][0] - image[index][0]).abs() > 0.02
+    };
+    let near_step = (STEP - 1, 8);
+    assert!(changed(&low, near_step) && changed(&high, near_step));
+    let far_from_step =
+        (10..=18).flat_map(|distance| [(STEP - distance, 8), (STEP - 1 + distance, 8)]);
+    for pixel in far_from_step {
+        assert!(
+            !changed(&low, pixel),
+            "the low preset leaves {pixel:?} aliased"
+        );
+        assert!(changed(&high, pixel), "the high preset smooths {pixel:?}");
     }
 }
 
