@@ -13,7 +13,8 @@ Sunny Battlefield: player 1 blue, with the sentry in player 2 coral red.
 The Sunbaked folder provides the same roles for the arena remake.
 
 The solid colours are linear RGB, decoded from the guide's sRGB palette.
-Every material uses metalness 0, ambient occlusion 1 and outline style 1;
+Every material uses metalness 0, ambient occlusion 1 and outline style 2,
+the tanks' own outline layer;
 body roughness is 0.9 and neutral roughness is 0.95. The arena's Outline
-component defines style 1. Changing these references does not change the
+component defines styles 1 to 3 in the same ink. Changing these references does not change the
 model, its transforms, colliders, turret pivot, muzzle or crosshair.

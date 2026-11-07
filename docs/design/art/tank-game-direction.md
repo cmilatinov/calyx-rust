@@ -185,12 +185,19 @@ Adding a player colour, or changing one:
   copy.
 - A material picks its outline with `outline_style`: 0 draws none (the
   default), `N` draws the volume's style `N`, the `N`th entry of the
-  effect's style list. Every map defines one style today; more can be added
-  to the list later, for example a heavier ink for the tanks.
+  effect's style list.
+- Each kind of thing has its own style, an outline layer: terrain, tanks
+  and props. A change of style is a silhouette, so a tank or a prop gets a
+  full outline where it meets a wall, a ramp or another kind of thing, rather
+  than merging into it as one inked shape. The three styles are the same
+  ink; every map lists all three, identical. Don't style a layer differently
+  without a direction change.
 
 | Style | Ink | Silhouette | Inner lines | Used by |
 | --- | --- | --- | --- | --- |
-| 1, ink | `#121212`, opacity 1 | 2 px | 2 px at 0.55 | tanks (hull, turret, pivot, tracks, guns, wheels), walls, barriers, crates, rocks, trees, sample materials |
+| 1, terrain | `#121212`, opacity 1 | 2 px | 2 px at 0.55 (the arena: 1 px) | walls, ramp and platform bodies and kerbs (`walls`, `kerbs`) |
+| 2, tanks | as style 1 | as style 1 | as style 1 | tanks (hull, turret, pivot, tracks, guns, wheels): `game/materials/tanks` |
+| 3, props | as style 1 | as style 1 | as style 1 | cover (barriers, sandbags), crates, barrels, rocks, trees, grass, flags, lamps, pickup stands, the sentry, sample materials |
 
 - Ground, roads and the emissive signals (projectiles, muzzle flashes,
   lamps) use style 0: the ground draws no lines across its lanes, and the
@@ -244,7 +251,7 @@ Jersey barriers have lifting loops, a plain concrete roof and diagonal paint
 on both sloped side panels; trees have irregular scalloped dark/middle/light foliage
 tiers and a broad organic root flare. Close-ups cannot substitute for the Far
 camera check. The auxiliary generated roles (`crate_plank`, `crate_brace`,
-`metal`, `metal_caps`, `flag_red`, `berries`, `sandbags`, `sandbag_seams`,
+`metal`, `metal_caps`, `kerbs`, `flag_red`, `berries`, `sandbags`, `sandbag_seams`,
 `pickup_yellow`, `pickup_blue`) are defined alongside these roles in
 `calyx_model_gen::palette`.
 
@@ -312,8 +319,10 @@ not an additional gameplay signal.
   with the map's material per part. Mesh, object and prefab ids derive from
   names, so reordering the parts keeps the ids. Instantiate the prefab to
   place the complete model. Existing single-shape files and ids stay the same.
-- Generated opaque prop materials set `outline_style = 1`; ground, road,
-  signals, reticle marks and legacy hull ink use 0. New parts need no inverted hull.
+- Generated opaque materials set `outline_style` by role
+  (`Role::outline_style`): 1 for `walls` and `kerbs`, 3 for every prop role;
+  ground, road, signals, reticle marks and legacy hull ink use 0. The ramp and
+  platform kerbs use `kerbs`, the barriers' colours on the terrain's layer. New parts need no inverted hull.
 - The complete 23-piece concept-sheet kit is shown on all three maps in the
   look-dev scene: six tileable wall modules, two barriers, two crates, three
   tree sizes, three rock sizes and seven props. The Scenario camera shows a

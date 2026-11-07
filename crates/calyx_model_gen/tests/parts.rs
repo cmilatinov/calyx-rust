@@ -166,7 +166,7 @@ fn every_new_role_has_three_clay_materials_and_screen_space_ink() {
                 .find(|v| v["name"] == "outline_style")
                 .unwrap();
             assert_eq!(ink["offset"], 60);
-            assert_eq!(ink["value"]["Uint"], 1);
+            assert_eq!(ink["value"]["Uint"], palette::PROP_OUTLINE);
             assert!(palette::linear_rgb(role.hex(map)).is_some());
         }
     }

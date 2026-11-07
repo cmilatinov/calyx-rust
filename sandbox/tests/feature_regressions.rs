@@ -1447,3 +1447,72 @@ fn platform_and_ramps_stop_level_shells_and_deck_cover_stops_shells_from_the_dec
     // slope, not cover.
     assert!(!shell_hits(vec3(16.0, gun, 34.0), vec3(1.0, 0.0, 0.0), 8.0));
 }
+
+#[test]
+fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
+    use calyx_engine::component::{ComponentMesh, ComponentOutline};
+    use calyx_model_gen::palette::{PROP_OUTLINE, TANK_OUTLINE, TERRAIN_OUTLINE};
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let registries = assets.registries.lock_read();
+    // The outline styles of the meshes under `root`, ignoring style 0: the
+    // ground, deck paving and signals draw no ink.
+    let styles = |root| {
+        scene
+            .descendants(root)
+            .filter_map(|object| {
+                scene.read_component::<ComponentMesh, _, _>(object, |mesh| {
+                    mesh.material
+                        .get_ref(&registries)
+                        .expect("every arena material loads")
+                        .read()
+                        .outline_style()
+                })
+            })
+            .filter(|style| *style != 0)
+            .collect::<std::collections::BTreeSet<u32>>()
+    };
+    let one = |style| std::collections::BTreeSet::from([style]);
+    assert_eq!(styles(object_named(&scene, "Player")), one(TANK_OUTLINE));
+    assert_eq!(styles(object_named(&scene, "Sentry")), one(PROP_OUTLINE));
+    let arena = object_named(&scene, "Arena");
+    let (mut terrain, mut props) = (0, 0);
+    for child in scene.children(arena) {
+        let name = scene.name(child);
+        let expected = if ["Arena Wall", "Arena Platform", "Arena Ramp"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        {
+            terrain += 1;
+            TERRAIN_OUTLINE
+        } else if ["Arena Cover", "Arena Prop", "Arena Grass"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        {
+            props += 1;
+            PROP_OUTLINE
+        } else {
+            continue;
+        };
+        let found = styles(child);
+        assert!(
+            found.is_empty() || found == one(expected),
+            "{name} draws outline styles {found:?}, not {expected}"
+        );
+    }
+    assert!(
+        terrain > 50 && props > 30,
+        "{terrain} terrain, {props} props"
+    );
+
+    // Every layer is drawn in the arena's one ink.
+    let outline = scene
+        .objects()
+        .find_map(|object| scene.read_component::<ComponentOutline, _, _>(object, Clone::clone))
+        .expect("the arena has an Outline effect");
+    let layers = [TERRAIN_OUTLINE, TANK_OUTLINE, PROP_OUTLINE];
+    assert_eq!(outline.styles.len(), layers.len());
+    for style in &outline.styles {
+        assert_eq!(style, &outline.styles[0]);
+    }
+}

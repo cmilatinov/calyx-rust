@@ -75,8 +75,9 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `explosive_barrel` | Red explosive drum with a centered yellow-and-black lid flame badge, opposing diamond flame plaques, narrow hazard hoops and rolled rims | Cylinder, radius 0.455 m and height 1.125 m, centered 0.5625 m above the ground pivot; explosion behavior belongs to cover gameplay |
 | `aim_reticle` | Flat open ring and four ticks, light marks over a dark contrast border; 1.66 m overall width | Non-blocking, no collider |
 
-Every opaque prop part material has `outline_style = 1`; pickup signal orbs
-and both reticle materials use 0. The reticle's explicit dark border stays
+Every opaque prop part material has `outline_style = 3`, the props' outline
+layer; walls and the ramp and platform bodies and kerbs use 1, the terrain's.
+Pickup signal orbs and both reticle materials use 0. The reticle's explicit dark border stays
 readable on light ground without the screen-space ink thickening its marks.
 Palette roles and construction rules are in
 [the direction guide](../../docs/design/art/tank-game-direction.md).

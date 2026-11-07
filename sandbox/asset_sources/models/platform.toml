@@ -24,7 +24,7 @@ segments = 2
 [[parts]]
 name = "kerb_east"
 kind = "box"
-role = "barriers"
+role = "kerbs"
 size = [0.5, 0.5, 8]
 offset = [4.75, 1.6, 0]
 bevel = 0.12
@@ -33,7 +33,7 @@ segments = 3
 [[parts]]
 name = "kerb_west_south"
 kind = "box"
-role = "barriers"
+role = "kerbs"
 size = [0.5, 0.5, 3]
 offset = [-4.75, 1.6, -2.5]
 bevel = 0.12
@@ -42,7 +42,7 @@ segments = 3
 [[parts]]
 name = "kerb_west_north"
 kind = "box"
-role = "barriers"
+role = "kerbs"
 size = [0.5, 0.5, 1]
 offset = [-4.75, 1.6, 3.5]
 bevel = 0.12
@@ -51,7 +51,7 @@ segments = 3
 [[parts]]
 name = "kerb_north"
 kind = "box"
-role = "barriers"
+role = "kerbs"
 size = [9, 0.5, 0.5]
 offset = [0, 1.6, 3.75]
 bevel = 0.12
@@ -60,7 +60,7 @@ segments = 3
 [[parts]]
 name = "kerb_south_west"
 kind = "box"
-role = "barriers"
+role = "kerbs"
 size = [2.5, 0.5, 0.5]
 offset = [-3.25, 1.6, -3.75]
 bevel = 0.12
@@ -69,7 +69,7 @@ segments = 3
 [[parts]]
 name = "kerb_south_east"
 kind = "box"
-role = "barriers"
+role = "kerbs"
 size = [2.5, 0.5, 0.5]
 offset = [3.25, 1.6, -3.75]
 bevel = 0.12
