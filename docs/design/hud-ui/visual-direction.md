@@ -53,6 +53,11 @@ The original images are preserved without alteration:
   columns, alternating dark rows and a clearly highlighted leading row.
   Blur and darken the scene behind it, and hide the gameplay overlays while the
   table is open, so the table remains the visual focus.
+- When the match ends (`sandbox/src/match_rules.rs`), the scoreboard opens by
+  itself and stays open, with a small bevelled result plate under the panel:
+  VICTORY in cyan, DEFEAT in red or DRAW in off-white, over what ended the
+  match. Free for all ranks every tank in one list by kills, each name in its
+  side's colour; team deathmatch keeps the friendly and opposing sections.
 - Omit the bottom health and ammo panels entirely. Health remains visible in
   world HP bars; weapon, reload and respawn gameplay remains unchanged.
 - Use the bundled OFL Barlow Bold and Bold Italic faces, with
@@ -113,6 +118,15 @@ a fixed hazard: its kill increments the tank victim's death but gives nobody
 a kill, score or assist, even when another tank contributed damage. Its name
 remains in the kill feed in neutral grey. Explicit spawn teams take precedence
 over a tank's configured or inferred team; hazards have no tank team.
+
+A scene's Match Rules component sets the mode and limits; the arena plays
+team deathmatch to 20 kills or five minutes. In free for all every tank is on
+its own side, for damage credit, assists, colours and sight alike. A kill of
+one's own side counts only the death. The first tank (free for all) or team
+(team deathmatch) to the kill limit wins; at the time limit the kill leader
+wins, and a tie is a draw. The decided match freezes: tanks, sentries, rounds
+and respawns stop, and no further kill counts. The match clock drives the HUD
+timer.
 
 Each health bar owns a white recent-damage segment, including incoming damage
 to the local tank. Accepted damage immediately exposes the removed segment; it

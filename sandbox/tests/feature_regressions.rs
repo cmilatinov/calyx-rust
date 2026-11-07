@@ -1137,6 +1137,71 @@ fn tank_rounds_leave_from_the_barrel_tip() {
     );
 }
 
+fn hud_text(scene: &Scene) -> Vec<String> {
+    let viewport = UiRect::from_min_size(UiPoint::ZERO, UiSize::new(1280.0, 720.0));
+    let frame = SceneHud::default()
+        .frame(scene, viewport, UiInput::default())
+        .expect("the sandbox scene should draw a HUD");
+    frame
+        .paint_commands
+        .iter()
+        .filter_map(|command| match command {
+            PaintCommand::Text { text, .. } => Some(text.clone()),
+            PaintCommand::Label(label) => Some(label.text.clone()),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn the_arena_match_ends_at_its_kill_limit_with_the_final_scoreboard() {
+    use sandbox::combat::ComponentCombatStats;
+    use sandbox::match_rules::{match_over, ComponentMatchRules, MatchMode};
+
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let rules = object_named(&scene, "Match Rules");
+    let authored = scene
+        .read_component::<ComponentMatchRules, _, _>(rules, Clone::clone)
+        .expect("the arena should carry its match rules");
+    assert_eq!(authored.mode(), MatchMode::TeamDeathmatch);
+    assert_eq!((authored.kill_limit, authored.time_limit), (20, 300.0));
+    scene.write_component::<ComponentMatchRules, _>(rules, |rules| rules.kill_limit = 1);
+    let target = object_named(&scene, "Target A");
+    place_on_firing_line(&mut scene, target, 4.0);
+    let tank = object_named(&scene, "Tank");
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+    runner.press_key(egui::Key::Space);
+    let mut steps = 0;
+    while !match_over(runner.scene()) {
+        runner.step();
+        steps += 1;
+        assert!(
+            steps < 600,
+            "destroying Target A should reach the kill limit"
+        );
+    }
+    let kills = |runner: &HeadlessSceneRunner| {
+        runner
+            .scene()
+            .read_component::<ComponentCombatStats, _, _>(tank, |stats| stats.kills)
+            .unwrap()
+    };
+    assert_eq!(kills(&runner), 1);
+    let text = hud_text(runner.scene());
+    for expected in ["SCOREBOARD", "VICTORY", "KILL LIMIT REACHED", "Tank"] {
+        assert!(text.iter().any(|t| t == expected), "{expected} in {text:?}");
+    }
+
+    // The match stays over: the tank holds still and no more rounds fly.
+    let position = runner.scene().world_transform(tank).position;
+    runner.press_key(egui::Key::W);
+    runner.step_many(60);
+    assert_eq!(runner.scene().world_transform(tank).position, position);
+    assert_eq!(kills(&runner), 1);
+}
+
 // The raised area: a platform as high as the walls in the arena's northeast,
 // at world (20, 0, 45), its deck 1.6 m up, reached by a ramp from the south
 // (continuing the east sand lane at x = 20) and a ramp from the west (at

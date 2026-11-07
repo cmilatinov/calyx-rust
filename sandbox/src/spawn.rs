@@ -144,6 +144,10 @@ impl ComponentUpdate for ComponentRespawnState {
 }
 
 pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32) -> bool {
+    // A tank destroyed as the match ended stays down on the final scoreboard.
+    if crate::match_rules::match_over(scene) {
+        return false;
+    }
     let Some(mut state) =
         scene.read_component::<ComponentRespawnState, _, _>(game_object, |component| *component)
     else {
