@@ -412,15 +412,15 @@ fn paint_world(
     };
     let player_team = combat_team(scene, player);
     for object in scene.objects() {
-        if !scene.is_visible_in_hierarchy(object) {
-            continue;
-        }
         let Some(health) = scene
             .read_component::<ComponentHealth, _, _>(object, |h| *h)
             .filter(|h| !h.dead && h.max_health > 0.0)
         else {
             continue;
         };
+        if !scene.is_visible_in_hierarchy(object) {
+            continue;
+        }
         let position = scene.world_transform(object).position;
         let friendly = object == player
             || player_team

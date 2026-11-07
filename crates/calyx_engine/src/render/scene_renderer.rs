@@ -4,7 +4,7 @@ use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::skybox::Skybox;
 use crate::assets::texture::Texture;
-use crate::assets::{Asset, AssetId, AssetRegistry, BackgroundLoad};
+use crate::assets::{Asset, AssetAccess, AssetId, AssetRegistry, BackgroundLoad, ResolvedRefs};
 use crate::component::{
     ComponentAmbientOcclusion, ComponentFoliage, ComponentMesh, ComponentOutline,
     ComponentSkinnedMesh, ComponentSkyLight, ComponentTerrain,
@@ -26,10 +26,10 @@ use crate::render::terrain::TerrainCache;
 use crate::render::{
     Camera, DeferredLightingRenderer, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView,
     GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer,
-    OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions, ShadowCamera,
+    OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions, Shader, ShadowCamera,
     ShadowFrameStats, ShadowRenderer, SkyboxRenderer,
 };
-use crate::scene::{GameObject, Scene};
+use crate::scene::{GameObject, HierarchyVisibility, Scene};
 use crate::utils::TypeUuid;
 use egui::Color32;
 use egui_wgpu::wgpu;
@@ -277,6 +277,13 @@ pub struct SceneRenderer {
     outline_renderer: OutlineRenderer,
     particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
+    /// The meshes, materials, shaders and prefabs the scene's components
+    /// resolved to, kept across frames while the registry holds still.
+    resolved: ResolvedRefs,
+    /// The shader each material drawn this frame resolved to.
+    material_shaders: HashMap<AssetId, Option<Ref<Shader>>>,
+    /// Which objects of the scene drawn this frame are visible.
+    visibility: HierarchyVisibility,
     draw_list: Vec<DrawListElement>,
     foliage: FoliageCache,
     terrain: TerrainCache,
@@ -437,6 +444,9 @@ impl SceneRenderer {
             outline_renderer,
             particle_renderer,
             assets: Default::default(),
+            resolved: Default::default(),
+            material_shaders: Default::default(),
+            visibility: Default::default(),
             draw_list: Default::default(),
             foliage: Default::default(),
             terrain: Default::default(),
@@ -665,16 +675,19 @@ impl SceneRenderer {
         // and the forward pass draws every other mesh after them, against the
         // deferred depth.
         crate::profile_scope!("Record passes");
-        self.gbuffer_renderer.render(
-            &render_context,
-            &mut encoder.scope("G-buffer"),
-            &assets,
-            &material_bind_groups,
-            &draw_list,
-            &self.camera_uniform_buffer,
-            &self.scene_depth_texture,
-            self.options.mesh_cull_mode,
-        );
+        {
+            crate::profile_scope!("G-buffer pass");
+            self.gbuffer_renderer.render(
+                &render_context,
+                &mut encoder.scope("G-buffer"),
+                &assets,
+                &material_bind_groups,
+                &draw_list,
+                &self.camera_uniform_buffer,
+                &self.scene_depth_texture,
+                self.options.mesh_cull_mode,
+            );
+        }
         let gbuffer = self
             .gbuffer_renderer
             .targets()
@@ -725,30 +738,36 @@ impl SceneRenderer {
             &self.scene_depth_texture,
             self.options.clear_color,
         );
-        self.mesh_renderer.render(
-            &mut encoder.scope("Forward"),
-            &assets,
-            &material_bind_groups,
-            &lighting,
-            mesh_targets,
-            &options,
-            &draw_list,
-        );
-        self.mesh_renderer.render_object_ids(
-            device,
-            &mut encoder.scope("Object ids"),
-            &assets,
-            MeshRenderTargets {
-                color: &self.scene_object_id_texture,
-                depth: &self.scene_object_id_depth_texture,
-            },
-            &self.camera_uniform_buffer,
-            &draw_list,
-            self.options
-                .gizmos
-                .is_some()
-                .then_some(&mut self.gizmo_renderer),
-        );
+        {
+            crate::profile_scope!("Forward pass");
+            self.mesh_renderer.render(
+                &mut encoder.scope("Forward"),
+                &assets,
+                &material_bind_groups,
+                &lighting,
+                mesh_targets,
+                &options,
+                &draw_list,
+            );
+        }
+        {
+            crate::profile_scope!("Object id pass");
+            self.mesh_renderer.render_object_ids(
+                device,
+                &mut encoder.scope("Object ids"),
+                &assets,
+                MeshRenderTargets {
+                    color: &self.scene_object_id_texture,
+                    depth: &self.scene_object_id_depth_texture,
+                },
+                &self.camera_uniform_buffer,
+                &draw_list,
+                self.options
+                    .gizmos
+                    .is_some()
+                    .then_some(&mut self.gizmo_renderer),
+            );
+        }
         drop(assets);
         self.skybox_renderer.render(
             &render_context,
@@ -990,10 +1009,16 @@ impl SceneRenderer {
         transform: [[f32; 4]; 4],
         cast_shadows: bool,
     ) {
-        let Some(shader_ref) = mat_ref
-            .read()
-            .shader
-            .get_ref(&self.asset_context.registries)
+        let registries = &self.asset_context.registries;
+        let resolved = &mut self.resolved;
+        let Some(shader_ref) = self
+            .material_shaders
+            .entry(mat_ref.id())
+            .or_insert_with(|| {
+                let shader_id = mat_ref.read().shader.id();
+                resolved.resolve_id(registries, shader_id)
+            })
+            .clone()
         else {
             return;
         };
@@ -1010,11 +1035,11 @@ impl SceneRenderer {
         self.assets
             .meshes
             .entry(mesh_ref.id())
-            .or_insert(mesh_ref.clone());
+            .or_insert_with(|| mesh_ref.clone());
         self.assets
             .materials
             .entry(mat_ref.id())
-            .or_insert(mat_ref.clone());
+            .or_insert_with(|| mat_ref.clone());
         self.assets
             .shaders
             .entry(shader_ref.id())
@@ -1084,31 +1109,38 @@ impl SceneRenderer {
         self.draw_list.clear();
         self.object_ids_build.clear();
         self.object_id_lookup.clear();
-        let mut query = <(Entity, &ComponentMesh)>::query();
-        for (entity, c_mesh) in query.iter(world) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
-                continue;
-            };
-            if !scene.is_visible_in_hierarchy(game_object)
-                || !scene.is_component_enabled::<ComponentMesh>(game_object)
-            {
-                continue;
+        self.material_shaders.clear();
+        self.visibility.clear();
+        self.resolved.begin(&self.asset_context.registries);
+        {
+            crate::profile_scope!("Mesh components");
+            let mut query = <(Entity, &ComponentMesh)>::query();
+            for (entity, c_mesh) in query.iter(world) {
+                let Some(game_object) = scene.game_object_from_entity(*entity) else {
+                    continue;
+                };
+                if !self.visibility.is_visible(scene, game_object)
+                    || !scene.is_component_enabled::<ComponentMesh>(game_object)
+                {
+                    continue;
+                }
+                let registries = &self.asset_context.registries;
+                let Some(mesh_ref) = self.resolved.resolve(registries, &c_mesh.mesh) else {
+                    continue;
+                };
+                let Some(mat_ref) = self.resolved.resolve(registries, &c_mesh.material) else {
+                    continue;
+                };
+                let transform = scene.world_transform(game_object);
+                self.insert_draw_list_entry(
+                    &mesh_ref,
+                    &mat_ref,
+                    scene.uuid(game_object),
+                    None,
+                    transform.matrix().into(),
+                    c_mesh.cast_shadows,
+                );
             }
-            let Some(mesh_ref) = c_mesh.mesh.get_ref(&self.asset_context.registries) else {
-                continue;
-            };
-            let Some(mat_ref) = c_mesh.material.get_ref(&self.asset_context.registries) else {
-                continue;
-            };
-            let transform = scene.world_transform(game_object);
-            self.insert_draw_list_entry(
-                &mesh_ref,
-                &mat_ref,
-                scene.uuid(game_object),
-                None,
-                transform.matrix().into(),
-                c_mesh.cast_shadows,
-            );
         }
         self.foliage.begin_frame(scene.id());
         let mut query = <(Entity, &ComponentFoliage)>::query();
@@ -1116,7 +1148,7 @@ impl SceneRenderer {
             let Some(owner) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            if !scene.is_visible_in_hierarchy(owner)
+            if !self.visibility.is_visible(scene, owner)
                 || !scene.is_component_enabled::<ComponentFoliage>(owner)
             {
                 continue;
@@ -1127,16 +1159,18 @@ impl SceneRenderer {
                 .prefabs
                 .iter()
                 .map(|source| {
-                    let Some(prefab) = source.get_ref(&self.asset_context.registries) else {
+                    let registries = &self.asset_context.registries;
+                    let Some(prefab) = self.resolved.resolve(registries, source) else {
                         return Vec::new();
                     };
+                    let resolved = &mut self.resolved;
                     self.foliage
                         .parts(&prefab)
                         .iter()
                         .filter_map(|part| {
                             Some((
-                                part.mesh.get_ref(&self.asset_context.registries)?,
-                                part.material.get_ref(&self.asset_context.registries)?,
+                                resolved.resolve(registries, &part.mesh)?,
+                                resolved.resolve(registries, &part.material)?,
                                 part.transform,
                                 part.cast_shadows,
                             ))
@@ -1170,18 +1204,16 @@ impl SceneRenderer {
             let Some(game_object) = scene.game_object_from_entity(*entity) else {
                 continue;
             };
-            if !scene.is_visible_in_hierarchy(game_object)
+            if !self.visibility.is_visible(scene, game_object)
                 || !scene.is_component_enabled::<ComponentSkinnedMesh>(game_object)
             {
                 continue;
             }
-            let Some(mesh_ref) = c_skinned_mesh.mesh.get_ref(&self.asset_context.registries) else {
+            let registries = &self.asset_context.registries;
+            let Some(mesh_ref) = self.resolved.resolve(registries, &c_skinned_mesh.mesh) else {
                 continue;
             };
-            let Some(mat_ref) = c_skinned_mesh
-                .material
-                .get_ref(&self.asset_context.registries)
-            else {
+            let Some(mat_ref) = self.resolved.resolve(registries, &c_skinned_mesh.material) else {
                 continue;
             };
             let mesh_id = mesh_ref.id();
@@ -1295,21 +1327,29 @@ impl SceneRenderer {
         for mesh in self.assets.meshes.values() {
             mesh.write().instances.clear();
         }
-        let AssetRenderState {
-            materials,
-            textures,
-            ..
-        } = &mut self.assets;
-        for material in materials.values() {
-            let mut material = material.write();
-            material.follow_shader(&self.asset_context);
-            material.load_buffers(render_context);
-            material.collect_textures(
-                &self.asset_context,
+        {
+            crate::profile_scope!("Material buffers");
+            let AssetRenderState {
+                materials,
                 textures,
-                self.default_assets.white_texture.clone(),
-            );
+                ..
+            } = &mut self.assets;
+            let registries = &self.asset_context.registries;
+            let resolved = &mut self.resolved;
+            for (material_id, material) in materials.iter() {
+                let mut material = material.write();
+                let shader = self.material_shaders.get(material_id).cloned().flatten();
+                material.follow_resolved_shader(&self.asset_context, shader.as_ref());
+                material.load_buffers(render_context);
+                material.collect_textures_with(
+                    &self.asset_context,
+                    textures,
+                    self.default_assets.white_texture.clone(),
+                    |texture| resolved.resolve(registries, texture),
+                );
+            }
         }
+        self.resolved.end();
         self.draw_list.sort_by_key(
             |DrawListElement {
                  shader_id,

@@ -174,10 +174,9 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
 }
 
 fn blip(scene: &Scene, player: GameObject, object: GameObject) -> Option<MinimapBlip> {
-    if !scene.is_visible_in_hierarchy(object)
-        || scene
-            .read_component::<ComponentHealth, _, _>(object, |health| health.dead)
-            .unwrap_or(false)
+    if scene
+        .read_component::<ComponentHealth, _, _>(object, |health| health.dead)
+        .unwrap_or(false)
     {
         return None;
     }
@@ -208,6 +207,11 @@ fn blip(scene: &Scene, player: GameObject, object: GameObject) -> Option<Minimap
     } else {
         return None;
     };
+    // Checked once the object is known to be a blip: walking the hierarchy
+    // for every prop of the arena costs more than the rest of the map.
+    if !scene.is_visible_in_hierarchy(object) {
+        return None;
+    }
 
     let transform = scene.world_transform(object);
     Some(MinimapBlip {

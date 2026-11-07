@@ -178,11 +178,13 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
     // actual pose, including edits.
     let mut cover = Vec::new();
     let mut sight_blockers = Vec::new();
-    for child in scene.descendants(object).filter(live) {
-        let name = scene.name(child);
-        let is_cover = name.starts_with("Arena Cover");
-        let blocks = blocks_sight(&name);
-        if !is_cover && !blocks {
+    for child in scene.descendants(object) {
+        let (is_cover, blocks) = scene
+            .read_component::<ComponentID, _, _>(child, |id| {
+                (id.name.starts_with("Arena Cover"), blocks_sight(&id.name))
+            })
+            .unwrap_or_default();
+        if (!is_cover && !blocks) || !live(&child) {
             continue;
         }
         let Some(ColliderShape::Cuboid { half_extents }) =

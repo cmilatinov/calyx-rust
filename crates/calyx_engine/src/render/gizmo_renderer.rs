@@ -2,9 +2,11 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use egui_wgpu::wgpu::BufferUsages;
 use image::{imageops, RgbaImage};
+use legion::storage::ComponentTypeId;
 use legion::{Entity, IntoQuery};
 use nalgebra_glm::{vec4, Mat4};
 use rapier3d::pipeline::DebugRenderPipeline;
+use std::collections::HashMap;
 use std::default::Default;
 use std::path::Path;
 use uuid::Uuid;
@@ -12,6 +14,7 @@ use uuid::Uuid;
 use crate::assets::mesh::Mesh;
 use crate::assets::Asset;
 use crate::class_registry::ComponentRegistry;
+use crate::component::Component;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::ReadOnlyRef;
 use crate::math::Transform;
@@ -20,7 +23,7 @@ use crate::render::gizmos::Gizmos;
 use crate::render::overlay::{OverlayContext, OverlayPass};
 use crate::render::render_utils::RenderUtils;
 use crate::render::GizmoOptions;
-use crate::scene::Scene;
+use crate::scene::{HierarchyVisibility, Scene};
 
 use super::buffer::wgpu_buffer_init_desc;
 use super::{Camera, PipelineOptions, SceneRendererError, Shader};
@@ -256,9 +259,11 @@ impl GizmoRenderer {
         );
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_circle_mesh);
         RenderUtils::rebuild_mesh_data(device, queue, &mut self.wire_cube_mesh);
-        self.lines_mesh.rebuild_mesh_data(device);
-        self.points_mesh.rebuild_mesh_data(device);
-        self.icons_mesh.rebuild_mesh_data(device);
+        // The gizmos are drawn again every frame, but in a still scene they
+        // come out the same: keep the buffers that already hold them.
+        self.lines_mesh.rebuild_mesh_data_if_changed(device);
+        self.points_mesh.rebuild_mesh_data_if_changed(device);
+        self.icons_mesh.rebuild_mesh_data_if_changed(device);
     }
 
     /// Returns a gizmo command recorder for the current frame, telling the
@@ -306,30 +311,44 @@ impl GizmoRenderer {
             let registry_ref = self.component_registry.clone();
             let mut gizmos;
             {
+                crate::profile_scope!("Component gizmos");
                 let registry = registry_ref.read();
                 gizmos = self.gizmos(camera, camera_transform, viewport_size, gizmo_options);
+                // Each object asks only the registered types among its own
+                // components to draw, instead of every registered type.
+                let binders: HashMap<ComponentTypeId, &dyn Component> = registry
+                    .components()
+                    .map(|(_, binder)| (binder.component_type_id(), binder.as_ref()))
+                    .collect();
+                let mut visibility = HierarchyVisibility::default();
                 let mut query = <Entity>::query();
                 let world = scene.world();
                 for entity in query.iter(world) {
-                    if let Some(game_object) = scene.game_object_from_entity(*entity) {
-                        gizmos.set_object_id(object_id_for_game_object(scene.uuid(game_object)));
-                        let opacity = if scene.is_visible_in_hierarchy(game_object) {
-                            1.0
-                        } else {
-                            HIDDEN_GIZMO_OPACITY
+                    let Some(game_object) = scene.game_object_from_entity(*entity) else {
+                        continue;
+                    };
+                    let Some(entry) = scene.entry(game_object) else {
+                        continue;
+                    };
+                    gizmos.set_object_id(object_id_for_game_object(scene.uuid(game_object)));
+                    let opacity = if visibility.is_visible(scene, game_object) {
+                        1.0
+                    } else {
+                        HIDDEN_GIZMO_OPACITY
+                    };
+                    gizmos.set_opacity(opacity);
+                    for type_id in entry.archetype().layout().component_types() {
+                        let Some(binder) = binders.get(type_id) else {
+                            continue;
                         };
-                        gizmos.set_opacity(opacity);
-                        for (_, comp) in registry.components() {
-                            if let Some(entry) = scene.entry(game_object) {
-                                if let Some(instance) = comp.get_instance(&entry) {
-                                    instance.draw_gizmos(scene, game_object, &mut gizmos);
-                                }
-                            }
+                        if let Some(instance) = binder.get_instance(&entry) {
+                            instance.draw_gizmos(scene, game_object, &mut gizmos);
                         }
                     }
                 }
             }
             if let Some(physics_debug_pipeline) = physics_debug_pipeline {
+                crate::profile_scope!("Physics debug");
                 gizmos.set_object_id(0);
                 gizmos.set_opacity(1.0);
                 let mut physics_debug_render: PhysicsDebugRenderer = gizmos.into();
@@ -343,6 +362,7 @@ impl GizmoRenderer {
                 );
             }
         }
+        crate::profile_scope!("Gizmo buffers");
         self.load_buffers(device, queue);
     }
 
