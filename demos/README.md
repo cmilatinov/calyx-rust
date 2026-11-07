@@ -32,6 +32,7 @@ The RPG Poly assets still need the one-time import below.
 | Demo | Scene | |
 | --- | --- | --- |
 | ![RPG Poly village](docs/rpg_poly.png) | [`assets/rpg_poly/rpg_poly.cxscene`](assets/rpg_poly/rpg_poly.cxscene) | **RPG Poly village.** The demo village of Unity's [RPG Poly Pack - Lite](https://assetstore.unity.com/packages/3d/environments/landscapes/rpg-poly-pack-lite-148410), object for object from the pack's own scene, with sun shadows, image-based ambient light, SSAO and a post-processing volume. In play the camera flies a loop above the village. **Needs the pack:** see below. |
+| ![Heightmap terrain](docs/terrain.png) | [`assets/terrain/terrain_demo.cxscene`](assets/terrain/terrain_demo.cxscene) | **Heightmap terrain.** A 200 x 200 unit valley drawn by the engine's `ComponentTerrain` from a 512 x 512 16-bit heightmap, with a baked color map, sun shadows and fog. In play six rovers (`ComponentTerrainRover`, `src/terrain.rs`) drive circles over it, standing on the ground and leaning with it through `ComponentTerrain::sample_scene`. `tools/terrain_maps.py` regenerates both maps. |
 
 ## Importing RPG Poly Pack - Lite
 

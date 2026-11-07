@@ -371,7 +371,9 @@ fn checked_in_scenes_save_byte_for_byte() {
     let registries = assets.registries.lock_read();
     let root = repository_root();
     let mut paths = Vec::new();
-    for asset_root in ["assets", "sandbox/assets", "demos/assets"] {
+    // The demos project's scenes hold its own components, which only its
+    // assembly registers: `demos/tests/saved_scenes.rs` checks them.
+    for asset_root in ["assets", "sandbox/assets"] {
         files_with_extensions(&root.join(asset_root), &["cxscene"], &mut paths);
     }
     paths.sort();

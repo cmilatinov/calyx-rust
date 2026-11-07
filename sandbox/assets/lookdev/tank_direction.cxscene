@@ -7225,6 +7225,30 @@
             "inner_width": 2.0,
             "opacity": 1.0,
             "width": 2.0
+          },
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "inner_opacity": 0.550000011920929,
+            "inner_width": 2.0,
+            "opacity": 1.0,
+            "width": 2.0
+          },
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "inner_opacity": 0.550000011920929,
+            "inner_width": 2.0,
+            "opacity": 1.0,
+            "width": 2.0
           }
         ]
       },
@@ -8904,6 +8928,30 @@
         "normal_threshold": 40.0,
         "silhouette_threshold": 0.03999999910593033,
         "styles": [
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "inner_opacity": 0.550000011920929,
+            "inner_width": 2.0,
+            "opacity": 1.0,
+            "width": 2.0
+          },
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "inner_opacity": 0.550000011920929,
+            "inner_width": 2.0,
+            "opacity": 1.0,
+            "width": 2.0
+          },
           {
             "color": [
               18,
@@ -45600,6 +45648,30 @@
         "normal_threshold": 40.0,
         "silhouette_threshold": 0.03999999910593033,
         "styles": [
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "inner_opacity": 0.550000011920929,
+            "inner_width": 2.0,
+            "opacity": 1.0,
+            "width": 2.0
+          },
+          {
+            "color": [
+              18,
+              18,
+              18,
+              255
+            ],
+            "inner_opacity": 0.550000011920929,
+            "inner_width": 2.0,
+            "opacity": 1.0,
+            "width": 2.0
+          },
           {
             "color": [
               18,

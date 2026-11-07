@@ -64,5 +64,6 @@ mod shader;
 mod shader_loader;
 mod shadows;
 mod skybox_renderer;
+mod terrain;
 #[cfg(test)]
 mod test_kernel;

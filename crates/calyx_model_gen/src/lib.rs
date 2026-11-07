@@ -113,6 +113,13 @@ fn expected_extent(shape: &Shape) -> Option<[(f64, f64); 3]> {
             let d = size[2] + 2.0 * overhang;
             Some([(w, w), (size[1], size[1]), (d, d)])
         }
+        // The bevel rounds the sharp foot back and the crest down, so depth
+        // and height may be a little short; the width stays exact.
+        Shape::Wedge { size, bevel, .. } => Some([
+            (size[0], size[0]),
+            (size[1] - bevel, size[1]),
+            (size[2] - 10.0 * bevel, size[2]),
+        ]),
         Shape::Cylinder {
             radius,
             top_radius,

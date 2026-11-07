@@ -2,7 +2,7 @@
 //!
 //! ```toml
 //! # crate.toml
-//! kind = "box"            # box, rock, cylinder, ring, blob, prism or import
+//! kind = "box"            # box, wedge, rock, cylinder, ring, blob, prism or import
 //! role = "crates"         # a palette role; gives the model's material
 //! shading = "smooth"      # "smooth" (the default) or "flat"
 //! smooth_angle = 60       # degrees; smooth shading only
@@ -74,6 +74,18 @@ pub enum Shape {
     Prism {
         points: Vec<[f64; 2]>,
         height: f64,
+        #[serde(default)]
+        bevel: f64,
+        #[serde(default = "default_segments")]
+        segments: u32,
+    },
+    /// A block whose top slopes up along +Z, from `low` at its -Z end to the
+    /// full height at its +Z end: a drivable ramp, or the kerb along one.
+    Wedge {
+        size: [f64; 3],
+        /// Height of the low (-Z) end; zero makes a sharp foot at ground level.
+        #[serde(default)]
+        low: f64,
         #[serde(default)]
         bevel: f64,
         #[serde(default = "default_segments")]
@@ -321,7 +333,9 @@ impl Model {
                     dir,
                 )?;
                 if matches!(model.shape, Shape::Import { .. } | Shape::Parts { .. }) {
-                    return Err("parts use box, rock, cylinder, ring, blob or prism shapes".into());
+                    return Err(
+                        "parts use box, wedge, rock, cylinder, ring, blob or prism shapes".into(),
+                    );
                 }
                 parsed.push(Part {
                     name,
@@ -483,6 +497,28 @@ impl Model {
                 }
                 if !bevel.is_finite() || *bevel < 0.0 || *bevel * 2.0 >= *height {
                     return Err("prism bevel must fit its height".into());
+                }
+            }
+            Shape::Wedge {
+                size,
+                low,
+                bevel,
+                segments: s,
+            } => {
+                sizes("size", size)?;
+                segments(*s)?;
+                if !low.is_finite() || *low < 0.0 || *low >= size[1] {
+                    return Err("wedge low end must be at least 0 and below its height".into());
+                }
+                let smallest = size[0].min(size[1]).min(size[2]);
+                if !bevel.is_finite() || *bevel < 0.0 || *bevel * 2.0 >= smallest {
+                    return Err(format!(
+                        "bevel {bevel} must be at least 0 and under half the smallest size ({})",
+                        smallest / 2.0
+                    ));
+                }
+                if *low > 0.0 && *bevel * 2.0 >= *low {
+                    return Err("wedge bevel must fit its low end".into());
                 }
             }
             Shape::Parts { .. } => return Err("list parts without a top-level kind".into()),

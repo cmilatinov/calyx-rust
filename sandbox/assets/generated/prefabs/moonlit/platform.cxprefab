@@ -1,0 +1,297 @@
+{
+  "data": {
+    "components": {
+      "03070e10-5b96-55cd-8450-feef5c9b1cfa": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "03070e10-5b96-55cd-8450-feef5c9b1cfa",
+          "name": "platform",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "4ebe5d17-7bf6-57b5-8f87-a1c75d718682": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "4ebe5d17-7bf6-57b5-8f87-a1c75d718682",
+          "name": "deck",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "21949d93-fbd0-5e54-bf9b-1ec19a84db20",
+          "mesh": "e7af0c55-fbf0-5b59-92e5-4b7938fe194e"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              1.6,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "558a210d-99b8-53aa-8606-5efb76378010": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "558a210d-99b8-53aa-8606-5efb76378010",
+          "name": "kerb_north",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "98a8657c-d16b-5531-b24c-e5ab505bad6b",
+          "mesh": "8c9a904f-5fa1-5e8e-8e85-137cd35979eb"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              1.6,
+              3.75
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "6bd32813-73b1-5200-833d-9cd9e4b90cac": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "6bd32813-73b1-5200-833d-9cd9e4b90cac",
+          "name": "kerb_west_north",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "98a8657c-d16b-5531-b24c-e5ab505bad6b",
+          "mesh": "6e1b9416-1a78-50da-b37e-7e8f77e51036"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -4.75,
+              1.6,
+              3.5
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "74b484d4-d17a-5928-a6ed-8de43d44a2d8": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "74b484d4-d17a-5928-a6ed-8de43d44a2d8",
+          "name": "kerb_south_east",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "98a8657c-d16b-5531-b24c-e5ab505bad6b",
+          "mesh": "9253636e-980e-51a6-9905-8c56a65675f9"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              3.25,
+              1.6,
+              -3.75
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "b5dae358-d73a-5337-94b8-6fbf01c925d0": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "b5dae358-d73a-5337-94b8-6fbf01c925d0",
+          "name": "kerb_south_west",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "98a8657c-d16b-5531-b24c-e5ab505bad6b",
+          "mesh": "9626df6b-9448-52ef-8670-98ac29899e43"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -3.25,
+              1.6,
+              -3.75
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "d7bba1e1-92bd-5446-9386-448b09bd009a": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "d7bba1e1-92bd-5446-9386-448b09bd009a",
+          "name": "kerb_west_south",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "98a8657c-d16b-5531-b24c-e5ab505bad6b",
+          "mesh": "3cc01adb-1794-55d5-8962-c95ee1f136ad"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -4.75,
+              1.6,
+              -2.5
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "e937e071-8421-53be-a772-cb9c27790b41": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "e937e071-8421-53be-a772-cb9c27790b41",
+          "name": "body",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "3a91d710-6e7e-5285-afdd-438981a8a53c",
+          "mesh": "dbcf6c4b-86fd-55e8-b22c-6d903f3506e8"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "f6a33a7f-21cc-56c4-ae76-d4fa1d537d2e": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "f6a33a7f-21cc-56c4-ae76-d4fa1d537d2e",
+          "name": "kerb_east",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "98a8657c-d16b-5531-b24c-e5ab505bad6b",
+          "mesh": "4910d1c0-b613-559a-b43e-78ddaa67eb58"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              4.75,
+              1.6,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "03070e10-5b96-55cd-8450-feef5c9b1cfa": [
+        "e937e071-8421-53be-a772-cb9c27790b41",
+        "4ebe5d17-7bf6-57b5-8f87-a1c75d718682",
+        "f6a33a7f-21cc-56c4-ae76-d4fa1d537d2e",
+        "d7bba1e1-92bd-5446-9386-448b09bd009a",
+        "6bd32813-73b1-5200-833d-9cd9e4b90cac",
+        "558a210d-99b8-53aa-8606-5efb76378010",
+        "b5dae358-d73a-5337-94b8-6fbf01c925d0",
+        "74b484d4-d17a-5928-a6ed-8de43d44a2d8"
+      ]
+    },
+    "roots": [
+      "03070e10-5b96-55cd-8450-feef5c9b1cfa"
+    ]
+  },
+  "root": "03070e10-5b96-55cd-8450-feef5c9b1cfa"
+}

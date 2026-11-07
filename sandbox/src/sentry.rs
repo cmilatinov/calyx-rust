@@ -1,5 +1,6 @@
 use crate::spawn::ComponentRespawnState;
-use crate::tank::{flatten_xz, spawn_round, yaw_rotation, ComponentProjectile};
+use crate::tank::{flatten_xz, shot_direction, spawn_round, yaw_rotation, ComponentProjectile};
+use crate::terrain::{drive_surfaces, surface_height_below};
 use calyx_engine::component::{
     Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
     ReflectComponentUpdate,
@@ -9,6 +10,7 @@ use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use nalgebra::UnitQuaternion;
 use serde::{Deserialize, Serialize};
 
 /// A fixed turret that turns to its target and fires rounds at it while the
@@ -108,12 +110,27 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
         return;
     }
 
+    // Like the tank's, its round flies at the gun's height above the ground
+    // under the target, climbing to a tank on a raised deck.
+    let muzzle = transform.position + direction * sentry.muzzle_offset;
+    let target_ground = scene.world_transform(target).position;
+    let ground = surface_height_below(
+        scene,
+        &drive_surfaces(scene),
+        transform.position,
+        SENTRY_GROUND_REACH,
+    )
+    .unwrap_or(target_ground.y);
+    let flight = shot_direction(muzzle, direction, muzzle.y - ground, Some(target_ground));
+
     spawn_round(
         scene,
-        transform.position + direction * sentry.muzzle_offset,
-        transform.rotation,
+        muzzle,
+        UnitQuaternion::rotation_between(&direction, &flight)
+            .unwrap_or_else(UnitQuaternion::identity)
+            * transform.rotation,
         ComponentProjectile {
-            direction,
+            direction: flight,
             speed: sentry.projectile_speed,
             damage: sentry.projectile_damage,
             lifetime_remaining: sentry.projectile_lifetime,
@@ -123,6 +140,9 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
     );
     sentry.fire_cooldown_remaining = sentry.fire_interval;
 }
+
+/// How far below its root the sentry looks for the ground it stands on.
+const SENTRY_GROUND_REACH: f32 = 2.0;
 
 fn vec_xz_length(vector: nalgebra_glm::Vec3) -> f32 {
     (vector.x * vector.x + vector.z * vector.z).sqrt()
@@ -236,6 +256,48 @@ mod tests {
         runner.step_many(120);
 
         assert_eq!(health(runner.scene(), tank), 100.0);
+    }
+
+    #[test]
+    fn sentry_rounds_climb_to_a_tank_on_higher_ground() {
+        let (mut scene, _, tank) = sentry_and_tank(8.0);
+        // The floor under the sentry is a drive surface; the tank stands on
+        // a deck 1.6 m above it.
+        let floor = scene.create(None, None);
+        scene.set_world_transform(floor, Transform::from_xyz(0.0, -0.5, 0.0).matrix());
+        scene.add_component(
+            floor,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            floor,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: vec3(4.0, 0.5, 4.0),
+                },
+                ..Default::default()
+            },
+        );
+        scene.add_component(floor, crate::terrain::ComponentDriveSurface {});
+        scene.set_world_transform(tank, Transform::from_xyz(0.0, 1.6, 8.0).matrix());
+        let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+        runner.step();
+        let climb = runner
+            .scene()
+            .objects()
+            .find_map(|object| {
+                runner
+                    .scene()
+                    .read_component::<ComponentProjectile, _, _>(object, |p| p.direction)
+            })
+            .expect("the sentry should fire");
+        assert!(climb.y > 0.15, "the round climbs: {climb:?}");
+        runner.step_many(60);
+        assert!(health(runner.scene(), tank) < 100.0);
     }
 
     #[test]

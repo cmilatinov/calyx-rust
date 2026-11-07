@@ -1,7 +1,7 @@
 use egui_wgpu::wgpu;
 use image::{ColorType, DynamicImage, ImageReader};
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, OnceLock};
 
 use super::LoadedAsset;
 use crate::assets::error::AssetError;
@@ -9,6 +9,7 @@ use crate::assets::import::{ImportedSampler, ImportedTexture, TextureFilter, Tex
 use crate::assets::Asset;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
+use crate::math::Heightfield;
 use crate::render::{PipelineOptions, RenderContext, RenderUtils, Shader};
 use crate::utils::TypeUuid;
 use crate::{self as calyx_engine};
@@ -47,6 +48,11 @@ pub struct Texture {
     pub descriptor: wgpu::TextureDescriptor<'static>,
     /// Stored view descriptor used to recreate derived views.
     pub view_descriptor: wgpu::TextureViewDescriptor<'static>,
+    /// The image file the texture was loaded from, if any.
+    source: Option<PathBuf>,
+    /// [`Texture::heightfield`], read from `source` the first time it is
+    /// asked for. A reload replaces the whole texture, and with it this.
+    heightfield: OnceLock<Option<Arc<Heightfield>>>,
 }
 
 impl Asset for Texture {
@@ -79,8 +85,9 @@ impl Asset for Texture {
         let image = reader
             .decode()
             .map_err(|err| AssetError::LoadError.with_path(path).with_source(err))?;
-        let texture = Self::from_image(game, texture_name, image)
+        let mut texture = Self::from_image(game, texture_name, image)
             .map_err(|err| err.with_path(path).with_type(Self::asset_name()))?;
+        texture.source = Some(path.to_path_buf());
         log::info!(
             "Loaded texture {} ({}x{}, {:?}, {} mips)",
             path.display(),
@@ -320,7 +327,29 @@ impl Texture {
                 base_array_layer: view_desc.base_array_layer,
                 array_layer_count: view_desc.array_layer_count,
             },
+            source: None,
+            heightfield: OnceLock::new(),
         }
+    }
+
+    /// The texture's image as a [`Heightfield`] of its brightness, for a
+    /// terrain to draw and sample. It is decoded once from the image file at
+    /// the file's own precision, so a 16-bit grayscale heightmap keeps the
+    /// levels the 8-bit GPU copy rounds away. `None` for a texture not loaded
+    /// from an image file, and for one whose file no longer reads as a
+    /// heightfield, which is logged once per load.
+    pub fn heightfield(&self) -> Option<Arc<Heightfield>> {
+        self.heightfield
+            .get_or_init(|| {
+                let path = self.source.as_ref()?;
+                Heightfield::load(path)
+                    .map(Arc::new)
+                    .inspect_err(|err| {
+                        log::warn!("Heightmap {} is not usable: {err}", path.display())
+                    })
+                    .ok()
+            })
+            .clone()
     }
 
     /// Creates a 1x1 RGBA texture initialized from the provided bytes.

@@ -604,7 +604,10 @@ fn authored_rock_shoulders_stop_shells_and_crowns_leave_air() {
 }
 
 /// No obstacle is low enough for a round fired from the tank's gun to fly
-/// over it: every cover, prop and wall solid rises above the shell's path.
+/// over it: every cover, prop and wall solid rises above the shell's path,
+/// measured from the ground the obstacle stands on, so cover on the raised
+/// deck stops rounds fired across the deck. Ramps and kerbs are driving
+/// surfaces, not cover, and are not among these solids.
 #[test]
 fn shells_at_gun_height_cannot_fly_over_any_obstacle() {
     use calyx_engine::component::ColliderShape;
@@ -631,7 +634,11 @@ fn shells_at_gun_height_cannot_fly_over_any_obstacle() {
     runner.step();
     for solid in solids {
         let center = runner.scene().world_transform(solid).position;
-        let origin = vec3(center.x - 3.0, gun_height, center.z);
+        let ground = runner
+            .scene()
+            .parent(solid)
+            .map_or(0.0, |prop| runner.scene().world_transform(prop).position.y);
+        let origin = vec3(center.x - 3.0, ground + gun_height, center.z);
         assert!(
             runner
                 .scene()
@@ -1193,4 +1200,384 @@ fn the_arena_match_ends_at_its_kill_limit_with_the_final_scoreboard() {
     runner.step_many(60);
     assert_eq!(runner.scene().world_transform(tank).position, position);
     assert_eq!(kills(&runner), 1);
+}
+
+// The raised area: a platform as high as the walls in the arena's northeast,
+// at world (20, 0, 45), its deck 1.6 m up, reached by a ramp from the south
+// (continuing the east sand lane at x = 20) and a ramp from the west (at
+// z = 46). Ramps climb 1.6 m over 8 m between kerbs.
+const DECK_HEIGHT: f32 = 1.6;
+
+/// The arena with its tank at `start` facing `yaw` radians, and without the
+/// sentry, whose rounds would otherwise interrupt a drive near it.
+fn raised_area_runner(
+    start: Vec3,
+    yaw: f32,
+    fps: usize,
+) -> (HeadlessSceneRunner, calyx_engine::scene::GameObject) {
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let sentry = object_named(&scene, "Sentry");
+    scene.delete(sentry);
+    scene.flush_deletes();
+    let tank = object_named(&scene, "Tank");
+    let mut transform = scene.world_transform(tank);
+    transform.position = start;
+    transform.rotation = nalgebra::UnitQuaternion::from_euler_angles(0.0, yaw, 0.0);
+    scene.set_world_transform(tank, transform.matrix());
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.set_step_seconds(1.0 / fps as f64);
+    (runner, tank)
+}
+
+/// Holds `key` (or nothing) for `seconds` at `fps`.
+fn hold(runner: &mut HeadlessSceneRunner, key: Option<egui::Key>, seconds: f32, fps: usize) {
+    if let Some(key) = key {
+        runner.press_key(key);
+    }
+    runner.step_many((seconds * fps as f32).round() as usize);
+    if let Some(key) = key {
+        runner.release_key(key);
+        runner.step();
+    }
+}
+
+/// The hull's nose-up pitch, in radians.
+fn hull_pitch(transform: &Transform) -> f32 {
+    transform.forward().normalize().y.asin()
+}
+
+#[test]
+fn tank_climbs_the_south_ramp_onto_the_platform_and_drives_back_down() {
+    // At the south end of the east sand lane, facing up the ramp.
+    let (mut runner, tank) = raised_area_runner(vec3(20.0, 0.0, 26.0), 0.0, 60);
+    let mut climbing = Vec::new();
+    runner.press_key(egui::Key::W);
+    for _ in 0..240 {
+        runner.step();
+        climbing.push(runner.scene().world_transform(tank));
+    }
+    runner.release_key(egui::Key::W);
+    hold(&mut runner, None, 2.0, 60);
+
+    // Halfway up the ramp the hull is halfway up and tilted to the slope.
+    let halfway = climbing
+        .iter()
+        .find(|pose| pose.position.z >= 37.0)
+        .expect("the tank should reach the middle of the ramp");
+    assert!(
+        (halfway.position.y - DECK_HEIGHT * (halfway.position.z - 33.0) / 8.0).abs() < 0.05,
+        "halfway up the ramp at {:?}",
+        halfway.position
+    );
+    let slope = (DECK_HEIGHT / 8.0).atan();
+    assert!(
+        (hull_pitch(halfway) - slope).abs() < 0.02,
+        "pitch {}",
+        hull_pitch(halfway)
+    );
+    // The height never jumps: the tank rides the ramp without snagging.
+    for pair in climbing.windows(2) {
+        assert!((pair[1].position.y - pair[0].position.y).abs() < 0.05);
+        assert!(pair[1].position.z >= pair[0].position.z - 1e-4);
+    }
+
+    // On the deck it drives on to the north rim's kerb, level.
+    let parked = runner.scene().world_transform(tank);
+    assert!((parked.position.y - DECK_HEIGHT).abs() < 1e-3, "{parked:?}");
+    assert!(
+        parked.position.z > 47.0,
+        "stopped short of the rim: {parked:?}"
+    );
+    assert!(
+        parked.position.z < 48.5,
+        "drove through the rim kerb: {parked:?}"
+    );
+    assert!(hull_pitch(&parked).abs() < 1e-3);
+    assert!((parked.position.x - 20.0).abs() < 0.05);
+
+    // Reversing takes it back down the ramp onto the ground.
+    hold(&mut runner, Some(egui::Key::S), 6.0, 60);
+    hold(&mut runner, None, 2.0, 60);
+    let back = runner.scene().world_transform(tank);
+    assert!(back.position.z < 32.0, "did not reverse down: {back:?}");
+    assert!(back.position.y.abs() < 1e-3, "{back:?}");
+    assert!(hull_pitch(&back).abs() < 1e-3);
+}
+
+#[test]
+fn tank_climbs_the_west_ramp_from_the_middle_of_the_arena() {
+    // West of the ramp's foot, facing east up it.
+    let (mut runner, tank) =
+        raised_area_runner(vec3(1.0, 0.0, 46.0), std::f32::consts::FRAC_PI_2, 60);
+    hold(&mut runner, Some(egui::Key::W), 5.0, 60);
+    hold(&mut runner, None, 2.0, 60);
+    let parked = runner.scene().world_transform(tank);
+    assert!((parked.position.y - DECK_HEIGHT).abs() < 1e-3, "{parked:?}");
+    // Across the deck to the east rim's kerb.
+    assert!(
+        parked.position.x > 23.0 && parked.position.x < 24.0,
+        "{parked:?}"
+    );
+    assert!((parked.position.z - 46.0).abs() < 0.05);
+}
+
+#[test]
+fn ramp_climbs_are_the_same_at_30_and_144_fps() {
+    let drive = |fps: usize| {
+        let (mut runner, tank) = raised_area_runner(vec3(20.0, 0.0, 28.0), 0.0, fps);
+        runner.press_key(egui::Key::W);
+        runner.step_many(fps * 3 / 2);
+        runner.scene().world_transform(tank).position
+    };
+    let slow = drive(30);
+    let fast = drive(144);
+    assert!(
+        slow.y > 0.3 && slow.y < DECK_HEIGHT,
+        "on the ramp: {slow:?}"
+    );
+    assert!(
+        (slow - fast).magnitude() < 0.05,
+        "30 fps: {slow:?}\n144 fps: {fast:?}"
+    );
+}
+
+#[test]
+fn ramp_kerbs_and_platform_sides_stop_tanks_on_the_ground() {
+    // Driving east into the south ramp's west kerb, halfway up its side.
+    let (mut runner, tank) =
+        raised_area_runner(vec3(15.0, 0.0, 37.0), std::f32::consts::FRAC_PI_2, 60);
+    hold(&mut runner, Some(egui::Key::W), 2.0, 60);
+    let stopped = runner.scene().world_transform(tank).position;
+    assert!(stopped.x > 16.0 && stopped.x < 16.8, "{stopped:?}");
+    assert!(stopped.y.abs() < 1e-3, "{stopped:?}");
+    // Driving north into the platform's south face, beside the ramp.
+    let (mut runner, tank) = raised_area_runner(vec3(24.0, 0.0, 36.0), 0.0, 60);
+    hold(&mut runner, Some(egui::Key::W), 2.0, 60);
+    let stopped = runner.scene().world_transform(tank).position;
+    assert!(stopped.z > 39.5 && stopped.z < 40.1, "{stopped:?}");
+    assert!(stopped.y.abs() < 1e-3, "{stopped:?}");
+}
+
+/// Points the cursor at `point` through the arena camera as it now stands.
+fn point_cursor_at(runner: &mut HeadlessSceneRunner, point: Vec3) {
+    use calyx_engine::component::ComponentCamera;
+    let scene = runner.scene();
+    let camera = object_named(scene, "Camera");
+    let viewport = nalgebra_glm::vec2(1280.0, 720.0);
+    let lens = scene
+        .read_component::<ComponentCamera, _, _>(camera, |c| c.camera(viewport.x / viewport.y))
+        .unwrap();
+    let clip = lens.projection
+        * scene.world_transform(camera).inverse_matrix()
+        * nalgebra_glm::vec4(point.x, point.y, point.z, 1.0);
+    let ndc = clip.xyz() / clip.w;
+    runner.move_pointer(egui::pos2(
+        (ndc.x + 1.0) * 0.5 * viewport.x,
+        (1.0 - ndc.y) * 0.5 * viewport.y,
+    ));
+}
+
+/// Aims at `point` until the camera has settled on it.
+fn aim_at(runner: &mut HeadlessSceneRunner, point: Vec3) {
+    for _ in 0..6 {
+        point_cursor_at(runner, point);
+        runner.step_many(20);
+    }
+}
+
+/// Fires until `target` loses health and returns where the first round was
+/// first seen, and the round.
+fn fire_until_hit(
+    runner: &mut HeadlessSceneRunner,
+    target: calyx_engine::scene::GameObject,
+) -> (Vec3, sandbox::tank::ComponentProjectile) {
+    let full_health = current_health(runner.scene(), target);
+    runner.press_key(egui::Key::Space);
+    let mut first_round = None;
+    let mut steps = 0;
+    while current_health(runner.scene(), target) == full_health {
+        runner.step();
+        if first_round.is_none() {
+            let scene = runner.scene();
+            first_round = find_named(scene, "Projectile").map(|round| {
+                (
+                    scene.world_transform(round).position,
+                    scene
+                        .read_component::<sandbox::tank::ComponentProjectile, _, _>(round, |p| *p)
+                        .unwrap(),
+                )
+            });
+        }
+        steps += 1;
+        assert!(steps < 180, "a round should hit the target");
+    }
+    runner.release_key(egui::Key::Space);
+    first_round.expect("the tank should fire")
+}
+
+#[test]
+fn tank_on_the_platform_hits_a_target_on_the_ground() {
+    // On the deck's southeast, facing south over the rim kerb.
+    let (mut runner, tank) =
+        raised_area_runner(vec3(23.0, DECK_HEIGHT, 45.0), std::f32::consts::PI, 60);
+    let target = object_named(runner.scene(), "Target A");
+    let mut pose = runner.scene().world_transform(target);
+    let ground = vec3(23.0, 0.0, 34.0);
+    pose.position = vec3(ground.x, pose.position.y, ground.z);
+    runner
+        .scene_mut()
+        .set_world_transform(target, pose.matrix());
+    aim_at(&mut runner, ground);
+
+    let crosshair = object_named(runner.scene(), "Crosshair");
+    let aimed = runner.scene().world_transform(crosshair).position;
+    assert!(
+        (aimed - ground).magnitude() < 0.3,
+        "the crosshair is on the ground: {aimed:?}"
+    );
+    assert!((runner.scene().world_transform(tank).position.y - DECK_HEIGHT).abs() < 1e-3);
+
+    let (start, round) = fire_until_hit(&mut runner, target);
+    assert!(
+        start.y > DECK_HEIGHT + 1.0,
+        "fired from the deck: {start:?}"
+    );
+    assert!(
+        round.direction.y < -0.05,
+        "the round dives: {:?}",
+        round.direction
+    );
+}
+
+#[test]
+fn tank_on_the_ground_hits_a_target_on_the_platform() {
+    let (mut runner, _tank) = raised_area_runner(vec3(21.0, 0.0, 30.0), 0.0, 60);
+    let target = object_named(runner.scene(), "Target A");
+    let mut pose = runner.scene().world_transform(target);
+    let deck = vec3(21.0, DECK_HEIGHT, 46.0);
+    pose.position = deck + vec3(0.0, pose.position.y, 0.0);
+    runner
+        .scene_mut()
+        .set_world_transform(target, pose.matrix());
+    aim_at(&mut runner, deck);
+
+    let (start, round) = fire_until_hit(&mut runner, target);
+    assert!(
+        start.y < DECK_HEIGHT + 0.5,
+        "fired from the ground: {start:?}"
+    );
+    assert!(
+        round.direction.y > 0.05,
+        "the round climbs: {:?}",
+        round.direction
+    );
+}
+
+#[test]
+fn platform_and_ramps_stop_level_shells_and_deck_cover_stops_shells_from_the_deck() {
+    use calyx_engine::component::ColliderShape;
+    use rapier3d::pipeline::QueryFilter;
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.step();
+    let shell_hits = |origin: Vec3, direction: Vec3, length: f32| {
+        runner
+            .scene()
+            .physics
+            .cast_shape(
+                ColliderShape::Sphere { radius: 0.18 },
+                origin,
+                nalgebra::UnitQuaternion::identity(),
+                direction * length,
+                1.0,
+                QueryFilter::only_fixed(),
+            )
+            .is_some()
+    };
+    let gun = 1.6;
+    // A level round at gun height from the ground meets the platform's
+    // side, and the crest of a ramp, rather than flying over them.
+    assert!(shell_hits(vec3(24.0, gun, 36.0), vec3(0.0, 0.0, 1.0), 6.0));
+    assert!(shell_hits(vec3(12.0, gun, 40.5), vec3(1.0, 0.0, 0.0), 10.0));
+    // From the deck, at gun height above it, the deck's sandbags stop a
+    // round crossing them, as cover does on the ground.
+    assert!(shell_hits(
+        vec3(17.0, DECK_HEIGHT + gun, 44.5),
+        vec3(0.0, 0.0, -1.0),
+        2.0
+    ));
+    // Over the low end of a ramp, a level round flies on: a ramp is a
+    // slope, not cover.
+    assert!(!shell_hits(vec3(16.0, gun, 34.0), vec3(1.0, 0.0, 0.0), 8.0));
+}
+
+#[test]
+fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
+    use calyx_engine::component::{ComponentMesh, ComponentOutline};
+    use calyx_model_gen::palette::{PROP_OUTLINE, TANK_OUTLINE, TERRAIN_OUTLINE};
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let registries = assets.registries.lock_read();
+    // The outline styles of the meshes under `root`, ignoring style 0: the
+    // ground, deck paving and signals draw no ink.
+    let styles = |root| {
+        scene
+            .descendants(root)
+            .filter_map(|object| {
+                scene.read_component::<ComponentMesh, _, _>(object, |mesh| {
+                    mesh.material
+                        .get_ref(&registries)
+                        .expect("every arena material loads")
+                        .read()
+                        .outline_style()
+                })
+            })
+            .filter(|style| *style != 0)
+            .collect::<std::collections::BTreeSet<u32>>()
+    };
+    let one = |style| std::collections::BTreeSet::from([style]);
+    assert_eq!(styles(object_named(&scene, "Player")), one(TANK_OUTLINE));
+    assert_eq!(styles(object_named(&scene, "Sentry")), one(PROP_OUTLINE));
+    let arena = object_named(&scene, "Arena");
+    let (mut terrain, mut props) = (0, 0);
+    for child in scene.children(arena) {
+        let name = scene.name(child);
+        let expected = if ["Arena Wall", "Arena Platform", "Arena Ramp"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        {
+            terrain += 1;
+            TERRAIN_OUTLINE
+        } else if ["Arena Cover", "Arena Prop", "Arena Grass"]
+            .iter()
+            .any(|prefix| name.starts_with(prefix))
+        {
+            props += 1;
+            PROP_OUTLINE
+        } else {
+            continue;
+        };
+        let found = styles(child);
+        assert!(
+            found.is_empty() || found == one(expected),
+            "{name} draws outline styles {found:?}, not {expected}"
+        );
+    }
+    assert!(
+        terrain > 50 && props > 30,
+        "{terrain} terrain, {props} props"
+    );
+
+    // Every layer is drawn in the arena's one ink.
+    let outline = scene
+        .objects()
+        .find_map(|object| scene.read_component::<ComponentOutline, _, _>(object, Clone::clone))
+        .expect("the arena has an Outline effect");
+    let layers = [TERRAIN_OUTLINE, TANK_OUTLINE, PROP_OUTLINE];
+    assert_eq!(outline.styles.len(), layers.len());
+    for style in &outline.styles {
+        assert_eq!(style, &outline.styles[0]);
+    }
 }

@@ -220,6 +220,20 @@ pub(crate) fn cursor_ground_point(
     camera_transform: &Transform,
     ground_y: f32,
 ) -> Option<Vec3> {
+    ground_intersection(
+        &cursor_ray(scene, input, camera_object, camera_transform)?,
+        ground_y,
+    )
+}
+
+/// The ray from `camera_object`, placed at `camera_transform`, through the
+/// cursor.
+pub(crate) fn cursor_ray(
+    scene: &Scene,
+    input: &Input,
+    camera_object: GameObject,
+    camera_transform: &Transform,
+) -> Option<Ray> {
     let rect = input.surface_rect()?;
     let cursor = input.pointer_pos()?;
     let aspect = rect.width() / rect.height().max(f32::EPSILON);
@@ -228,12 +242,11 @@ pub(crate) fn cursor_ground_point(
             component.camera(aspect)
         })
         .unwrap_or_else(|| ComponentCamera::default().camera(aspect));
-    let ray = camera.screen_ray(
+    camera.screen_ray(
         camera_transform,
         vec2(cursor.x - rect.left(), cursor.y - rect.top()),
         vec2(rect.width(), rect.height()),
-    )?;
-    ground_intersection(&ray, ground_y)
+    )
 }
 
 /// Where `ray` meets the horizontal plane at `ground_y`, ahead of its

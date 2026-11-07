@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "6c1e8f2a-9b7d-4e3a-8c5f-1d2b3a4e0472",
+    "name": "terrain/rover",
+    "display_name": "rover",
+    "type_uuid": "f98a7f41-84d4-482d-b7af-a670b07035ae"
+  },
+  "inner": []
+}
