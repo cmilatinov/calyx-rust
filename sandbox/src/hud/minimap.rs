@@ -1,7 +1,7 @@
 //! A top-down map of the arena, drawn from world positions each frame.
 
 use super::paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED, STEEL};
-use crate::combat::combat_team;
+use crate::combat::same_side;
 use crate::sentry::ComponentSentry;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
@@ -213,10 +213,7 @@ fn blip(scene: &Scene, player: GameObject, object: GameObject) -> Option<Minimap
     Some(MinimapBlip {
         id: scene.uuid(object),
         presence: None,
-        friendly: object == player
-            || combat_team(scene, player)
-                .zip(combat_team(scene, object))
-                .is_some_and(|(a, b)| a == b),
+        friendly: object == player || same_side(scene, player, object),
         kind,
         position: ground(transform.position),
         heading: is_tank

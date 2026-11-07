@@ -5,6 +5,7 @@
 //! gameplay reports a lethal projectile hit; a networked game can deserialize
 //! a [`KillEvent`] from the host and record it the same way.
 
+use crate::match_rules::{match_mode, match_over, MatchMode};
 use crate::sentry::ComponentSentry;
 use crate::spawn::{ComponentRespawnState, SPAWN_TEAM_ANY};
 use crate::tank::ComponentTankController;
@@ -49,10 +50,18 @@ pub fn combat_team(scene: &Scene, object: GameObject) -> Option<u32> {
         .or(Some(0))
 }
 
+/// Whether two tanks fight on the same side: one tank and itself always do,
+/// two tanks of one team do only in team deathmatch. Hazards and practice
+/// targets are on nobody's side.
+pub fn same_side(scene: &Scene, a: GameObject, b: GameObject) -> bool {
+    match (combat_team(scene, a), combat_team(scene, b)) {
+        (Some(x), Some(y)) => a == b || (x == y && match_mode(scene) == MatchMode::TeamDeathmatch),
+        _ => false,
+    }
+}
+
 fn friendly(scene: &Scene, a: GameObject, b: GameObject) -> bool {
-    combat_team(scene, a)
-        .zip(combat_team(scene, b))
-        .is_some_and(|(a, b)| a == b)
+    same_side(scene, a, b)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -81,7 +90,7 @@ pub(crate) fn record_damage(
     amount: f32,
     max_health: f32,
 ) {
-    if !amount.is_finite() || amount <= 0.0 {
+    if !amount.is_finite() || amount <= 0.0 || match_over(scene) {
         return;
     }
     let Some(shooter) = shooter.filter(|shooter| *shooter != target) else {
@@ -165,8 +174,13 @@ impl KillEvent {
 }
 
 /// Records deaths and tank kill credit, then adds the event to every kill feed.
-/// Hazards keep their display identity but award no kill, score or assist.
+/// Hazards keep their display identity but award no kill, score or assist, and
+/// a kill of the killer's own side counts only the death. Once the match is
+/// over nothing more is recorded, so the final scoreboard stays as it ended.
 pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
+    if match_over(scene) {
+        return;
+    }
     let victim = scene.find(event.victim.id);
     let killer = event
         .non_self_killer()
@@ -174,12 +188,10 @@ pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
         .filter(|killer| is_tank_combatant(scene, *killer));
     let eligible_kill =
         killer.is_some_and(|killer| victim.is_none_or(|victim| !friendly(scene, killer, victim)));
-    if let Some(killer) = killer {
+    if let Some(killer) = killer.filter(|_| eligible_kill) {
         let _ = scene.write_component::<ComponentCombatStats, _>(killer, |stats| {
             stats.kills = stats.kills.saturating_add(1);
-            if eligible_kill {
-                stats.score = stats.score.saturating_add(stats.kill_score);
-            }
+            stats.score = stats.score.saturating_add(stats.kill_score);
         });
     }
     if let Some(victim) = scene.find(event.victim.id) {
@@ -299,6 +311,8 @@ impl ComponentUpdate for ComponentCombatStats {
 #[derive(Clone, Debug, PartialEq)]
 pub struct KillFeedEntry {
     pub killer: Option<String>,
+    pub killer_id: Option<Uuid>,
+    pub victim_id: Uuid,
     pub victim: String,
     pub age: f32,
     pub killer_team: Option<u32>,
@@ -358,6 +372,8 @@ impl ComponentKillFeed {
     pub fn push(&mut self, event: &KillEvent) {
         self.entries.push_front(KillFeedEntry {
             killer: event.non_self_killer().map(|killer| killer.name.clone()),
+            killer_id: event.non_self_killer().map(|killer| killer.id),
+            victim_id: event.victim.id,
             victim: event.victim.name.clone(),
             killer_team: event.non_self_killer().and_then(|killer| killer.team),
             victim_team: event.victim.team,

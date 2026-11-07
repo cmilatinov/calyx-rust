@@ -1,8 +1,14 @@
-//! Team-grouped live combat statistics. Rendering never synthesizes rows.
+//! Live combat statistics, grouped by side, and the result of a finished
+//! match. Rendering never synthesizes rows.
 use super::paint::{Painter, CYAN, LIGHT, MUTED, RED};
-use crate::combat::{combat_team, is_tank_combatant, ComponentCombatStats};
+use crate::combat::{combat_team, is_tank_combatant, same_side, ComponentCombatStats};
+use crate::match_rules::{match_mode, match_rules, MatchEnd, MatchMode, MatchWinner};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{TextAnchor, UiColor};
+
+/// Rows a team section shows per page; free for all's single list shows two
+/// sections' worth.
+const ROWS_PER_SECTION: usize = 6;
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct ScoreboardRow {
@@ -15,8 +21,108 @@ pub(super) struct ScoreboardRow {
     is_player: bool,
 }
 
+/// How a finished match ended for the HUD's player.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum Verdict {
+    Victory,
+    Defeat,
+    Draw,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) struct MatchResult {
+    pub verdict: Verdict,
+    pub end: MatchEnd,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Scoreboard {
+    pub rows: Vec<ScoreboardRow>,
+    /// Team deathmatch shows a friendly and an opposing section; free for
+    /// all ranks every tank in one list.
+    pub teams: bool,
+    /// Set once the match is over.
+    pub result: Option<MatchResult>,
+}
+
+impl Scoreboard {
+    pub(super) fn in_scene(scene: &Scene, player: GameObject) -> Self {
+        let teams = match_mode(scene) == MatchMode::TeamDeathmatch;
+        let mut rows = scoreboard_rows(scene, player);
+        if !teams {
+            rows.sort_by(rank_order);
+        }
+        Self {
+            rows,
+            teams,
+            result: match_result(scene, player),
+        }
+    }
+
+    /// The sections this page shows: each one's side, the rank before its
+    /// first row, and its rows.
+    fn sections(&self, page: usize) -> Vec<(bool, usize, Vec<&ScoreboardRow>)> {
+        if self.teams {
+            [true, false]
+                .into_iter()
+                .map(|friendly| {
+                    let rows = self
+                        .rows
+                        .iter()
+                        .filter(|r| r.friendly == friendly)
+                        .skip(page * ROWS_PER_SECTION)
+                        .take(ROWS_PER_SECTION)
+                        .collect();
+                    (friendly, page * ROWS_PER_SECTION, rows)
+                })
+                .collect()
+        } else {
+            let per_page = ROWS_PER_SECTION * 2;
+            let rows = self
+                .rows
+                .iter()
+                .skip(page * per_page)
+                .take(per_page)
+                .collect::<Vec<_>>();
+            let leader_friendly = self.rows.first().is_none_or(|row| row.friendly);
+            vec![(leader_friendly, page * per_page, rows)]
+        }
+    }
+
+    pub(super) fn page_count(&self) -> usize {
+        if self.teams {
+            page_count(&self.rows)
+        } else {
+            self.rows.len().div_ceil(ROWS_PER_SECTION * 2).max(1)
+        }
+    }
+}
+
+/// Most kills first, since kills decide the match, then score, fewest deaths
+/// and name.
+fn rank_order(a: &ScoreboardRow, b: &ScoreboardRow) -> std::cmp::Ordering {
+    b.kills
+        .cmp(&a.kills)
+        .then(b.score.cmp(&a.score))
+        .then(a.deaths.cmp(&b.deaths))
+        .then(a.name.cmp(&b.name))
+}
+
+pub(super) fn match_result(scene: &Scene, player: GameObject) -> Option<MatchResult> {
+    let outcome = match_rules(scene)?.outcome()?;
+    let verdict = match outcome.winner {
+        MatchWinner::Draw => Verdict::Draw,
+        MatchWinner::Player(id) if id == scene.uuid(player) => Verdict::Victory,
+        MatchWinner::Team(team) if Some(team) == combat_team(scene, player) => Verdict::Victory,
+        _ => Verdict::Defeat,
+    };
+    Some(MatchResult {
+        verdict,
+        end: outcome.end,
+    })
+}
+
 pub(super) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<ScoreboardRow> {
-    let team = combat_team(scene, player);
     let mut rows = scene
         .objects()
         .filter(|&object| is_tank_combatant(scene, object))
@@ -27,22 +133,12 @@ pub(super) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<Scoreboa
                 deaths: stats.deaths,
                 assists: stats.assists,
                 score: stats.score,
-                friendly: object == player
-                    || team
-                        .zip(combat_team(scene, object))
-                        .is_some_and(|(a, b)| a == b),
+                friendly: object == player || same_side(scene, player, object),
                 is_player: object == player,
             })
         })
         .collect::<Vec<_>>();
-    rows.sort_by(|a, b| {
-        b.friendly
-            .cmp(&a.friendly)
-            .then(b.score.cmp(&a.score))
-            .then(b.kills.cmp(&a.kills))
-            .then(a.deaths.cmp(&b.deaths))
-            .then(a.name.cmp(&b.name))
-    });
+    rows.sort_by(|a, b| b.friendly.cmp(&a.friendly).then(rank_order(a, b)));
     rows
 }
 
@@ -53,7 +149,7 @@ pub(super) fn page_count(rows: &[ScoreboardRow]) -> usize {
             rows.iter()
                 .filter(|row| row.friendly == *side)
                 .count()
-                .div_ceil(6)
+                .div_ceil(ROWS_PER_SECTION)
         })
         .max()
         .unwrap_or(1)
@@ -74,7 +170,7 @@ fn grouped(value: u32) -> String {
 
 pub(super) fn paint_scoreboard(
     p: &mut Painter,
-    rows: &[ScoreboardRow],
+    board: &Scoreboard,
     width: f32,
     height: f32,
     page: usize,
@@ -98,33 +194,28 @@ pub(super) fn paint_scoreboard(
     p.gradient(&points, &colors, &indices);
     let w = (width * 0.83).clamp(560.0, 1500.0).min(width - 36.0);
     let x = (width - w) * 0.5;
-    let pages = page_count(rows);
+    let pages = board.page_count();
     let page = page.min(pages - 1);
-    let visible = rows
+    let sections = board.sections(page);
+    let count = sections
         .iter()
-        .filter(|r| r.friendly)
-        .skip(page * 6)
-        .take(6)
-        .chain(rows.iter().filter(|r| !r.friendly).skip(page * 6).take(6))
-        .collect::<Vec<_>>();
-    let count = [true, false]
-        .iter()
-        .map(|side| {
-            visible
-                .iter()
-                .filter(|r| r.friendly == *side)
-                .count()
-                .max(1)
-        })
+        .map(|(_, _, rows)| rows.len().max(1))
         .sum::<usize>();
     let unit = (height / 941.0).clamp(0.65, 1.2);
     let padding = 32.0 * unit;
     let gap = 30.0 * unit;
     let header = 115.0 * unit;
     let footer = 35.0 * unit;
-    let row_h = ((height * 0.76 - header - footer - gap) / count as f32).clamp(26.0, 66.0 * unit);
-    let h = header + footer + gap + count as f32 * row_h;
-    let y = (height - h) * 0.5 + 10.0 * unit;
+    let gaps = gap * sections.len().saturating_sub(1) as f32;
+    let banner_h = if board.result.is_some() {
+        96.0 * unit
+    } else {
+        0.0
+    };
+    let row_h = ((height * 0.76 - header - footer - gaps - banner_h) / count as f32)
+        .clamp(26.0, 66.0 * unit);
+    let h = header + footer + gaps + count as f32 * row_h;
+    let y = (height - h - banner_h) * 0.5 + 10.0 * unit;
     p.panel(x, y, w, h, 30.0 * unit);
     let title_w = (w * 0.38).max(260.0 * unit);
     let title_h = 86.0 * unit;
@@ -200,11 +291,8 @@ pub(super) fn paint_scoreboard(
         None,
     );
     let mut top = y + header;
-    for friendly in [true, false] {
-        let group = visible
-            .iter()
-            .filter(|r| r.friendly == friendly)
-            .collect::<Vec<_>>();
+    for (friendly, first_rank, group) in &sections {
+        let friendly = *friendly;
         let n = group.len().max(1);
         let gh = n as f32 * row_h;
         let color = if friendly { CYAN } else { RED };
@@ -274,6 +362,8 @@ pub(super) fn paint_scoreboard(
             let ry = top + index as f32 * row_h;
             let cy = ry + row_h * 0.5;
             let leader = page == 0 && index == 0;
+            // In free for all each row takes its own side's colour.
+            let color = if row.friendly { CYAN } else { RED };
             if leader {
                 p.gradient(
                     &[
@@ -329,7 +419,7 @@ pub(super) fn paint_scoreboard(
             p.middle(
                 rank_x,
                 cy,
-                (page * 6 + index + 1).to_string(),
+                (first_rank + index + 1).to_string(),
                 font,
                 MUTED,
                 None,
@@ -374,6 +464,9 @@ pub(super) fn paint_scoreboard(
         }
         top += gh + gap;
     }
+    if let Some(result) = board.result {
+        paint_result(p, result, x + w * 0.5, y + h + 22.0 * unit, unit);
+    }
     if pages > 1 {
         p.middle(
             x + w * 0.5,
@@ -384,6 +477,40 @@ pub(super) fn paint_scoreboard(
             None,
         );
     }
+}
+
+/// The plate under the final scoreboard naming the player's result and what
+/// ended the match.
+fn paint_result(p: &mut Painter, result: MatchResult, center_x: f32, top: f32, unit: f32) {
+    let w = 460.0 * unit;
+    let h = 74.0 * unit;
+    let x = center_x - w * 0.5;
+    p.panel(x, top, w, h, 18.0 * unit);
+    let (verdict, color) = match result.verdict {
+        Verdict::Victory => ("VICTORY", CYAN),
+        Verdict::Defeat => ("DEFEAT", RED),
+        Verdict::Draw => ("DRAW", LIGHT),
+    };
+    p.middle(
+        center_x,
+        top + h * 0.4,
+        verdict,
+        38.0 * unit,
+        color,
+        Some(w - 40.0),
+    );
+    let end = match result.end {
+        MatchEnd::KillLimit => "KILL LIMIT REACHED",
+        MatchEnd::TimeLimit => "TIME LIMIT REACHED",
+    };
+    p.middle(
+        center_x,
+        top + h * 0.78,
+        end,
+        15.0 * unit,
+        MUTED,
+        Some(w - 40.0),
+    );
 }
 
 #[cfg(test)]

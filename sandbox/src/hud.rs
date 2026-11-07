@@ -3,7 +3,7 @@ mod minimap;
 mod paint;
 mod scoreboard;
 
-use crate::combat::{combat_team, ComponentCombatStats};
+use crate::combat::{same_side, ComponentCombatStats};
 use crate::game_state::ComponentGameState;
 use crate::tank::{ComponentHealth, ComponentTankController};
 use calyx_engine::component::{
@@ -34,7 +34,8 @@ use serde::{Deserialize, Serialize};
 pub struct ComponentTankHud {
     pub screen_margin: f32,
     /// Standalone scenes count down this duration; zero selects elapsed time.
-    /// A scene Game State component supplies the authoritative clock instead.
+    /// A scene's Match Rules or Game State component supplies the
+    /// authoritative clock instead.
     pub timer_duration: f32,
     pub low_damage_ratio: f32,
     pub high_damage_ratio: f32,
@@ -91,6 +92,11 @@ impl ComponentTankHud {
     }
 
     fn time(&self, scene: &Scene) -> f32 {
+        if let Some(rules) = crate::match_rules::match_rules(scene) {
+            return rules
+                .time_remaining()
+                .unwrap_or_else(|| rules.elapsed().floor());
+        }
         scene
             .objects()
             .find_map(|object| {
@@ -119,9 +125,10 @@ impl ComponentUpdate for ComponentTankHud {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        let open = input.action("scoreboard").pressed();
+        // The final scoreboard stays up once the match is over.
+        let open = input.action("scoreboard").pressed() || crate::match_rules::match_over(scene);
         let dt = resources.time().delta_time();
-        let pages = scoreboard::page_count(&scoreboard::scoreboard_rows(scene, this.game_object()));
+        let pages = scoreboard::Scoreboard::in_scene(scene, this.game_object()).page_count();
         let _ = this.write(scene, |hud| {
             if !open {
                 hud.scoreboard_page = 0;
@@ -235,7 +242,8 @@ impl ComponentHud for ComponentTankHud {
             // The map lights what the main view's fog shows, eased alike.
             map.sight.clone_from(hud.fog_sight.sight());
         }
-        if !hud.scoreboard_open {
+        let scoreboard_open = hud.scoreboard_open || crate::match_rules::match_over(scene);
+        if !scoreboard_open {
             paint_world(&mut p, scene, player, hud, &map, width, height);
             let feed_width = (width * 0.24).clamp(230.0, 390.0);
             let feed_height = (height * 0.043).clamp(28.0, 42.0);
@@ -269,10 +277,10 @@ impl ComponentHud for ComponentTankHud {
                 None,
             );
         }
-        if hud.scoreboard_open {
+        if scoreboard_open {
             scoreboard::paint_scoreboard(
                 &mut p,
-                &scoreboard::scoreboard_rows(scene, player),
+                &scoreboard::Scoreboard::in_scene(scene, player),
                 width,
                 height,
                 hud.scoreboard_page,
@@ -410,7 +418,6 @@ fn paint_world(
     let Some(projection) = Projection::scene(scene, width, height) else {
         return;
     };
-    let player_team = combat_team(scene, player);
     for object in scene.objects() {
         if !scene.is_visible_in_hierarchy(object) {
             continue;
@@ -422,10 +429,7 @@ fn paint_world(
             continue;
         };
         let position = scene.world_transform(object).position;
-        let friendly = object == player
-            || player_team
-                .zip(combat_team(scene, object))
-                .is_some_and(|(a, b)| a == b);
+        let friendly = object == player || same_side(scene, player, object);
         // An enemy's bar fades with it as fog closes over or clears from it.
         let opacity = if friendly {
             1.0
@@ -882,6 +886,86 @@ mod tests {
             if let PaintCommand::Label(label) = command {
                 assert!(label.position.y <= 590.0, "text overflow {label:?}");
             }
+        }
+    }
+
+    #[test]
+    fn a_finished_free_for_all_shows_one_ranked_list_and_the_result() {
+        use crate::match_rules::{
+            update_match_rules, ComponentMatchRules, MATCH_MODE_FREE_FOR_ALL,
+        };
+        let (mut scene, tank) = setup();
+        scene.add_component(
+            tank,
+            ComponentCombatStats {
+                kills: 4,
+                ..Default::default()
+            },
+        );
+        // Every tank is unassigned, the same team, yet each plays for itself.
+        for kills in 0..14 {
+            let actor = scene.create(
+                Some(ComponentID {
+                    name: format!("Bot {kills}"),
+                    ..Default::default()
+                }),
+                None,
+            );
+            scene.add_component(actor, ComponentTankController::default());
+            scene.add_component(
+                actor,
+                ComponentCombatStats {
+                    kills: kills % 4,
+                    ..Default::default()
+                },
+            );
+        }
+        let rules = scene.create(None, None);
+        scene.add_component(
+            rules,
+            ComponentMatchRules {
+                mode: MATCH_MODE_FREE_FOR_ALL,
+                time_limit: 60.0,
+                ..Default::default()
+            },
+        );
+        let playing = commands(&scene, 960.0, 540.0);
+        assert!(playing
+            .iter()
+            .any(|c| matches!(c, PaintCommand::Label(label) if label.text == "01:00")));
+        assert!(update_match_rules(&mut scene, rules, 60.0).is_some());
+
+        // No key is held: the final scoreboard opens by itself.
+        let commands = commands(&scene, 960.0, 540.0);
+        let labels = commands
+            .iter()
+            .filter_map(|c| match c {
+                PaintCommand::Label(label) => Some(label),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        let text = labels.iter().map(|l| l.text.as_str()).collect::<Vec<_>>();
+        for expected in [
+            "SCOREBOARD",
+            "VICTORY",
+            "TIME LIMIT REACHED",
+            "PAGE 1/2  /  SCROLL",
+        ] {
+            assert!(text.contains(&expected), "{expected} in {text:?}");
+        }
+        assert!(!text.contains(&"01:00"), "gameplay overlays hide");
+        // One list ranks the twelve leaders, the player first in its colour.
+        for rank in 1..=12 {
+            assert!(text.contains(&rank.to_string().as_str()), "rank {rank}");
+        }
+        assert!(!text.contains(&"No combatants"));
+        let first_bot = labels
+            .iter()
+            .find(|l| l.text.starts_with("Bot "))
+            .expect("bots are listed");
+        assert_eq!(first_bot.color, RED);
+        for label in labels {
+            assert!(label.position.y <= 590.0, "text overflow {label:?}");
         }
     }
 

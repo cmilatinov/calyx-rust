@@ -12,7 +12,7 @@
 //! for [`FADE_TIME`] while it fades from the HUD and fog closes over it.
 
 use crate::arena::ComponentArena;
-use crate::combat::{combat_team, is_tank_combatant};
+use crate::combat::{is_tank_combatant, same_side};
 use crate::combat_vfx::ComponentCombatEffectLifetime;
 use crate::hud::ComponentTankHud;
 use crate::sentry::ComponentSentry;
@@ -372,10 +372,7 @@ fn is_live_tank(scene: &Scene, object: GameObject) -> bool {
 /// Whether `object` is on `viewer`'s side: `viewer` itself, or a tank of its
 /// team. Sentries and practice targets belong to no side.
 pub(crate) fn is_friendly(scene: &Scene, viewer: GameObject, object: GameObject) -> bool {
-    object == viewer
-        || combat_team(scene, viewer)
-            .zip(combat_team(scene, object))
-            .is_some_and(|(a, b)| a == b)
+    object == viewer || same_side(scene, viewer, object)
 }
 
 /// What fog decides for one object it manages.

@@ -7,6 +7,7 @@ pub mod combat;
 pub mod combat_vfx;
 pub mod game_state;
 pub mod hud;
+pub mod match_rules;
 pub mod sentry;
 pub mod spawn;
 pub mod tank;
@@ -47,6 +48,9 @@ mod tests {
             .is_some());
         assert!(registry.type_registration::<ComponentArena>().is_some());
         assert!(registry.type_registration::<ComponentGameState>().is_some());
+        assert!(registry
+            .type_registration::<crate::match_rules::ComponentMatchRules>()
+            .is_some());
         assert!(registry.type_registration::<ComponentTankHud>().is_some());
         assert!(registry.type_registration::<ComponentKillFeed>().is_some());
         assert!(registry

@@ -1,6 +1,7 @@
 //! Confirmed kills: team colours for tanks, neutral attribution for hazards.
 use super::paint::{alpha, Painter, CYAN, LIGHT, MUTED, RED, STEEL};
 use crate::combat::{combat_team, ComponentKillFeed};
+use crate::match_rules::{match_mode, MatchMode};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::UiColor;
 
@@ -14,18 +15,22 @@ pub(super) fn paint_feed(
     h: f32,
 ) {
     let team = combat_team(scene, player);
+    let player_id = scene.uuid(player);
+    let teams_count = match_mode(scene) == MatchMode::TeamDeathmatch;
     let _ = scene.read_component::<ComponentKillFeed, _, _>(player, |feed| {
         for (index, entry) in feed.entries().take(2).enumerate() {
             let opacity = feed.opacity(entry);
             let y = y + index as f32 * (h + 7.0);
             let start = p.commands.len();
-            let color = |other| match other {
+            // In free for all only the player's own name is on its side.
+            let color = |other: Option<u32>, id: Option<calyx_engine::utils::Uuid>| match other {
                 None => MUTED,
-                Some(t) if Some(t) == team => CYAN,
+                _ if id == Some(player_id) => CYAN,
+                Some(t) if teams_count && Some(t) == team => CYAN,
                 _ => RED,
             };
-            let kc = color(entry.killer_team);
-            let vc = color(entry.victim_team);
+            let kc = color(entry.killer_team, entry.killer_id);
+            let vc = color(entry.victim_team, Some(entry.victim_id));
             let slant = h * 0.23;
             for (inset, c) in [(0.0, STEEL), (2.0, UiColor::rgba(10, 19, 28, 225))] {
                 p.polygon(
