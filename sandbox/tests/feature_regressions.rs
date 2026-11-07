@@ -1513,6 +1513,246 @@ fn platform_and_ramps_stop_level_shells_and_deck_cover_stops_shells_from_the_dec
     assert!(!shell_hits(vec3(16.0, gun, 34.0), vec3(1.0, 0.0, 0.0), 8.0));
 }
 
+/// The side's sight the renderer's fog of war draws this frame.
+fn fog_sight(scene: &Scene) -> calyx_engine::component::FogOfWarSight {
+    use calyx_engine::component::ComponentFogOfWar;
+    scene
+        .objects()
+        .find_map(|object| {
+            scene
+                .read_component::<ComponentFogOfWar, _, _>(object, |fog| fog.sight.clone())
+                .flatten()
+        })
+        .expect("the arena's fog of war shows the side's sight")
+}
+
+// The interior wall in the east middle: a run along Z at world x = 10, from
+// z = 32.4 to 39.6, 1.2 m thick.
+#[test]
+fn interior_walls_stop_rounds_and_block_sight() {
+    let ground = |p: Vec3| nalgebra_glm::vec2(p.x, p.z);
+    // West of the wall, facing east across it.
+    let (mut runner, tank) =
+        raised_area_runner(vec3(4.0, 0.0, 36.0), std::f32::consts::FRAC_PI_2, 60);
+    let target = object_named(runner.scene(), "Target A");
+    let place = |runner: &mut HeadlessSceneRunner, x: f32, z: f32| {
+        let mut pose = runner.scene().world_transform(target);
+        pose.position = vec3(x, pose.position.y, z);
+        runner
+            .scene_mut()
+            .set_world_transform(target, pose.matrix());
+    };
+    // Behind the wall, well within the tank's vision range.
+    place(&mut runner, 15.0, 36.0);
+    hold(&mut runner, None, 1.0, 60);
+    let behind = runner.scene().world_transform(target).position;
+    let from = ground(runner.scene().world_transform(tank).position);
+    assert!(
+        !runner.scene().is_visible(target),
+        "fog hides the target behind the wall"
+    );
+    // The wall casts a fog shadow over the ground behind it, and only
+    // behind it: the ground the same distance away past its end is lit.
+    let sight = fog_sight(runner.scene());
+    assert!(!sight.clear_line(from, ground(behind)));
+    assert!(sight.clear_line(from, nalgebra_glm::vec2(12.0, 28.0)));
+
+    // Rounds fired at the target stop at the wall's near face.
+    aim_at(&mut runner, vec3(behind.x, 0.0, behind.z));
+    let full_health = current_health(runner.scene(), target);
+    runner.press_key(egui::Key::Space);
+    let mut rounds = 0;
+    let mut farthest = f32::NEG_INFINITY;
+    for _ in 0..120 {
+        runner.step();
+        let scene = runner.scene();
+        for object in scene.objects() {
+            if scene
+                .read_component::<sandbox::tank::ComponentProjectile, _, _>(object, |_| ())
+                .is_some()
+            {
+                rounds += 1;
+                farthest = farthest.max(scene.world_transform(object).position.x);
+            }
+        }
+    }
+    runner.release_key(egui::Key::Space);
+    assert!(rounds > 0, "the tank fired");
+    assert!(farthest < 9.4, "a round reached x = {farthest}");
+    assert_eq!(current_health(runner.scene(), target), full_health);
+
+    // Past the wall's end, the same tank sees the target and hits it.
+    place(&mut runner, 12.0, 28.0);
+    hold(&mut runner, None, 1.0, 60);
+    assert!(runner.scene().is_visible(target), "the target is in sight");
+    aim_at(&mut runner, vec3(12.0, 0.0, 28.0));
+    fire_until_hit(&mut runner, target);
+}
+
+/// The ground footprint of a box collider: the convex hull, counterclockwise,
+/// of its eight corners seen from above.
+fn footprint(transform: &Transform, half_extents: Vec3) -> Vec<nalgebra_glm::Vec2> {
+    let mut points: Vec<_> = (0..8)
+        .map(|i| {
+            let sign = |bit: usize| if i & bit == 0 { -1.0 } else { 1.0 };
+            let corner = transform.transform_position(&vec3(
+                sign(1) * half_extents.x,
+                sign(2) * half_extents.y,
+                sign(4) * half_extents.z,
+            ));
+            nalgebra_glm::vec2(corner.x, corner.z)
+        })
+        .collect();
+    points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
+    let cross = |o: nalgebra_glm::Vec2, a: nalgebra_glm::Vec2, b: nalgebra_glm::Vec2| {
+        (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x)
+    };
+    let mut hull: Vec<nalgebra_glm::Vec2> = Vec::new();
+    for pass in [false, true] {
+        let start = hull.len();
+        let ordered: Vec<_> = if pass {
+            points.iter().rev().copied().collect()
+        } else {
+            points.clone()
+        };
+        for point in ordered {
+            while hull.len() >= start + 2
+                && cross(hull[hull.len() - 2], hull[hull.len() - 1], point) <= 0.0
+            {
+                hull.pop();
+            }
+            hull.push(point);
+        }
+        hull.pop();
+    }
+    hull
+}
+
+/// Distance from `point` to a convex counterclockwise `hull`, 0 inside it.
+fn distance_to_hull(point: nalgebra_glm::Vec2, hull: &[nalgebra_glm::Vec2]) -> f32 {
+    let mut inside = true;
+    let mut nearest = f32::INFINITY;
+    for (i, &a) in hull.iter().enumerate() {
+        let b = hull[(i + 1) % hull.len()];
+        let edge = b - a;
+        if edge.x * (point.y - a.y) - edge.y * (point.x - a.x) < 0.0 {
+            inside = false;
+        }
+        let t = ((point - a).dot(&edge) / edge.norm_squared()).clamp(0.0, 1.0);
+        nearest = nearest.min((a + edge * t - point).norm());
+    }
+    if inside {
+        0.0
+    } else {
+        nearest
+    }
+}
+
+/// With the interior walls among the ramps, the platform and the cover,
+/// every patch of ground a tank fits on is one drive from the spawn: no
+/// wall closes off a pocket a tank could reach some other way, or strands
+/// it, and the feet of both ramps and every unit stay reachable.
+#[test]
+fn the_whole_pen_is_one_drive_from_the_spawn() {
+    use calyx_engine::component::{ColliderShape, ComponentCollider};
+    use sandbox::terrain::ComponentDriveSurface;
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let arena = object_named(&scene, "Arena");
+    // Everything in the pen that stops a tank on the ground: every solid
+    // but the drive surfaces, which tanks ride.
+    let obstacles: Vec<_> = scene
+        .descendants(arena)
+        .filter(|&object| {
+            scene
+                .read_component::<ComponentDriveSurface, _, _>(object, |_| ())
+                .is_none()
+        })
+        .filter_map(|object| {
+            let shape = scene
+                .read_component::<ComponentCollider, _, _>(object, |collider| collider.shape)?;
+            let ColliderShape::Cuboid { half_extents } = shape else {
+                panic!("{} is not a box", scene.name(object));
+            };
+            Some(footprint(&scene.world_transform(object), half_extents))
+        })
+        .collect();
+    assert!(
+        scene.descendants(arena).any(|object| scene
+            .name(object)
+            .starts_with("Arena Wall West Middle collision")),
+        "the arena has interior walls"
+    );
+    // A tank fits where its hull's half width clears every obstacle.
+    let clearance = 1.2;
+    let step = 0.25;
+    let (min_x, max_x, min_z, max_z) = (-28.4, 28.4, -8.4, 52.4);
+    let columns = ((max_x - min_x) / step) as usize;
+    let rows = ((max_z - min_z) / step) as usize;
+    let cell = |c: usize, r: usize| {
+        nalgebra_glm::vec2(
+            min_x + (c as f32 + 0.5) * step,
+            min_z + (r as f32 + 0.5) * step,
+        )
+    };
+    let free: Vec<bool> = (0..rows)
+        .flat_map(|r| (0..columns).map(move |c| (c, r)))
+        .map(|(c, r)| {
+            obstacles
+                .iter()
+                .all(|hull| distance_to_hull(cell(c, r), hull) > clearance)
+        })
+        .collect();
+    let index = |p: nalgebra_glm::Vec2| {
+        let c = ((p.x - min_x) / step) as usize;
+        let r = ((p.y - min_z) / step) as usize;
+        r * columns + c
+    };
+    let spawn = scene
+        .world_transform(object_named(&scene, "Player Spawn"))
+        .position;
+    let mut reached = vec![false; free.len()];
+    let mut queue = vec![index(nalgebra_glm::vec2(spawn.x, spawn.z))];
+    assert!(free[queue[0]], "a tank fits at the spawn");
+    reached[queue[0]] = true;
+    while let Some(i) = queue.pop() {
+        let (c, r) = (i % columns, i / columns);
+        let neighbours = [
+            (c > 0).then(|| i - 1),
+            (c + 1 < columns).then(|| i + 1),
+            (r > 0).then(|| i - columns),
+            (r + 1 < rows).then(|| i + columns),
+        ];
+        for next in neighbours.into_iter().flatten() {
+            if free[next] && !reached[next] {
+                reached[next] = true;
+                queue.push(next);
+            }
+        }
+    }
+    let stranded: Vec<_> = (0..free.len())
+        .filter(|&i| free[i] && !reached[i])
+        .map(|i| cell(i % columns, i / columns))
+        .collect();
+    assert!(
+        stranded.is_empty(),
+        "{} cells a tank fits on are cut off, the first at {:?}",
+        stranded.len(),
+        stranded.first()
+    );
+    // The feet of both ramps, and every unit.
+    for (name, x, z) in [("south ramp", 20.0, 32.0), ("west ramp", 6.0, 46.0)] {
+        assert!(
+            reached[index(nalgebra_glm::vec2(x, z))],
+            "the {name}'s foot"
+        );
+    }
+    for name in ["Target A", "Target B", "Sentry"] {
+        let p = scene.world_transform(object_named(&scene, name)).position;
+        assert!(reached[index(nalgebra_glm::vec2(p.x, p.z))], "{name}");
+    }
+}
+
 #[test]
 fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
     use calyx_engine::component::{ComponentMesh, ComponentOutline};

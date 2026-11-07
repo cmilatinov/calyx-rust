@@ -528,7 +528,7 @@ mod tests {
     use crate::arena::ComponentArena;
     use calyx_engine::component::{ColliderShape, ComponentCollider};
     use calyx_engine::math::Transform;
-    use nalgebra_glm::vec3;
+    use nalgebra_glm::{vec3, Vec3};
 
     #[test]
     fn playable_contours_remove_shared_tile_seams_and_keep_obstacle_edges() {
@@ -603,6 +603,68 @@ mod tests {
             minimap_state(&scene, player).cover[0].center,
             vec2(8.0, 12.0)
         );
+    }
+
+    #[test]
+    fn interior_walls_are_outlined_and_block_sight_while_the_perimeter_bounds_the_floor() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let arena = scene.create(None, None);
+        scene.add_component(
+            arena,
+            ComponentArena {
+                generate_on_start: false,
+                ..Default::default()
+            },
+        );
+        let named = |scene: &mut Scene, name: &str, parent| {
+            scene.create(
+                Some(calyx_engine::component::ComponentID {
+                    name: name.into(),
+                    ..Default::default()
+                }),
+                Some(parent),
+            )
+        };
+        let solid = |scene: &mut Scene, object, position: Vec3, half_extents| {
+            scene.set_transform(
+                object,
+                &Transform::from_xyz(position.x, 1.0, position.z).matrix(),
+            );
+            scene.add_component(
+                object,
+                ComponentCollider {
+                    shape: ColliderShape::Cuboid { half_extents },
+                    ..Default::default()
+                },
+            );
+        };
+        // A perimeter strip, as the arena's own child, and an interior wall
+        // run under its wall.
+        let perimeter = named(&mut scene, "Arena Wall North collision", arena);
+        solid(
+            &mut scene,
+            perimeter,
+            vec3(0.0, 0.0, 9.0),
+            vec3(10.0, 1.0, 0.6),
+        );
+        let wall = named(&mut scene, "Arena Wall Middle", arena);
+        let run = named(&mut scene, "Arena Wall Middle collision 0", wall);
+        solid(&mut scene, run, vec3(2.0, 0.0, 0.0), vec3(0.6, 1.0, 3.0));
+        let player = scene.create(None, None);
+
+        let geometry = arena_geometry(&scene).unwrap();
+        assert_eq!(geometry.sight_blockers.len(), 2, "both walls block sight");
+        let state = minimap_state(&scene, player);
+        assert_eq!(state.cover.len(), 1, "only the interior wall is cover");
+        assert_eq!(state.cover[0].center, vec2(2.0, 0.0));
+        // The map outlines the interior wall's four sides.
+        let edges = playable_boundary(state.floor, &state.cover);
+        assert!(edges
+            .iter()
+            .any(|(a, b)| (a.x - 1.4).abs() < 1e-4 && (b.x - 1.4).abs() < 1e-4));
+        assert!(edges
+            .iter()
+            .any(|(a, b)| (a.x - 2.6).abs() < 1e-4 && (b.x - 2.6).abs() < 1e-4));
     }
 
     #[test]

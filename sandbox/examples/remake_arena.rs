@@ -14,7 +14,7 @@ use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
 use calyx_engine::utils::{TypeUuid, Uuid};
 use nalgebra::UnitQuaternion;
-use nalgebra_glm::{vec3, Vec3};
+use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 use rapier3d::dynamics::RigidBodyType;
 use sandbox::{
     arena::ComponentArena, tank_camera::ComponentTankCamera, terrain::ComponentDriveSurface,
@@ -57,6 +57,8 @@ struct Author {
     arena: GameObject,
     remap: BTreeMap<String, String>,
     identity_bases: BTreeMap<Uuid, Value>,
+    /// Every authored name, which seeds the object's stable id.
+    names: std::collections::BTreeSet<String>,
 }
 
 impl Author {
@@ -114,6 +116,107 @@ impl Author {
         );
     }
 
+    /// The walls inside the pen. Corners shield the spawn from the two sand
+    /// lanes, a run across the west middle splits the lane from the centre,
+    /// a corner in the northwest faces the raised area across the north,
+    /// and a run in the east middle screens the west ramp's approach from
+    /// the centre. Sight between these opens and closes as tanks move. Each
+    /// leaves the sand lanes, the ramps' feet and the spawn's first six
+    /// metres clear, and keeps a gap wider than a tank, at least 2.8 m, to
+    /// other obstacles and 4.8 m to the perimeter, so no tank wedges beside
+    /// one.
+    fn interior_walls(&mut self) {
+        let run = |from: (f32, f32), to: (f32, f32)| (vec2(from.0, from.1), vec2(to.0, to.1));
+        // Corner posts sit at the inner angle; their arms reach 3 m along
+        // local +X and +Z, and an end cap closes on its local -X.
+        self.interior_wall(
+            "Southwest Corner",
+            &[
+                ("wall_corner", -16.0, -25.0, 0.0),
+                ("wall_long", -16.0, -20.0, 90.0),
+                ("wall_end", -16.0, -17.0, 90.0),
+                ("wall_end", -12.0, -25.0, 180.0),
+            ],
+            &[
+                run((-16.0, -25.6), (-16.0, -16.4)),
+                run((-16.6, -25.0), (-11.4, -25.0)),
+            ],
+        );
+        self.interior_wall(
+            "Southeast Corner",
+            &[
+                ("wall_corner", 16.0, -25.0, -90.0),
+                ("wall_long", 16.0, -20.0, 90.0),
+                ("wall_end", 16.0, -17.0, 90.0),
+                ("wall_end", 12.0, -25.0, 0.0),
+            ],
+            &[
+                run((16.0, -25.6), (16.0, -16.4)),
+                run((11.4, -25.0), (16.6, -25.0)),
+            ],
+        );
+        self.interior_wall(
+            "West Middle",
+            &[
+                ("wall_end", -16.0, 11.0, 0.0),
+                ("wall_long", -13.0, 11.0, 0.0),
+                ("wall_end", -10.0, 11.0, 180.0),
+            ],
+            &[run((-16.6, 11.0), (-9.4, 11.0))],
+        );
+        self.interior_wall(
+            "Northwest Corner",
+            &[
+                ("wall_corner", -6.0, 25.0, 180.0),
+                ("wall_short", -6.0, 21.0, 90.0),
+                ("wall_end", -6.0, 19.0, -90.0),
+                ("wall_long", -11.0, 25.0, 0.0),
+                ("wall_end", -14.0, 25.0, 0.0),
+            ],
+            &[
+                run((-6.0, 18.4), (-6.0, 25.6)),
+                run((-14.6, 25.0), (-5.4, 25.0)),
+            ],
+        );
+        self.interior_wall(
+            "East Middle",
+            &[
+                ("wall_end", 10.0, 11.0, -90.0),
+                ("wall_long", 10.0, 14.0, 90.0),
+                ("wall_end", 10.0, 17.0, 90.0),
+            ],
+            &[run((10.0, 10.4), (10.0, 17.6))],
+        );
+    }
+
+    /// An interior wall, `Arena Wall {name}`: the kit's wall modules joined
+    /// at their connection ports, and one continuous solid along each
+    /// straight run, from `from` to `to` on its centre line, so a tank
+    /// sliding along it meets no seam between modules. Like every wall solid
+    /// it blocks sight and rises to the shell-blocking top.
+    fn interior_wall(&mut self, name: &str, pieces: &[WallPiece], runs: &[(Vec2, Vec2)]) {
+        let name = format!("Arena Wall {name}");
+        let wall = self.object(&name, self.arena, Vec3::zeros());
+        for (i, &(model, x, z, yaw)) in pieces.iter().enumerate() {
+            self.kit_under(wall, model, &format!("{name} {i}"), vec3(x, 0.0, z), yaw);
+        }
+        for (i, &(from, to)) in runs.iter().enumerate() {
+            let along = to - from;
+            assert!(
+                along.x == 0.0 || along.y == 0.0,
+                "{name} run {i} is not straight along an axis"
+            );
+            let center = (from + to) * 0.5;
+            let size = vec3(
+                along.x.abs() + if along.x == 0.0 { WALL_THICKNESS } else { 0.0 },
+                WALL_HEIGHT,
+                along.y.abs() + if along.y == 0.0 { WALL_THICKNESS } else { 0.0 },
+            );
+            let (center, size) = blocking_shells(vec3(center.x, WALL_HEIGHT * 0.5, center.y), size);
+            self.collider(wall, &format!("{name} collision {i}"), center, size);
+        }
+    }
+
     /// The ramp's slope, as a tilted slab tanks drive on, and its kerbs, as
     /// tilted blocks reaching from their sloped tops into the ground, which
     /// close the ramp's sides to tanks and rounds.
@@ -150,7 +253,13 @@ impl Author {
         }
     }
 
+    /// Claims `name` for one authored object: its stable id derives from it.
+    fn claim(&mut self, name: &str) {
+        assert!(self.names.insert(name.into()), "{name} is authored twice");
+    }
+
     fn object(&mut self, name: &str, parent: GameObject, position: Vec3) -> GameObject {
+        self.claim(name);
         let object = self.scene.create(
             Some(ComponentID {
                 id: stable(name),
@@ -165,6 +274,20 @@ impl Author {
     }
 
     fn kit(&mut self, model: &str, name: &str, position: Vec3, yaw: f32) -> GameObject {
+        self.kit_under(self.arena, model, name, position, yaw)
+    }
+
+    /// A linked instance of the Sunny kit's `model` under `parent`, at
+    /// `position` turned `yaw` degrees in `parent`'s frame.
+    fn kit_under(
+        &mut self,
+        parent: GameObject,
+        model: &str,
+        name: &str,
+        position: Vec3,
+        yaw: f32,
+    ) -> GameObject {
+        self.claim(name);
         let path = self
             .assets
             .join(format!("generated/prefabs/sunny/{model}.cxprefab"));
@@ -175,7 +298,7 @@ impl Author {
         };
         let (object, dropped) = self
             .scene
-            .instantiate_linked_prefab(asset_id(&path), &prefab, Some(self.arena))
+            .instantiate_linked_prefab(asset_id(&path), &prefab, Some(parent))
             .unwrap();
         assert!(dropped.is_empty(), "{model} dropped components");
         let root_id = self.scene.uuid(object);
@@ -334,6 +457,13 @@ const KERB_WIDTH: f32 = 0.5;
 /// kerbs either side of a surface this wide.
 const RAMP_RUN: f32 = 8.0;
 const RAMP_WIDTH: f32 = 4.0;
+/// The kit's wall modules: 1.6 m high and 1.2 m thick, on the 1 m grid.
+const WALL_HEIGHT: f32 = 1.6;
+const WALL_THICKNESS: f32 = 1.2;
+
+/// A wall module of an interior wall: the kit model, its root's `x` and `z`
+/// in the arena's frame and its yaw in degrees.
+type WallPiece = (&'static str, f32, f32, f32);
 
 fn blocking_shells(center: Vec3, size: Vec3) -> (Vec3, Vec3) {
     let bottom = center.y - size.y * 0.5;
@@ -485,6 +615,7 @@ fn main() {
         assets: root.join("assets"),
         remap: BTreeMap::new(),
         identity_bases: BTreeMap::new(),
+        names: Default::default(),
     };
 
     // One uninterrupted collision floor keeps one-metre tile seams from
@@ -675,6 +806,7 @@ fn main() {
         author.prop(model, &format!("Arena Cover {name}"), x, z, yaw);
     }
     author.raised_area();
+    author.interior_walls();
     for (model, name, x, z, yaw) in [
         ("tree_small", "Spawn West Tree", -6.0, -9.0, 20.0),
         ("tree_small", "Spawn East Tree", 6.0, -8.0, -20.0),
