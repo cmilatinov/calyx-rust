@@ -7,7 +7,7 @@ use crate::assets::texture::Texture;
 use crate::assets::{Asset, AssetId, AssetRegistry, BackgroundLoad};
 use crate::component::{
     ComponentAmbientOcclusion, ComponentFoliage, ComponentMesh, ComponentOutline,
-    ComponentSkinnedMesh, ComponentSkyLight,
+    ComponentSkinnedMesh, ComponentSkyLight, ComponentTerrain,
 };
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
@@ -22,6 +22,7 @@ use crate::render::postprocess::{
     PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
+use crate::render::terrain::TerrainCache;
 use crate::render::{
     Camera, DeferredLightingRenderer, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView,
     GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer,
@@ -278,6 +279,7 @@ pub struct SceneRenderer {
     assets: AssetRenderState,
     draw_list: Vec<DrawListElement>,
     foliage: FoliageCache,
+    terrain: TerrainCache,
     object_ids: Arc<[Uuid]>,
     object_ids_build: Vec<Uuid>,
     object_id_lookup: HashMap<Uuid, u32>,
@@ -437,6 +439,7 @@ impl SceneRenderer {
             assets: Default::default(),
             draw_list: Default::default(),
             foliage: Default::default(),
+            terrain: Default::default(),
             object_ids: Default::default(),
             object_ids_build: Default::default(),
             object_id_lookup: Default::default(),
@@ -937,6 +940,47 @@ impl SceneRenderer {
         draw_list
     }
 
+    /// Adds every visible, enabled terrain to the draw list, through the
+    /// ordinary mesh batches.
+    fn collect_terrain(&mut self, render_context: &RenderContext, scene: &Scene) {
+        self.terrain.begin_frame(scene.id());
+        let mut query = <(Entity, &ComponentTerrain)>::query();
+        for (entity, terrain) in query.iter(scene.world()) {
+            let Some(owner) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            if !scene.is_visible_in_hierarchy(owner)
+                || !scene.is_component_enabled::<ComponentTerrain>(owner)
+            {
+                continue;
+            }
+            let registries = &self.asset_context.registries;
+            let (Some(heightfield), Some(material)) = (
+                terrain.heightfield(registries),
+                terrain.material.get_ref(registries),
+            ) else {
+                continue;
+            };
+            let uuid = scene.uuid(owner);
+            let Some(mesh) = self
+                .terrain
+                .mesh(render_context, uuid, terrain, &heightfield)
+            else {
+                continue;
+            };
+            let transform = scene.world_transform(owner).matrix().into();
+            self.insert_draw_list_entry(
+                &mesh,
+                &material,
+                uuid,
+                None,
+                transform,
+                terrain.cast_shadows,
+            );
+        }
+        self.terrain.end_frame();
+    }
+
     fn insert_draw_list_entry(
         &mut self,
         mesh_ref: &Ref<Mesh>,
@@ -1116,6 +1160,7 @@ impl SceneRenderer {
             }
         }
         self.foliage.end_frame();
+        self.collect_terrain(render_context, scene);
         let mut skinned_meshes: HashSet<Uuid> = Default::default();
         let mut rest_poses: HashMap<GameObject, HashMap<String, Mat4>> = HashMap::new();
         let no_bones = HashMap::new();
@@ -3834,6 +3879,73 @@ mod tests {
             renderer.draw_list.is_empty(),
             "a missing prefab skips its copies"
         );
+    }
+
+    #[test]
+    fn terrain_draws_its_upper_side_through_the_mesh_batches() {
+        let assets = TestAssets::engine();
+        let heightmap_path = assets.engine_root().join("terrain_test.png");
+        image::GrayImage::new(9, 9).save(&heightmap_path).unwrap();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let heightmap = context
+            .registries
+            .assets
+            .read()
+            .asset_id_from_path(&heightmap_path)
+            .unwrap();
+        let material = pbr_material(&context, "test/terrain_material");
+        let mut builder = SceneBuilder::new(context.registries.clone());
+        let owner = builder.spawn("terrain");
+        builder.add_component(
+            owner,
+            ComponentTerrain {
+                heightmap: AssetRef::from_id(heightmap),
+                material: AssetRef::from_id(material.id()),
+                size: glm::vec2(4.0, 4.0),
+                cast_shadows: false,
+                ..Default::default()
+            },
+        );
+        // Turned so its upper side faces the camera, which looks along +Z.
+        let facing = |angle: f32| {
+            Transform::from_components(
+                Vec3::zeros(),
+                UnitQuaternion::from_axis_angle(&Vec3::x_axis(), angle),
+                Vec3::repeat(1.0),
+            )
+            .matrix()
+        };
+        builder.set_transform(owner, facing(-std::f32::consts::FRAC_PI_2));
+        let mut scene = builder.finish();
+        let uuid = scene.uuid(owner);
+        let mut renderer = renderer(&context, 1, (64, 64));
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert_eq!(renderer.draw_list.len(), 1);
+        assert!(!renderer.draw_list[0].cast_shadows);
+        let mesh = renderer.draw_list[0].mesh_id;
+        assert_eq!(
+            renderer.assets.mesh(mesh).unwrap().read().vertices.len(),
+            81
+        );
+
+        let view = front_camera(1.0, 10.0);
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        assert_eq!(renderer.pick_game_object(32, 32), Some(uuid));
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert_eq!(
+            renderer.draw_list[0].mesh_id, mesh,
+            "an unchanged terrain keeps its mesh"
+        );
+
+        // Its underside is culled like any back face.
+        scene.set_transform(owner, &facing(std::f32::consts::FRAC_PI_2));
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        assert_eq!(renderer.pick_game_object(32, 32), None);
+
+        scene.set_component_enabled::<ComponentTerrain>(owner, false);
+        renderer.build_asset_data(&context.render_context, &scene);
+        assert!(renderer.draw_list.is_empty());
     }
 
     #[test]

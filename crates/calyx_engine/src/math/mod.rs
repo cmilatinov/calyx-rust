@@ -10,12 +10,15 @@ pub use curve::*;
 pub use dist::*;
 /// Color gradients evaluated over time.
 pub use gradient::*;
+/// Height grids read from heightmap images, sampled and meshed as terrain.
+pub use heightfield::*;
 /// Transform type and helpers for local and world-space math.
 pub use transform::*;
 
 mod curve;
 mod dist;
 mod gradient;
+mod heightfield;
 mod transform;
 
 /// Composes a transform matrix from translation, rotation, and scale.

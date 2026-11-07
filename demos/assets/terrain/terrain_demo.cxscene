@@ -1,0 +1,497 @@
+{
+  "components": {
+    "19d8eece-1571-5f74-bb59-2f9f4291cd3b": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "19d8eece-1571-5f74-bb59-2f9f4291cd3b",
+        "name": "Rover 1",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "6c1e8f2a-9b7d-4e3a-8c5f-1d2b3a4e0472",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "b1f3d7a2-6c4e-4f0b-9d8a-3e5c7a1b0472": {
+        "center": [
+          0.0,
+          0.0
+        ],
+        "ground_offset": 1.0,
+        "phase": 0.0,
+        "radius": 20.0,
+        "speed": 12.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            2.0,
+            4.5
+          ]
+        }
+      }
+    },
+    "21eebd88-487d-5761-8a27-eb865228eec2": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "21eebd88-487d-5761-8a27-eb865228eec2",
+        "name": "Camera",
+        "visible": true
+      },
+      "a85867d2-3e68-42b2-b943-ea78c7c6ddb5": {
+        "clear_color": [
+          135,
+          190,
+          230,
+          255
+        ],
+        "far_plane": 1500.0,
+        "fov": 1.100000023841858,
+        "near_plane": 0.30000001192092896
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            75.0,
+            -150.0
+          ],
+          "rotation": [
+            0.2084982693195343,
+            0.0,
+            0.0,
+            0.9780227541923523
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "3892d808-bbc8-55f4-be6f-1e31e6ca6b10": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "3892d808-bbc8-55f4-be6f-1e31e6ca6b10",
+        "name": "Rover 4",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "6c1e8f2a-9b7d-4e3a-8c5f-1d2b3a4e0472",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "b1f3d7a2-6c4e-4f0b-9d8a-3e5c7a1b0472": {
+        "center": [
+          0.0,
+          0.0
+        ],
+        "ground_offset": 1.0,
+        "phase": 180.0,
+        "radius": 56.0,
+        "speed": -9.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            2.0,
+            4.5
+          ]
+        }
+      }
+    },
+    "81f5808a-8581-56a4-99fe-7db750a5606e": {
+      "01a950bc-d431-4495-8b86-7d51c5f2b4b0": {
+        "bias": 0.02500000037252903,
+        "intensity": 0.6000000238418579,
+        "radius": 0.800000011920929,
+        "sample_count": 16
+      },
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "81f5808a-8581-56a4-99fe-7db750a5606e",
+        "name": "Post Process",
+        "visible": true
+      },
+      "61efa204-ed0d-4d1f-86a4-b226be940b13": {
+        "color": [
+          0,
+          0,
+          0,
+          255
+        ],
+        "intensity": 0.15000000596046448,
+        "smoothness": 0.5
+      },
+      "659a0e8b-963d-439b-9a73-dc8bb2c6ead1": {
+        "color": [
+          190,
+          231,
+          242,
+          255
+        ],
+        "density": 0.003000000026077032,
+        "end": 900.0,
+        "intensity": 1.0,
+        "mode": "Linear",
+        "opacity": 1.0,
+        "start": 0.0
+      },
+      "68ac12ac-fc9a-489e-b305-363eaf593966": {
+        "exposure_ev": 0.6000000238418579,
+        "preset": "Aces"
+      },
+      "7e09858d-fd71-4729-bb90-8ed76c0bda9a": {
+        "intensity": 0.07999999821186066,
+        "knee": 0.5,
+        "radius": 6,
+        "threshold": 1.5
+      },
+      "c19ff2b7-c3ed-4f04-9dfa-e026efdedf82": {
+        "edge_threshold": 0.06300000101327896,
+        "subpixel": 1.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "cdbfef3f-81a5-4ccb-a0f6-098bc5a26979": {
+        "priority": 0,
+        "profile": "00000000-0000-0000-0000-000000000000"
+      },
+      "d2694fb5-4815-471e-9537-4ab502c580f0": {
+        "contrast": 1.0499999523162842,
+        "saturation": 1.0,
+        "temperature": -0.05999999865889549,
+        "tint": 0.0
+      }
+    },
+    "953a1e82-6ea8-57f4-a9f8-a33aec2e40d3": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "953a1e82-6ea8-57f4-a9f8-a33aec2e40d3",
+        "name": "Terrain",
+        "visible": true
+      },
+      "340f9d11-c4eb-43db-9844-fd5dfa5be321": {
+        "cast_shadows": true,
+        "height_scale": 40.0,
+        "heightmap": "5d0b6f0e-4f7a-4c39-9a51-2b7f0c4e7472",
+        "material": "2f6a9d84-3b1c-4e57-a0c2-7d5e8b1f0472",
+        "size": [
+          200.0,
+          200.0
+        ]
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "9b0b744b-a3b3-5acf-a942-42d37ce6b8d9": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "9b0b744b-a3b3-5acf-a942-42d37ce6b8d9",
+        "name": "Rover 2",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "6c1e8f2a-9b7d-4e3a-8c5f-1d2b3a4e0472",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "b1f3d7a2-6c4e-4f0b-9d8a-3e5c7a1b0472": {
+        "center": [
+          0.0,
+          0.0
+        ],
+        "ground_offset": 1.0,
+        "phase": 60.0,
+        "radius": 32.0,
+        "speed": -11.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            2.0,
+            4.5
+          ]
+        }
+      }
+    },
+    "ad893176-a95b-52f2-80aa-f2c1664539aa": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "ad893176-a95b-52f2-80aa-f2c1664539aa",
+        "name": "Directional Light",
+        "visible": true
+      },
+      "72b2568a-2ea0-4f58-ae76-e3f655006f0f": {
+        "cast_shadows": true,
+        "color": [
+          249,
+          246,
+          211,
+          255
+        ],
+        "depth_bias": 1.0,
+        "intensity": 3.0,
+        "normal_bias": 1.0,
+        "shadow_distance": 250.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            3.0,
+            0.0
+          ],
+          "rotation": [
+            0.4082178771495819,
+            -0.23456968367099762,
+            0.10938163101673126,
+            0.8754261136054993
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "b49cf543-cf4d-5635-a589-9130aa5090fb": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "b49cf543-cf4d-5635-a589-9130aa5090fb",
+        "name": "Rover 6",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "6c1e8f2a-9b7d-4e3a-8c5f-1d2b3a4e0472",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "b1f3d7a2-6c4e-4f0b-9d8a-3e5c7a1b0472": {
+        "center": [
+          0.0,
+          0.0
+        ],
+        "ground_offset": 1.0,
+        "phase": 300.0,
+        "radius": 80.0,
+        "speed": -7.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            2.0,
+            4.5
+          ]
+        }
+      }
+    },
+    "c2a8d145-75b9-5361-855f-e10780684111": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "c2a8d145-75b9-5361-855f-e10780684111",
+        "name": "Rover 3",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "6c1e8f2a-9b7d-4e3a-8c5f-1d2b3a4e0472",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "b1f3d7a2-6c4e-4f0b-9d8a-3e5c7a1b0472": {
+        "center": [
+          0.0,
+          0.0
+        ],
+        "ground_offset": 1.0,
+        "phase": 120.0,
+        "radius": 44.0,
+        "speed": 10.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            2.0,
+            4.5
+          ]
+        }
+      }
+    },
+    "e302fa37-a588-50b8-8bca-82360f27aa8c": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "e302fa37-a588-50b8-8bca-82360f27aa8c",
+        "name": "Rover 5",
+        "visible": true
+      },
+      "93fd32b1-7127-4c88-8e89-893512af58de": {
+        "cast_shadows": true,
+        "material": "6c1e8f2a-9b7d-4e3a-8c5f-1d2b3a4e0472",
+        "mesh": "5eb2b615-df76-5b34-d74d-742136c9ed32"
+      },
+      "b1f3d7a2-6c4e-4f0b-9d8a-3e5c7a1b0472": {
+        "center": [
+          0.0,
+          0.0
+        ],
+        "ground_offset": 1.0,
+        "phase": 240.0,
+        "radius": 68.0,
+        "speed": 8.0
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            3.0,
+            2.0,
+            4.5
+          ]
+        }
+      }
+    },
+    "f4fc8912-fa4f-52ee-a4f6-921a1dae2a25": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "f4fc8912-fa4f-52ee-a4f6-921a1dae2a25",
+        "name": "Sky Light",
+        "visible": true
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "eb42f81f-45ab-428c-9d07-961696edc5fa": {
+        "intensity": 0.8999999761581421,
+        "skybox": "b54b855c-1db7-5cdc-9293-e19639776142"
+      }
+    }
+  },
+  "hierarchy": {},
+  "roots": [
+    "953a1e82-6ea8-57f4-a9f8-a33aec2e40d3",
+    "ad893176-a95b-52f2-80aa-f2c1664539aa",
+    "f4fc8912-fa4f-52ee-a4f6-921a1dae2a25",
+    "81f5808a-8581-56a4-99fe-7db750a5606e",
+    "21eebd88-487d-5761-8a27-eb865228eec2",
+    "19d8eece-1571-5f74-bb59-2f9f4291cd3b",
+    "9b0b744b-a3b3-5acf-a942-42d37ce6b8d9",
+    "c2a8d145-75b9-5361-855f-e10780684111",
+    "3892d808-bbc8-55f4-be6f-1e31e6ca6b10",
+    "e302fa37-a588-50b8-8bca-82360f27aa8c",
+    "b49cf543-cf4d-5635-a589-9130aa5090fb"
+  ]
+}

@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "8e3c1a52-0d6b-4b8e-8f1d-6a2c9e5b0472",
+    "name": "terrain/color",
+    "display_name": "color",
+    "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
+  },
+  "inner": []
+}

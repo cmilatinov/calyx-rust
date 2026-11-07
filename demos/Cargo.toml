@@ -15,3 +15,9 @@ path = "src/game.rs"
 [dependencies]
 calyx_engine = { path = "../crates/calyx_engine" }
 eframe.workspace = true
+inventory.workspace = true
+legion.workspace = true
+nalgebra.workspace = true
+nalgebra-glm.workspace = true
+serde.workspace = true
+serde_json.workspace = true
