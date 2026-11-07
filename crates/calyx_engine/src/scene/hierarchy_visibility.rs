@@ -22,19 +22,39 @@ impl HierarchyVisibility {
     /// Whether `game_object` and every ancestor of it are visible in `scene`,
     /// as [`Scene::is_visible_in_hierarchy`] says.
     pub fn is_visible(&mut self, scene: &Scene, game_object: GameObject) -> bool {
-        let index = game_object.node.index();
-        if let Some(Some(visible)) = self.visible.get(index) {
-            return *visible;
+        if let Some(visible) = self.cached(game_object) {
+            return visible;
         }
-        let visible = scene.is_visible(game_object)
-            && scene
-                .parent(game_object)
-                .is_none_or(|parent| self.is_visible(scene, parent));
-        if self.visible.len() <= index {
-            self.visible.resize(index + 1, None);
+        // Walk up iteratively to the first ancestor already read, or the
+        // root, so a deep hierarchy cannot overflow the stack.
+        let mut unread = vec![game_object];
+        let mut visible = true;
+        let mut current = game_object;
+        while let Some(parent) = scene.parent(current) {
+            if let Some(parent_visible) = self.cached(parent) {
+                visible = parent_visible;
+                break;
+            }
+            unread.push(parent);
+            current = parent;
         }
-        self.visible[index] = Some(visible);
+        // Fill in from the topmost unread ancestor down to `game_object`.
+        for object in unread.into_iter().rev() {
+            visible = visible && scene.is_visible(object);
+            let index = object.node.index();
+            if self.visible.len() <= index {
+                self.visible.resize(index + 1, None);
+            }
+            self.visible[index] = Some(visible);
+        }
         visible
+    }
+
+    fn cached(&self, game_object: GameObject) -> Option<bool> {
+        self.visible
+            .get(game_object.node.index())
+            .copied()
+            .flatten()
     }
 }
 
@@ -65,5 +85,31 @@ mod tests {
         }
         assert!(!visibility.is_visible(&scene, under_hidden));
         assert!(visibility.is_visible(&scene, leaf));
+    }
+
+    #[test]
+    fn answers_for_a_hierarchy_deeper_than_the_stack_allows_recursion() {
+        // A small stack and a deep chain: one stack frame per ancestor would
+        // overflow it, so this goes red if the walk recurses.
+        let result = std::thread::Builder::new()
+            .stack_size(256 * 1024)
+            .spawn(|| {
+                let mut scene = test_scene();
+                let root = scene.create(None, None);
+                let _ = scene.write_component::<ComponentID, _>(root, |id| id.visible = false);
+                let mut leaf = root;
+                for _ in 0..20_000 {
+                    leaf = scene.create(None, Some(leaf));
+                }
+                let mut visibility = HierarchyVisibility::default();
+                (
+                    visibility.is_visible(&scene, leaf),
+                    scene.is_visible_in_hierarchy(leaf),
+                )
+            })
+            .unwrap()
+            .join()
+            .unwrap();
+        assert_eq!(result, (false, false));
     }
 }
