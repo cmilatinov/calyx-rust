@@ -70,6 +70,9 @@ pub const ROLES: &[Role] = &[
     role("ground_marking", "#F3C84B", "#E6B84C", "#CDA559", 1.0),
     role("walls", "#D6B275", "#AAA59D", "#5E6F81", 0.95),
     role("barriers", "#BFB9AE", "#C0BCB6", "#9FA7AF", 0.95),
+    // The ramp and platform kerbs: the barriers' colours, drawn with the
+    // terrain's ink rather than the props'.
+    role("kerbs", "#BFB9AE", "#C0BCB6", "#9FA7AF", 0.95),
     role("crates", "#A2855E", "#66635F", "#6B8086", 0.95),
     role("crate_frame", "#986128", "#79572E", "#465D65", 0.95),
     role("crate_panel", "#C28B3C", "#B99863", "#6B8086", 0.95),
@@ -124,6 +127,17 @@ pub const ROLES: &[Role] = &[
     role("ink", "#121212", "#121212", "#121212", 1.0),
 ];
 
+/// The outline style (the Outline effect's style list entry, from 1) of the
+/// terrain: walls, ramps and platforms. Each kind of thing has its own style,
+/// all of the same ink, so a change of style draws a silhouette where a tank
+/// or a prop meets the terrain or another kind.
+pub const TERRAIN_OUTLINE: u32 = 1;
+/// The outline style of the tanks, which set it in their own materials.
+pub const TANK_OUTLINE: u32 = 2;
+/// The outline style of the props: cover, crates, barrels, rocks, trees, the
+/// sentry and the other decorations.
+pub const PROP_OUTLINE: u32 = 3;
+
 /// The role outline hulls are drawn in.
 pub const INK: &str = "ink";
 
@@ -133,6 +147,31 @@ pub fn find(name: &str) -> Option<&'static Role> {
 }
 
 impl Role {
+    /// The Outline effect style the role's material picks: none for the
+    /// ground, roads and signals; [`TERRAIN_OUTLINE`] for the walls and the
+    /// ramp and platform structure; [`PROP_OUTLINE`] for everything else.
+    pub fn outline_style(&self) -> u32 {
+        if self.name.starts_with("ground_")
+            || matches!(
+                self.name,
+                "ground"
+                    | "road"
+                    | "signals"
+                    | "pickup_yellow"
+                    | "pickup_blue"
+                    | "ink"
+                    | "reticle_light"
+                    | "reticle_dark"
+            )
+        {
+            0
+        } else if matches!(self.name, "walls" | "kerbs") {
+            TERRAIN_OUTLINE
+        } else {
+            PROP_OUTLINE
+        }
+    }
+
     pub fn hex(&self, map: Map) -> &'static str {
         match map {
             Map::SunnyBattlefield => self.sunny,
@@ -173,7 +212,7 @@ impl Role {
                 uniform("emission_strength", 12, 4, json!({"Float": strength})),
                 uniform("emission_color", 16, 16, json!({"Color": emission_color})),
                 uniform("base_color_factor", 32, 16, json!({"Color": color})),
-                uniform("outline_style", 60, 4, json!({"Uint": if self.name.starts_with("ground_") || matches!(self.name, "ground" | "road" | "signals" | "pickup_yellow" | "pickup_blue" | "ink" | "reticle_light" | "reticle_dark") { 0 } else { 1 }})),
+                uniform("outline_style", 60, 4, json!({"Uint": self.outline_style()})),
             ]
         })
     }
@@ -271,6 +310,50 @@ mod tests {
                 assert_eq!(variable(&material, "roughness"), &json!({"Float": 1.0}));
             }
         }
+    }
+
+    #[test]
+    fn terrain_and_props_draw_on_their_own_outline_layers() {
+        for (names, style) in [
+            (&["walls", "kerbs"][..], TERRAIN_OUTLINE),
+            (
+                &[
+                    "barriers",
+                    "sandbags",
+                    "crates",
+                    "crate_frame",
+                    "explosive_red",
+                    "rocks",
+                    "tree_trunks",
+                    "metal",
+                    "sentry_armor",
+                    "tracks",
+                ][..],
+                PROP_OUTLINE,
+            ),
+        ] {
+            for name in names {
+                for map in Map::ALL {
+                    let material = find(name).unwrap().material(map);
+                    assert_eq!(
+                        variable(&material, "outline_style"),
+                        &json!({"Uint": style}),
+                        "{name}"
+                    );
+                }
+            }
+        }
+        assert_ne!(TANK_OUTLINE, TERRAIN_OUTLINE);
+        assert_ne!(TANK_OUTLINE, PROP_OUTLINE);
+    }
+
+    #[test]
+    fn kerbs_take_the_barriers_colours() {
+        let (kerbs, barriers) = (find("kerbs").unwrap(), find("barriers").unwrap());
+        for map in Map::ALL {
+            assert_eq!(kerbs.hex(map), barriers.hex(map));
+        }
+        assert_eq!(kerbs.roughness, barriers.roughness);
     }
 
     #[test]

@@ -1,6 +1,6 @@
 # Concept-sheet arena kit
 
-The 26 models below follow [the concept sheet](../../docs/design/art/concept-sheet.png).
+The 28 models below follow [the concept sheet](../../docs/design/art/concept-sheet.png).
 Each has one named-part parameter file in `models/`, shared generated part meshes,
 and one prefab for each map under `assets/generated/prefabs/{sunny,sunbaked,moonlit}/`.
 Regenerate meshes, materials and prefabs from the repository root with
@@ -40,6 +40,19 @@ and six along each side, two corner modules and two end caps. The long module
 replaces two short modules without moving either outer connection: short roots
 at X=0 and X=2 have outer ports -1 and 3; a long root at X=1 has those same ports.
 
+## Ramp and raised platform
+
+Both stand on the 1 m root grid with ground-level pivots. Coordinates are
+`(x,z)` relative to the root, before yaw rotation.
+
+| Model | Construction | Ports | Collider handoff |
+| --- | --- | --- | --- |
+| `ramp` | 4 x 8 m wedge (`kind = "wedge"`) rising along +Z from the ground at Z = -4 to 1.6 m at Z = +4, a 1:5 slope, between 0.5 m kerbs that stand 0.5 m above it | crest edge `(0,4)`, 4 m wide | Tilted 0.6 m slab under the slope, marked as a drive surface; each kerb a tilted block from its sloped top 2.3 m down into the ground |
+| `platform` | 10 x 8 m block, 1.6 m high like the walls, with a paved deck and a 0.5 m kerb round its rim | rim openings 4 m wide at `(0,-4)` (south) and `(-5,1)` (west) | Deck slab (top 0.4 m) marked as a drive surface over a blocking body; the rim kerbs as drawn |
+
+A ramp whose crest meets a port continues its kerbs into the rim kerbs either
+side of the opening. The wedge's sharp foot is rounded by a small bevel only.
+
 ## Remaining models and collider handoff
 
 The shapes below are the choices for arena authoring in #495; the look-dev
@@ -62,8 +75,9 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `explosive_barrel` | Red explosive drum with a centered yellow-and-black lid flame badge, opposing diamond flame plaques, narrow hazard hoops and rolled rims | Cylinder, radius 0.455 m and height 1.125 m, centered 0.5625 m above the ground pivot; explosion behavior belongs to cover gameplay |
 | `aim_reticle` | Flat open ring and four ticks, light marks over a dark contrast border; 1.66 m overall width | Non-blocking, no collider |
 
-Every opaque prop part material has `outline_style = 1`; pickup signal orbs
-and both reticle materials use 0. The reticle's explicit dark border stays
+Every opaque prop part material has `outline_style = 3`, the props' outline
+layer; walls and the ramp and platform bodies and kerbs use 1, the terrain's.
+Pickup signal orbs and both reticle materials use 0. The reticle's explicit dark border stays
 readable on light ground without the screen-space ink thickening its marks.
 Palette roles and construction rules are in
 [the direction guide](../../docs/design/art/tank-game-direction.md).
@@ -128,13 +142,30 @@ generated for all three palettes alongside the prop kit.
 
 The two sand flank lanes stay clear for tanks. Staggered barriers, crates,
 sandbags and rocks break shots across the middle while leaving the player's
-initial firing lane open. The northeast pocket, local X 8 to 24 and Z 14 to 28
-(world Z 36 to 50),
-is reserved for a raised area. Gameplay actor ids and model scales stay
+initial firing lane open. Gameplay actor ids and model scales stay
 independent of the kit layout. The player spawns at the origin; targets are
 at (-6, 0.5, 24) and (6, 0.5, 32), and the sentry is at (16, 0.5, 32),
-south of the reserved area. Spawn-side cover begins beyond the first six
+beside the foot of the south ramp. Spawn-side cover begins beyond the first six
 metres, while the broad sand lanes run near X = +/-20.
+
+The raised area fills the northeast pocket. The platform's root is at local
+`(20, 23)` (world Z 45), its deck 1.6 m up, 3.4 m clear of the north and east
+walls so tanks can circle it. The south ramp, root `(20, 15)`, continues the
+east sand lane up to the deck; the west ramp, root `(11, 24)` turned 90
+degrees, climbs from the middle of the arena, north of the rear crates. A
+sandbag stack on the deck at `(17, 21)` gives cover overlooking the middle.
+
+Tanks ride drive surfaces (`ComponentDriveSurface`: the floor, ramp slabs and
+the deck): the hull never collides with them, settles on the surface under
+its centre, nose and tail, and pitches with the slope. Kerbs, the platform
+body and everything else stop the hull, so tanks can only leave the deck by
+a ramp. The cursor aims at the drive surface under it. A round leaves the
+gun at its height above the shooter's ground and flies straight to the same
+height above the aimed ground: level on the flat, diving from the deck,
+climbing towards it. Every cover solid rises 2 m above the ground it stands
+on, so cover on the deck stops rounds fired across the deck as cover on the
+floor does. Ramps and kerbs are slopes and edges, not cover: a level round
+passes over a ramp's low end, and a shot from the deck clears its rim.
 
 The straight perimeter uses four continuous box strips matching the wall
 modules, without internal collider seams. Crates use their solid box, and
