@@ -116,10 +116,12 @@ hand-placed timers. It prints one JSON object (`calyx_engine::profiler::ProfileR
   the editor's update phases (`Remote commands`, `Render views`, `Panels` with
   one `Panel (<name>)` each, `Game update`, ...), the scene's update
   (`Physics`, `Component updates` with one `Update hook (<type>)` per
-  component type), the HUD (`HUD build`, `HUD hook (<type>)`) and each
-  renderer's preparation steps under `Render scene (<view>)` (`Draw
-  collection`, `Gizmos`, `Draw list`, `Mesh data`, `Lights`, `Materials`,
-  `Shadows`, ...).
+  component type), the HUD (`HUD build`, `HUD hook (<type>)`), the
+  editor's `Draw collection` under `Render views`, collected once a frame
+  for both views, and each renderer's preparation steps under `Render scene
+  (<view>)` (`View assets`, `Gizmos`, `Draw list`, `Mesh data`, `Lights`,
+  `Materials`, `Shadows`, ...; a renderer drawing without shared draws, such
+  as the player's or a thumbnail's, has its own `Draw collection` there).
 - `gpu_passes`: per view (`Scene view`, `Game view`, their `... finalize`),
   the timed passes (`Shadows`, `G-buffer`, `SSAO`, `Lighting`, `Forward`,
   `Skybox`, `Particles`, `Post-process` with one entry per chain pass,

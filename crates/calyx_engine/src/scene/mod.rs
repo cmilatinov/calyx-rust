@@ -23,6 +23,7 @@ mod dropped_components;
 mod error;
 pub(crate) mod game_object_ref;
 mod hierarchy_visibility;
+mod hook_targets;
 mod hud;
 mod prefab;
 pub(crate) mod prefab_link;

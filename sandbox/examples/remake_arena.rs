@@ -7,12 +7,15 @@ use std::path::{Path, PathBuf};
 
 use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
-    ColliderShape, ComponentCollider, ComponentID, ComponentMesh, ComponentRigidBody,
-    ComponentTransform,
+    ColliderShape, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
+    ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentID,
+    ComponentMesh, ComponentRigidBody, ComponentSkyLight, ComponentTonemap, ComponentTransform,
+    ComponentVignette, FxaaQuality, TonemappingPreset,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
 use calyx_engine::utils::{TypeUuid, Uuid};
+use egui::Color32;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 use rapier3d::dynamics::RigidBodyType;
@@ -546,6 +549,94 @@ fn remap(value: &mut Value, ids: &BTreeMap<String, String>) {
     }
 }
 
+/// Light and post-process the arena as Sunny Battlefield, the map its kit is
+/// coloured for: the sun, sky and global volume take the direction's
+/// lighting and post-processing targets
+/// (`docs/design/art/tank-game-direction.md`). Sunny Battlefield has no
+/// haze, so the volume holds no fog; the sky's HDRI is the ambient and
+/// image-based fill light, with no separate ambient light. The volume's ink
+/// outlines and fog of war stay as authored. Returns the ids of the objects
+/// it rewrote.
+fn light_and_post_process(scene: &mut Scene) -> [Uuid; 3] {
+    let find =
+        |scene: &Scene, name: &str| scene.objects().find(|o| scene.name(*o) == name).unwrap();
+    let sun = find(scene, "Sun");
+    // Pitched 50 degrees down, then turned 30 degrees about the vertical.
+    let rotation = UnitQuaternion::from_axis_angle(&Vec3::y_axis(), 30f32.to_radians())
+        * UnitQuaternion::from_axis_angle(&Vec3::x_axis(), 50f32.to_radians());
+    scene.write_component::<ComponentTransform, _>(sun, |component| {
+        component.transform.rotation = rotation;
+    });
+    scene.add_component(
+        sun,
+        ComponentDirectionalLight {
+            color: Color32::from_rgb(0xFF, 0xE3, 0xC2),
+            intensity: 4.8,
+            cast_shadows: true,
+            // Covers the Far framing's deepest view of the ground.
+            shadow_distance: 70.0,
+            depth_bias: 1.0,
+            normal_bias: 1.0,
+        },
+    );
+    let sky = find(scene, "Sky");
+    scene.write_component::<ComponentSkyLight, _>(sky, |sky| sky.intensity = 1.0);
+    let volume = find(scene, "Post Process");
+    scene.add_component(
+        volume,
+        ComponentTonemap {
+            preset: TonemappingPreset::Aces,
+            exposure_ev: 0.0,
+        },
+    );
+    scene.add_component(
+        volume,
+        ComponentAmbientOcclusion {
+            radius: 0.9,
+            intensity: 2.2,
+            bias: 0.025,
+            sample_count: 16,
+        },
+    );
+    scene.add_component(
+        volume,
+        ComponentBloom {
+            threshold: 1.2,
+            knee: 0.5,
+            intensity: 0.15,
+            radius: 6,
+        },
+    );
+    scene.add_component(
+        volume,
+        ComponentColorGrading {
+            contrast: 1.05,
+            saturation: 1.2,
+            temperature: 0.06,
+            tint: 0.0,
+        },
+    );
+    scene.add_component(
+        volume,
+        ComponentVignette {
+            intensity: 0.12,
+            smoothness: 0.45,
+            color: Color32::BLACK,
+        },
+    );
+    // High finds the dark, low-contrast edges fog of war leaves where a side
+    // cannot see, and follows the walls' long, nearly level edges further.
+    scene.add_component(
+        volume,
+        ComponentAntiAliasing {
+            edge_threshold: 0.166,
+            subpixel: 0.75,
+            quality: FxaaQuality::High,
+        },
+    );
+    [sun, sky, volume].map(|object| scene.uuid(object))
+}
+
 fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let path = root.join("assets/game/scenes/arena.cxscene");
@@ -604,6 +695,7 @@ fn main() {
         component.transform.position = pose.position;
     });
     edited.insert(scene.uuid(camera));
+    edited.extend(light_and_post_process(&mut scene));
     let children: Vec<_> = scene.children(arena).collect();
     for child in children {
         scene.delete(child);

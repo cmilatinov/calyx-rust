@@ -1,20 +1,16 @@
 use super::RenderContext;
 use crate::assets::error::AssetError;
-use crate::assets::material::Material;
 use crate::assets::mesh::{Instance, Mesh};
 use crate::assets::skybox::Skybox;
 use crate::assets::texture::Texture;
-use crate::assets::{Asset, AssetAccess, AssetId, AssetRegistry, BackgroundLoad, ResolvedRefs};
-use crate::component::{
-    ComponentAmbientOcclusion, ComponentFoliage, ComponentMesh, ComponentOutline,
-    ComponentSkinnedMesh, ComponentSkyLight, ComponentTerrain,
-};
+use crate::assets::{Asset, AssetId, AssetRegistry, BackgroundLoad};
+use crate::component::{ComponentAmbientOcclusion, ComponentOutline, ComponentSkyLight};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::profiler::GpuScope;
 use crate::render::asset_render_state::{AssetRenderState, LockedAssetRenderState};
-use crate::render::foliage::FoliageCache;
+use crate::render::draw_collection::{register_object_id, DrawCollection, DrawListElement};
 use crate::render::overlay::{OverlayCompositor, OverlayContext, OverlayPass};
 use crate::render::postprocess::{
     drawn_outline_styles, BloomPass, CameraPlanes, ChainPlan, ChainTargets, ColorGradingPass,
@@ -22,14 +18,13 @@ use crate::render::postprocess::{
     PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
-use crate::render::terrain::TerrainCache;
 use crate::render::{
     Camera, DeferredLightingRenderer, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView,
     GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer,
-    OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions, Shader, ShadowCamera,
+    OutlineRenderer, ParticleRenderer, ParticleSimulation, PipelineOptions, ShadowCamera,
     ShadowFrameStats, ShadowRenderer, SkyboxRenderer,
 };
-use crate::scene::{GameObject, HierarchyVisibility, Scene};
+use crate::scene::Scene;
 use crate::utils::TypeUuid;
 use egui::Color32;
 use egui_wgpu::wgpu;
@@ -38,7 +33,7 @@ use legion::{Entity, IntoQuery};
 use nalgebra_glm as glm;
 use nalgebra_glm::Mat4;
 use rapier3d::pipeline::DebugRenderPipeline;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::default::Default;
 
 use std::sync::{mpsc, Arc};
@@ -211,17 +206,6 @@ impl SceneRendererError {
     }
 }
 
-/// One draw-list entry emitted while collecting scene meshes.
-pub struct DrawListElement {
-    shader_id: AssetId,
-    mat_id: AssetId,
-    mesh_id: AssetId,
-    bone_transform_index: i32,
-    object_id: u32,
-    transform: [[f32; 4]; 4],
-    cast_shadows: bool,
-}
-
 struct PendingObjectIdReadback {
     receiver: mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>,
     object_ids: Arc<[Uuid]>,
@@ -277,16 +261,10 @@ pub struct SceneRenderer {
     outline_renderer: OutlineRenderer,
     particle_renderer: ParticleRenderer,
     assets: AssetRenderState,
-    /// The meshes, materials, shaders and prefabs the scene's components
-    /// resolved to, kept across frames while the registry holds still.
-    resolved: ResolvedRefs,
-    /// The shader each material drawn this frame resolved to.
-    material_shaders: HashMap<AssetId, Option<Ref<Shader>>>,
-    /// Which objects of the scene drawn this frame are visible.
-    visibility: HierarchyVisibility,
-    draw_list: Vec<DrawListElement>,
-    foliage: FoliageCache,
-    terrain: TerrainCache,
+    /// The draws [`Self::render_scene_base`] collects for this view alone,
+    /// made on its first use: a view handed a shared [`DrawCollection`]
+    /// never needs one.
+    own_draws: Option<DrawCollection>,
     object_ids: Arc<[Uuid]>,
     object_ids_build: Vec<Uuid>,
     object_id_lookup: HashMap<Uuid, u32>,
@@ -299,20 +277,6 @@ pub struct SceneRenderer {
     post_process_settings: PostProcessSettings,
     last_post_process_plan: ChainPlan,
     overlay: OverlayCompositor,
-}
-
-/// Instance index of the next skinned draw in a mesh's shared bone buffer, or `None` for a mesh without bones.
-fn skinning_instance_index(uploaded_bone_transforms: usize, num_bones: usize) -> Option<usize> {
-    uploaded_bone_transforms.checked_div(num_bones)
-}
-
-/// World transform that places a skinned mesh, as [`ComponentSkinnedMesh::world_transform`] says.
-fn skinned_mesh_world_transform(
-    scene: &Scene,
-    game_object: GameObject,
-    skinned_mesh: &ComponentSkinnedMesh,
-) -> Transform {
-    skinned_mesh.world_transform(scene, game_object)
 }
 
 impl SceneRenderer {
@@ -444,12 +408,7 @@ impl SceneRenderer {
             outline_renderer,
             particle_renderer,
             assets: Default::default(),
-            resolved: Default::default(),
-            material_shaders: Default::default(),
-            visibility: Default::default(),
-            draw_list: Default::default(),
-            foliage: Default::default(),
-            terrain: Default::default(),
+            own_draws: None,
             object_ids: Default::default(),
             object_ids_build: Default::default(),
             object_id_lookup: Default::default(),
@@ -518,6 +477,10 @@ impl SceneRenderer {
     ///
     /// Particles are drawn from `particles` when it simulates `scene`; any
     /// other scene, or none, draws no particles.
+    ///
+    /// The renderer collects the scene's draws itself. Views that render the
+    /// same scene in a frame share one collection through
+    /// [`Self::render_scene_with`] instead.
     pub fn render_scene_base(
         &mut self,
         camera: &Camera,
@@ -526,8 +489,69 @@ impl SceneRenderer {
         particles: Option<&ParticleSimulation>,
         physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
     ) {
+        self.render_scene(
+            None,
+            camera,
+            camera_transform,
+            scene,
+            particles,
+            physics_debug_pipeline,
+        );
+    }
+
+    /// Renders `scene` as [`Self::render_scene_base`] does, drawing the draws
+    /// `draws` collected from it, so views rendering the same scene collect
+    /// its draws once. Collect `draws` after the last change to the scene
+    /// before rendering it. Draws collected from another scene, or not yet
+    /// collected, are not used: the renderer collects `scene`'s itself.
+    pub fn render_scene_with(
+        &mut self,
+        draws: &DrawCollection,
+        camera: &Camera,
+        camera_transform: &Transform,
+        scene: &Scene,
+        particles: Option<&ParticleSimulation>,
+        physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
+    ) {
+        let draws = (draws.scene() == Some(scene.id())).then_some(draws);
+        self.render_scene(
+            draws,
+            camera,
+            camera_transform,
+            scene,
+            particles,
+            physics_debug_pipeline,
+        );
+    }
+
+    /// The draws of the renderer's own collection, made when it has none.
+    fn take_own_draws(&mut self) -> DrawCollection {
+        self.own_draws.take().unwrap_or_else(|| {
+            DrawCollection::with_white_texture(
+                self.asset_context.clone(),
+                self.default_assets.white_texture.clone(),
+            )
+        })
+    }
+
+    fn render_scene(
+        &mut self,
+        shared_draws: Option<&DrawCollection>,
+        camera: &Camera,
+        camera_transform: &Transform,
+        scene: &Scene,
+        particles: Option<&ParticleSimulation>,
+        physics_debug_pipeline: Option<&mut DebugRenderPipeline>,
+    ) {
         let profile_name = self.options.profile_name;
         crate::profile_scope!("Render scene", profile_name);
+        let own_draws = shared_draws.is_none().then(|| {
+            crate::profile_scope!("Draw collection");
+            let mut draws = self.take_own_draws();
+            draws.collect(scene);
+            draws
+        });
+        let draws = shared_draws.or(own_draws.as_ref()).expect("draws");
         let render_context = self.asset_context.render_context.clone();
         let queue = render_context.queue();
         let device = render_context.device();
@@ -557,8 +581,8 @@ impl SceneRenderer {
             })])
             .build();
         {
-            crate::profile_scope!("Draw collection");
-            self.build_asset_data(&render_context, scene);
+            crate::profile_scope!("View assets");
+            self.prepare_view(draws, scene);
         }
         {
             crate::profile_scope!("Post-process settings");
@@ -589,7 +613,7 @@ impl SceneRenderer {
         self.finish_object_ids();
         let draw_list = {
             crate::profile_scope!("Draw list");
-            self.build_draw_list()
+            self.build_draw_list(&draws.draw_list)
         };
         {
             crate::profile_scope!("Mesh data");
@@ -795,6 +819,9 @@ impl SceneRenderer {
         );
         drop(encoder);
         queue.submit(Some(frame_encoder.finish()));
+        if own_draws.is_some() {
+            self.own_draws = own_draws;
+        }
     }
 
     /// Resolves the scene, runs the post-processing chain into the scene
@@ -876,17 +903,14 @@ impl SceneRenderer {
 
     /// Drops every asset the last render kept to draw again: the meshes,
     /// materials, textures, shaders and skyboxes it resolved, and the meshes
-    /// and prefab parts of its terrain and foliage caches. The next render
-    /// resolves them again. A renderer that draws one scene once and is kept
-    /// for the next, as the thumbnail generator's is, calls it after each
-    /// render, so it holds none of the scene's assets in between.
+    /// and prefab parts of its own collection's terrain and foliage caches.
+    /// The next render resolves them again. A renderer that draws one scene
+    /// once and is kept for the next, as the thumbnail generator's is, calls
+    /// it after each render, so it holds none of the scene's assets in
+    /// between. A shared [`DrawCollection`] releases its own.
     pub fn release_assets(&mut self) {
         self.assets.clear();
-        self.draw_list.clear();
-        self.material_shaders.clear();
-        self.resolved = ResolvedRefs::default();
-        self.foliage = FoliageCache::default();
-        self.terrain = TerrainCache::default();
+        self.own_draws = None;
         self.skybox_renderer.set_skybox(None);
     }
 
@@ -920,7 +944,7 @@ impl SceneRenderer {
     /// each mesh's instance list. A batch is a run of one shader, material
     /// and mesh that all cast shadows or all do not, so the shadow pass can
     /// skip whole batches.
-    fn build_draw_list(&mut self) -> Vec<DrawBatch> {
+    fn build_draw_list(&mut self, elements: &[DrawListElement]) -> Vec<DrawBatch> {
         let mut last: (AssetId, AssetId, AssetId, bool) = Default::default();
         let mut mesh_instances: HashMap<AssetId, u32> = Default::default();
         let mut instance_count: u32 = 0;
@@ -941,7 +965,7 @@ impl SceneRenderer {
                     *start += instance_count;
                 }
             };
-        for DrawListElement {
+        for &DrawListElement {
             shader_id,
             mat_id,
             mesh_id,
@@ -949,7 +973,7 @@ impl SceneRenderer {
             object_id,
             transform,
             cast_shadows,
-        } in self.draw_list.drain(0..)
+        } in elements
         {
             let key = (shader_id, mat_id, mesh_id, cast_shadows);
             if key != last {
@@ -973,101 +997,6 @@ impl SceneRenderer {
         }
         insert_instance_list(last, instance_count);
         draw_list
-    }
-
-    /// Adds every visible, enabled terrain to the draw list, through the
-    /// ordinary mesh batches.
-    fn collect_terrain(&mut self, render_context: &RenderContext, scene: &Scene) {
-        self.terrain.begin_frame(scene.id());
-        let mut query = <(Entity, &ComponentTerrain)>::query();
-        for (entity, terrain) in query.iter(scene.world()) {
-            let Some(owner) = scene.game_object_from_entity(*entity) else {
-                continue;
-            };
-            if !scene.is_visible_in_hierarchy(owner)
-                || !scene.is_component_enabled::<ComponentTerrain>(owner)
-            {
-                continue;
-            }
-            let registries = &self.asset_context.registries;
-            let (Some(heightfield), Some(material)) = (
-                terrain.heightfield(registries),
-                terrain.material.get_ref(registries),
-            ) else {
-                continue;
-            };
-            let uuid = scene.uuid(owner);
-            let Some(mesh) = self
-                .terrain
-                .mesh(render_context, uuid, terrain, &heightfield)
-            else {
-                continue;
-            };
-            let transform = scene.world_transform(owner).matrix().into();
-            self.insert_draw_list_entry(
-                &mesh,
-                &material,
-                uuid,
-                None,
-                transform,
-                terrain.cast_shadows,
-            );
-        }
-        self.terrain.end_frame();
-    }
-
-    fn insert_draw_list_entry(
-        &mut self,
-        mesh_ref: &Ref<Mesh>,
-        mat_ref: &Ref<Material>,
-        game_object_id: Uuid,
-        bone_transform_index: Option<i32>,
-        transform: [[f32; 4]; 4],
-        cast_shadows: bool,
-    ) {
-        let registries = &self.asset_context.registries;
-        let resolved = &mut self.resolved;
-        let Some(shader_ref) = self
-            .material_shaders
-            .entry(mat_ref.id())
-            .or_insert_with(|| {
-                let shader_id = mat_ref.read().shader.id();
-                resolved.resolve_id(registries, shader_id)
-            })
-            .clone()
-        else {
-            return;
-        };
-        let object_id = self.register_object_id(game_object_id);
-        self.draw_list.push(DrawListElement {
-            shader_id: shader_ref.id(),
-            mat_id: mat_ref.id(),
-            mesh_id: mesh_ref.id(),
-            bone_transform_index: bone_transform_index.unwrap_or(-1),
-            object_id,
-            transform,
-            cast_shadows,
-        });
-        self.assets
-            .meshes
-            .entry(mesh_ref.id())
-            .or_insert_with(|| mesh_ref.clone());
-        self.assets
-            .materials
-            .entry(mat_ref.id())
-            .or_insert_with(|| mat_ref.clone());
-        self.assets
-            .shaders
-            .entry(shader_ref.id())
-            .or_insert(shader_ref);
-    }
-
-    fn register_object_id(&mut self, game_object_id: Uuid) -> u32 {
-        register_object_id(
-            &mut self.object_id_lookup,
-            &mut self.object_ids_build,
-            game_object_id,
-        )
     }
 
     fn object_id_for_game_object(&self, game_object_id: Option<Uuid>) -> u32 {
@@ -1119,166 +1048,48 @@ impl SceneRenderer {
         &self.overlay
     }
 
-    fn build_asset_data(&mut self, render_context: &RenderContext, scene: &Scene) {
+    /// Collects `scene`'s draws into the renderer's own collection and
+    /// prepares this view to draw them, as a render without shared draws
+    /// does.
+    #[cfg(test)]
+    fn build_asset_data(&mut self, scene: &Scene) {
+        let mut draws = self.take_own_draws();
+        draws.collect(scene);
+        self.prepare_view(&draws, scene);
+        self.own_draws = Some(draws);
+    }
+
+    /// Batches the draws of the renderer's own collection.
+    #[cfg(test)]
+    fn build_own_draw_list(&mut self) -> Vec<DrawBatch> {
+        let draws = self
+            .own_draws
+            .take()
+            .expect("the renderer collected its draws");
+        let draw_list = self.build_draw_list(&draws.draw_list);
+        self.own_draws = Some(draws);
+        draw_list
+    }
+
+    /// The draws of the renderer's own collection.
+    #[cfg(test)]
+    fn draws(&self) -> &DrawCollection {
+        self.own_draws
+            .as_ref()
+            .expect("the renderer collected its draws")
+    }
+
+    /// Prepares this view to draw `draws`, collected from `scene`: takes
+    /// their assets and object ids, and adds the view's own sky.
+    fn prepare_view(&mut self, draws: &DrawCollection, scene: &Scene) {
         let world = scene.world();
         self.assets.clear();
-        self.draw_list.clear();
-        self.object_ids_build.clear();
-        self.object_id_lookup.clear();
-        self.material_shaders.clear();
-        self.visibility.clear();
-        self.resolved.begin(&self.asset_context.registries);
-        {
-            crate::profile_scope!("Mesh components");
-            let mut query = <(Entity, &ComponentMesh)>::query();
-            for (entity, c_mesh) in query.iter(world) {
-                let Some(game_object) = scene.game_object_from_entity(*entity) else {
-                    continue;
-                };
-                if !self.visibility.is_visible(scene, game_object)
-                    || !scene.is_component_enabled::<ComponentMesh>(game_object)
-                {
-                    continue;
-                }
-                let registries = &self.asset_context.registries;
-                let Some(mesh_ref) = self.resolved.resolve(registries, &c_mesh.mesh) else {
-                    continue;
-                };
-                let Some(mat_ref) = self.resolved.resolve(registries, &c_mesh.material) else {
-                    continue;
-                };
-                let transform = scene.world_transform(game_object);
-                self.insert_draw_list_entry(
-                    &mesh_ref,
-                    &mat_ref,
-                    scene.uuid(game_object),
-                    None,
-                    transform.matrix().into(),
-                    c_mesh.cast_shadows,
-                );
-            }
-        }
-        self.foliage.begin_frame(scene.id());
-        let mut query = <(Entity, &ComponentFoliage)>::query();
-        for (entity, foliage) in query.iter(world) {
-            let Some(owner) = scene.game_object_from_entity(*entity) else {
-                continue;
-            };
-            if !self.visibility.is_visible(scene, owner)
-                || !scene.is_component_enabled::<ComponentFoliage>(owner)
-            {
-                continue;
-            }
-            let uuid = scene.uuid(owner);
-            let instances = self.foliage.instances(uuid, foliage);
-            let parts_by_prefab: Vec<Vec<_>> = foliage
-                .prefabs
-                .iter()
-                .map(|source| {
-                    let registries = &self.asset_context.registries;
-                    let Some(prefab) = self.resolved.resolve(registries, source) else {
-                        return Vec::new();
-                    };
-                    let resolved = &mut self.resolved;
-                    self.foliage
-                        .parts(&prefab)
-                        .iter()
-                        .filter_map(|part| {
-                            Some((
-                                resolved.resolve(registries, &part.mesh)?,
-                                resolved.resolve(registries, &part.material)?,
-                                part.transform,
-                                part.cast_shadows,
-                            ))
-                        })
-                        .collect()
-                })
-                .collect();
-            let world = scene.world_transform(owner).matrix();
-            for instance in instances.iter() {
-                let placement = world * instance.transform;
-                for (mesh, material, transform, cast_shadows) in &parts_by_prefab[instance.prefab] {
-                    self.insert_draw_list_entry(
-                        mesh,
-                        material,
-                        uuid,
-                        None,
-                        (placement * transform).into(),
-                        foliage.cast_shadows && *cast_shadows,
-                    );
-                }
-            }
-        }
-        self.foliage.end_frame();
-        self.collect_terrain(render_context, scene);
-        let mut skinned_meshes: HashSet<Uuid> = Default::default();
-        let mut rest_poses: HashMap<GameObject, HashMap<String, Mat4>> = HashMap::new();
-        let no_bones = HashMap::new();
-        let mut rest_palette = Vec::new();
-        let mut query = <(Entity, &ComponentSkinnedMesh)>::query();
-        for (entity, c_skinned_mesh) in query.iter(world) {
-            let Some(game_object) = scene.game_object_from_entity(*entity) else {
-                continue;
-            };
-            if !self.visibility.is_visible(scene, game_object)
-                || !scene.is_component_enabled::<ComponentSkinnedMesh>(game_object)
-            {
-                continue;
-            }
-            let registries = &self.asset_context.registries;
-            let Some(mesh_ref) = self.resolved.resolve(registries, &c_skinned_mesh.mesh) else {
-                continue;
-            };
-            let Some(mat_ref) = self.resolved.resolve(registries, &c_skinned_mesh.material) else {
-                continue;
-            };
-            let mesh_id = mesh_ref.id();
-            let transform = skinned_mesh_world_transform(scene, game_object, c_skinned_mesh);
-            let bone_transform_index;
-            {
-                let mut mesh = mesh_ref.write();
-                if !skinned_meshes.contains(&mesh_id) {
-                    mesh.bone_transforms.clear();
-                }
-                let num_bones = mesh.bones.len();
-                let Some(index) = skinning_instance_index(mesh.bone_transforms.len(), num_bones)
-                else {
-                    crate::logging::warn_once(format!("boneless-skinned-mesh:{mesh_id}"), || {
-                        format!("Skinned mesh {mesh_id} has no bones; skipping skinning upload")
-                    });
-                    continue;
-                };
-                skinned_meshes.insert(mesh_id);
-                bone_transform_index = index;
-                // Each instance takes exactly `num_bones` slots, so the next instance's index
-                // holds. A palette the animator has not filled, as in edit mode, draws the rest
-                // pose the bone objects hold instead of collapsing every vertex.
-                if c_skinned_mesh.bone_transforms.len() >= num_bones {
-                    mesh.bone_transforms
-                        .extend_from_slice(&c_skinned_mesh.bone_transforms[..num_bones]);
-                } else {
-                    let bones = c_skinned_mesh
-                        .root_bone
-                        .game_object(scene)
-                        .map(|root| {
-                            &*rest_poses
-                                .entry(root)
-                                .or_insert_with(|| ComponentSkinnedMesh::bone_poses(scene, root))
-                        })
-                        .unwrap_or(&no_bones);
-                    ComponentSkinnedMesh::skinning_palette(&mesh, bones, &mut rest_palette);
-                    mesh.bone_transforms.extend_from_slice(&rest_palette);
-                }
-            }
-            self.insert_draw_list_entry(
-                &mesh_ref,
-                &mat_ref,
-                scene.uuid(game_object),
-                Some(bone_transform_index as i32),
-                transform.matrix().into(),
-                c_skinned_mesh.cast_shadows,
-            );
-        }
+        self.assets.meshes.clone_from(&draws.assets.meshes);
+        self.assets.materials.clone_from(&draws.assets.materials);
+        self.assets.shaders.clone_from(&draws.assets.shaders);
+        self.assets.textures.clone_from(&draws.assets.textures);
+        self.object_ids_build.clone_from(&draws.object_ids);
+        self.object_id_lookup.clone_from(&draws.object_id_lookup);
         let mut query = <(Entity, &ComponentSkyLight)>::query();
         let mut skybox = None;
         let mut sky_light_intensity = 0.0;
@@ -1340,41 +1151,10 @@ impl SceneRenderer {
                 .is_none_or(|(_, _, draw_sky)| *draw_sky),
         );
         self.sky_light_intensity = sky_light_intensity;
+        // The view batches the draws into each mesh's instance list again.
         for mesh in self.assets.meshes.values() {
             mesh.write().instances.clear();
         }
-        {
-            crate::profile_scope!("Material buffers");
-            let AssetRenderState {
-                materials,
-                textures,
-                ..
-            } = &mut self.assets;
-            let registries = &self.asset_context.registries;
-            let resolved = &mut self.resolved;
-            for (material_id, material) in materials.iter() {
-                let mut material = material.write();
-                let shader = self.material_shaders.get(material_id).cloned().flatten();
-                material.follow_resolved_shader(&self.asset_context, shader.as_ref());
-                material.load_buffers(render_context);
-                material.collect_textures_with(
-                    &self.asset_context,
-                    textures,
-                    self.default_assets.white_texture.clone(),
-                    |texture| resolved.resolve(registries, texture),
-                );
-            }
-        }
-        self.resolved.end();
-        self.draw_list.sort_by_key(
-            |DrawListElement {
-                 shader_id,
-                 mat_id,
-                 mesh_id,
-                 cast_shadows,
-                 ..
-             }| (*shader_id, *mat_id, *mesh_id, *cast_shadows),
-        );
     }
 
     fn finish_object_ids(&mut self) {
@@ -2002,20 +1782,6 @@ pub(crate) fn linear_to_srgb(value: f32) -> u8 {
     (encoded * 255.0 + 0.5) as u8
 }
 
-fn register_object_id(
-    object_id_lookup: &mut HashMap<Uuid, u32>,
-    object_ids_build: &mut Vec<Uuid>,
-    game_object_id: Uuid,
-) -> u32 {
-    if let Some(object_id) = object_id_lookup.get(&game_object_id) {
-        return *object_id;
-    }
-    object_ids_build.push(game_object_id);
-    let object_id = object_ids_build.len() as u32;
-    object_id_lookup.insert(game_object_id, object_id);
-    object_id
-}
-
 /// Warns, once per material and style, about each PBR material drawn this
 /// frame whose `outline_style` is past the end of the Outline effect's
 /// `count` styles: its surfaces draw no ink.
@@ -2048,6 +1814,7 @@ fn warn_unknown_outline_styles(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::assets::material::Material;
     use crate::assets::material::{MaterialTexture, ShaderVariableValue};
     use crate::assets::skybox::Skybox;
     use crate::assets::AssetRef;
@@ -2058,11 +1825,13 @@ mod tests {
         ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape,
         ParticleVelocity, TonemappingPreset,
     };
+    use crate::component::{ComponentFoliage, ComponentSkinnedMesh, ComponentTerrain};
     use crate::math::Transform;
     use crate::render::postprocess::{
         NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessStage,
     };
     use crate::render::{Camera, Shader, SHADOW_CASCADE_COUNT};
+    use crate::scene::GameObject;
     use crate::test_support::{
         test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets,
     };
@@ -2488,10 +2257,9 @@ mod tests {
         let scene = builder.finish();
 
         let mut renderer = renderer(&read_only_context, 1, (16, 16));
-        let render_context = read_only_context.render_context.clone();
-        renderer.build_asset_data(&render_context, &scene);
+        renderer.build_asset_data(&scene);
         renderer.finish_object_ids();
-        let draw_list = renderer.build_draw_list();
+        let draw_list = renderer.build_own_draw_list();
 
         let mut batches: Vec<_> = draw_list
             .iter()
@@ -2526,6 +2294,65 @@ mod tests {
             layout.len(),
             "every visible object, and only those, gets an object id"
         );
+    }
+
+    #[test]
+    fn views_sharing_one_draw_collection_render_and_pick_as_views_collecting_their_own() {
+        const SIZE: (u32, u32) = (128, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let render_context = read_only_context.render_context.clone();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let first = pbr_material(&read_only_context, "test/shared_first");
+        let second = pbr_material(&read_only_context, "test/shared_second");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let left = vec3(-3.0, 0.0, 0.0);
+        let right = vec3(3.0, 0.0, 0.0);
+        let left_uuid = spawn_mesh(&mut builder, "left", &cube, &first, left);
+        spawn_mesh(&mut builder, "right", &cube, &second, right);
+        let scene = builder.finish();
+        let mut other_builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_mesh(&mut other_builder, "other", &cube, &first, right);
+        let other_scene = other_builder.finish();
+        let near = front_camera(2.0, 10.0);
+        let far = front_camera(2.0, 14.0);
+
+        let render_alone = |(camera, transform): &(Camera, Transform), scene: &Scene| {
+            let mut renderer = renderer(&read_only_context, 1, SIZE);
+            renderer.render_scene_base(camera, transform, scene, None, None);
+            renderer.finalize_scene();
+            read_scene_texture(&renderer, &render_context)
+        };
+        let expected_near = render_alone(&near, &scene);
+        let expected_far = render_alone(&far, &scene);
+        let expected_other = render_alone(&near, &other_scene);
+
+        let mut draws = DrawCollection::new(&read_only_context).expect("white texture loads");
+        draws.collect(&scene);
+        assert_eq!(draws.scene(), Some(scene.id()));
+        let mut near_view = renderer(&read_only_context, 1, SIZE);
+        let mut far_view = renderer(&read_only_context, 1, SIZE);
+        near_view.render_scene_with(&draws, &near.0, &near.1, &scene, None, None);
+        near_view.finalize_scene();
+        far_view.render_scene_with(&draws, &far.0, &far.1, &scene, None, None);
+        far_view.finalize_scene();
+        assert!(near_view.own_draws.is_none() && far_view.own_draws.is_none());
+        assert!(read_scene_texture(&near_view, &render_context) == expected_near);
+        assert!(read_scene_texture(&far_view, &render_context) == expected_far);
+        let (x, y) = project(&near.0, &near.1, left, SIZE);
+        assert_eq!(near_view.pick_game_object(x, y), Some(left_uuid));
+
+        // Draws of another scene are not drawn: the view collects its own.
+        far_view.render_scene_with(&draws, &near.0, &near.1, &other_scene, None, None);
+        far_view.finalize_scene();
+        assert!(far_view.own_draws.is_some());
+        assert!(read_scene_texture(&far_view, &render_context) == expected_other);
     }
 
     #[test]
@@ -2650,6 +2477,7 @@ mod tests {
     fn bone_slot(renderer: &SceneRenderer, scene: &Scene, game_object: GameObject) -> usize {
         let object_id = renderer.object_id_lookup[&scene.uuid(game_object)];
         let draw = renderer
+            .draws()
             .draw_list
             .iter()
             .find(|draw| draw.object_id == object_id)
@@ -2753,7 +2581,7 @@ mod tests {
             [None, None]
         );
         assert!(
-            renderer.draw_list.is_empty(),
+            renderer.draws().draw_list.is_empty(),
             "a disabled mesh queues no draw, so it is neither drawn nor outlined"
         );
 
@@ -2895,7 +2723,7 @@ mod tests {
         let hip_before = scene.transform(hip_object).matrix();
 
         let mut renderer = renderer(&read_only_context, 1, (16, 16));
-        renderer.build_asset_data(&read_only_context.render_context, &scene);
+        renderer.build_asset_data(&scene);
 
         let expected = scene.world_transform(root_object).inverse_matrix()
             * scene.world_transform(hip_object).matrix()
@@ -2940,7 +2768,7 @@ mod tests {
         let scene = builder.finish();
 
         let mut renderer = renderer(&read_only_context, 1, (16, 16));
-        renderer.build_asset_data(&read_only_context.render_context, &scene);
+        renderer.build_asset_data(&scene);
 
         let slot = bone_slot(&renderer, &scene, mesh_object);
         let uploaded: Mat4 = mesh.read().bone_transforms[slot].transform.into();
@@ -2981,7 +2809,7 @@ mod tests {
         let scene = builder.finish();
 
         let mut renderer = renderer(&read_only_context, 1, (16, 16));
-        renderer.build_asset_data(&read_only_context.render_context, &scene);
+        renderer.build_asset_data(&scene);
 
         let mesh = mesh.read();
         assert_eq!(mesh.bone_transforms.len(), 2, "one bone set per instance");
@@ -3816,12 +3644,16 @@ mod tests {
         let object_count = scene.objects().count();
         let uuid = scene.uuid(owner);
         let mut renderer = renderer(&context, 1, (64, 64));
-        renderer.build_asset_data(&context.render_context, &scene);
-        assert_eq!(renderer.draw_list.len(), 2000);
+        renderer.build_asset_data(&scene);
+        assert_eq!(renderer.draws().draw_list.len(), 2000);
         assert_eq!(renderer.object_ids_build, [uuid]);
-        assert!(renderer.draw_list.iter().all(|entry| entry.cast_shadows));
+        assert!(renderer
+            .draws()
+            .draw_list
+            .iter()
+            .all(|entry| entry.cast_shadows));
         renderer.finish_object_ids();
-        let batches = renderer.build_draw_list();
+        let batches = renderer.build_own_draw_list();
         assert_eq!(
             batches.len(),
             2,
@@ -3851,16 +3683,22 @@ mod tests {
             Vec3::repeat(2.0),
         );
         scene.set_transform(parent, &parent_transform.matrix());
-        renderer.build_asset_data(&context.render_context, &scene);
-        assert_eq!(renderer.draw_list.len(), 2);
-        assert!(!renderer.draw_list[0].cast_shadows);
+        renderer.build_asset_data(&scene);
+        assert_eq!(renderer.draws().draw_list.len(), 2);
+        assert!(!renderer.draws().draw_list[0].cast_shadows);
         let local = scene
             .read_component::<ComponentFoliage, _, _>(owner, |patch| {
-                renderer.foliage.instances(uuid, patch)[0].transform
+                renderer
+                    .own_draws
+                    .as_mut()
+                    .unwrap()
+                    .foliage
+                    .instances(uuid, patch)[0]
+                    .transform
             })
             .unwrap();
         let expected = parent_transform.matrix() * local;
-        assert!(renderer.draw_list.iter().any(|entry| {
+        assert!(renderer.draws().draw_list.iter().any(|entry| {
             let actual: Mat4 = entry.transform.into();
             (actual - expected).norm() < 0.0001
         }));
@@ -3873,21 +3711,26 @@ mod tests {
         scene.set_component_enabled::<ComponentFoliage>(owner, false);
         renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
         assert_eq!(renderer.pick_game_object(pixel.0, pixel.1), None);
-        assert!(renderer.draw_list.is_empty());
+        assert!(renderer.draws().draw_list.is_empty());
         scene.set_component_enabled::<ComponentFoliage>(owner, true);
         scene.write_component::<ComponentID, _>(parent, |id| id.visible = false);
-        renderer.build_asset_data(&context.render_context, &scene);
+        renderer.build_asset_data(&scene);
         assert!(
-            renderer.draw_list.is_empty(),
+            renderer.draws().draw_list.is_empty(),
             "hidden ancestors suppress the whole patch"
         );
         scene.write_component::<ComponentID, _>(parent, |id| id.visible = true);
-        renderer.build_asset_data(&context.render_context, &scene);
-        assert_eq!(renderer.draw_list.len(), 2);
+        renderer.build_asset_data(&scene);
+        assert_eq!(renderer.draws().draw_list.len(), 2);
 
         let placements = scene
             .read_component::<ComponentFoliage, _, _>(owner, |patch| {
-                renderer.foliage.instances(uuid, patch)
+                renderer
+                    .own_draws
+                    .as_mut()
+                    .unwrap()
+                    .foliage
+                    .instances(uuid, patch)
             })
             .unwrap();
         // Editing the shared prefab changes its parts, but not random placement.
@@ -3896,16 +3739,21 @@ mod tests {
                 mesh["material"] = serde_json::json!(materials[0].id());
             }
         }
-        renderer.build_asset_data(&context.render_context, &scene);
+        renderer.build_asset_data(&scene);
         let unchanged = scene
             .read_component::<ComponentFoliage, _, _>(owner, |patch| {
-                renderer.foliage.instances(uuid, patch)
+                renderer
+                    .own_draws
+                    .as_mut()
+                    .unwrap()
+                    .foliage
+                    .instances(uuid, patch)
             })
             .unwrap();
         assert!(Arc::ptr_eq(&placements, &unchanged));
         renderer.finish_object_ids();
         assert_eq!(
-            renderer.build_draw_list().len(),
+            renderer.build_own_draw_list().len(),
             1,
             "updated materials merge batches"
         );
@@ -3925,14 +3773,14 @@ mod tests {
             )
             .unwrap();
         assert_eq!(replacement.id(), prefab.id());
-        renderer.build_asset_data(&context.render_context, &scene);
-        assert_eq!(renderer.draw_list.len(), 1);
+        renderer.build_asset_data(&scene);
+        assert_eq!(renderer.draws().draw_list.len(), 1);
         scene.write_component::<ComponentFoliage, _>(owner, |patch| {
             patch.prefabs[0] = AssetRef::default();
         });
-        renderer.build_asset_data(&context.render_context, &scene);
+        renderer.build_asset_data(&scene);
         assert!(
-            renderer.draw_list.is_empty(),
+            renderer.draws().draw_list.is_empty(),
             "a missing prefab skips its copies"
         );
     }
@@ -3976,10 +3824,10 @@ mod tests {
         let mut scene = builder.finish();
         let uuid = scene.uuid(owner);
         let mut renderer = renderer(&context, 1, (64, 64));
-        renderer.build_asset_data(&context.render_context, &scene);
-        assert_eq!(renderer.draw_list.len(), 1);
-        assert!(!renderer.draw_list[0].cast_shadows);
-        let mesh = renderer.draw_list[0].mesh_id;
+        renderer.build_asset_data(&scene);
+        assert_eq!(renderer.draws().draw_list.len(), 1);
+        assert!(!renderer.draws().draw_list[0].cast_shadows);
+        let mesh = renderer.draws().draw_list[0].mesh_id;
         assert_eq!(
             renderer.assets.mesh(mesh).unwrap().read().vertices.len(),
             81
@@ -3988,9 +3836,10 @@ mod tests {
         let view = front_camera(1.0, 10.0);
         renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
         assert_eq!(renderer.pick_game_object(32, 32), Some(uuid));
-        renderer.build_asset_data(&context.render_context, &scene);
+        renderer.build_asset_data(&scene);
         assert_eq!(
-            renderer.draw_list[0].mesh_id, mesh,
+            renderer.draws().draw_list[0].mesh_id,
+            mesh,
             "an unchanged terrain keeps its mesh"
         );
 
@@ -4000,8 +3849,8 @@ mod tests {
         assert_eq!(renderer.pick_game_object(32, 32), None);
 
         scene.set_component_enabled::<ComponentTerrain>(owner, false);
-        renderer.build_asset_data(&context.render_context, &scene);
-        assert!(renderer.draw_list.is_empty());
+        renderer.build_asset_data(&scene);
+        assert!(renderer.draws().draw_list.is_empty());
     }
 
     #[test]
@@ -4042,11 +3891,10 @@ mod tests {
         assert_eq!(expected.len(), 1000);
         let scene = builder.finish();
 
-        let render_context = read_only_context.render_context.clone();
         let mut batching = renderer(&read_only_context, 1, (16, 16));
-        batching.build_asset_data(&render_context, &scene);
+        batching.build_asset_data(&scene);
         batching.finish_object_ids();
-        let draw_list = batching.build_draw_list();
+        let draw_list = batching.build_own_draw_list();
         let batches: Vec<_> = draw_list
             .iter()
             .map(|batch| (batch.mat_id, batch.mesh_id, batch.instances.clone()))
@@ -6391,8 +6239,8 @@ fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
 
 #[cfg(test)]
 mod skinning_tests {
-    use super::{skinned_mesh_world_transform, skinning_instance_index};
     use crate::component::ComponentSkinnedMesh;
+    use crate::render::draw_collection::{skinned_mesh_world_transform, skinning_instance_index};
     use crate::scene::GameObjectRef;
     use crate::test_support::test_scene;
     use nalgebra_glm as glm;
