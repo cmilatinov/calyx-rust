@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "37caaf61-6c10-e66b-cb4c-ce55f9c57544",
+    "name": "shaders/mesh/water",
+    "display_name": "water",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

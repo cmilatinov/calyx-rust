@@ -69,3 +69,4 @@ mod skybox_renderer;
 mod terrain;
 #[cfg(test)]
 mod test_kernel;
+mod water;

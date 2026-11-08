@@ -99,6 +99,9 @@ convention.
 | Tank tracks and guns | tread dark `#6C6C74` | gunmetal `#66635F` | dark steel `#3D4348` |
 | Road wheels | cream `#D4D2CD` | bone concrete `#C0BCB6` | pale concrete `#9FA7AF` |
 | Emissive signals | ember `#FFB000`, strength 30 | amber `#FFB547`, strength 40 | lamps: sodium `#FF9330`, strength 4; shells and muzzle flashes: amber `#FFA640`, strength 2 |
+| Water, deep | teal `#2F7CA0` | oasis teal `#2E747A` | night water `#1B354E` |
+| Water, shallow | lagoon `#5DB4BF` | jade `#6AA89C` | moonlit shallows `#2C5A73` |
+| Water foam | sea foam `#E6F4EE` | cream foam `#ECE6D6` | pale foam `#9CBDCC` |
 | Ink (outlines) | `#121212` | `#121212` | `#121212` |
 
 Roads must stay clearly lighter or darker than the ground; Sunbaked's road is
@@ -110,6 +113,9 @@ Moonlit is blue and slate, never purple: every neutral leans slightly cyan
 render under the cool moon. Its night comes from the dark, cool palette and
 the light; the signals are the only warm light in the scene, so they read at
 a glance at a low strength (see Materials).
+
+Water is a body of the Water component (see Water below), not a material:
+its colours are the component's sRGB fields, entered as the hexes above.
 
 ## Tank colours
 
@@ -268,6 +274,44 @@ from above. Their extra details are substantial forms, not tiny surface noise.
 The `explosive_red`, `sentry_armor` and `sentry_optic` roles are matte clay
 (roughness 0.95, metalness 0) with no emission; the optic is a colored lens,
 not an additional gameplay signal.
+
+## Water
+
+Water is uncrossable terrain, opaque (the renderer has no transparent pass)
+and read from the Far framing by colour and motion alone: a faceted,
+flat-shaded surface whose facets bob in a slow looping wave, shallow colour at
+the banks running to deep in the middle, and a broken foam line along the
+shore. It sits in a sunken channel below the banks, as the creek in
+`sandbox/assets/lookdev/water_test.cxscene` (built by `cargo run -p sandbox
+--example water_test`) shows in each palette.
+
+- Colours: the Water rows of the palette table, as the component's
+  `deep_color`, `shallow_color` and `foam_color`. Deep is clearly darker than
+  the ground and shallow differs from it by hue, so the creek reads as a
+  channel at a glance; foam is the lightest value on the map after the light
+  player, and only a thin line.
+- Every palette's water leans to its own neutrals: Sunny's teal sits beside
+  the grass, Sunbaked's is a muted oasis green-teal against the sand, and
+  Moonlit's is a deep navy-slate, cool like every Moonlit neutral (CIELAB
+  b\* below 0, a\* between −8 and −1), never purple.
+- Facets: about 0.8 m cells, irregular, `facet_variation` 0.12; waves 0.12 m
+  high, 6 m long, at 0.8 m/s, so each loop takes 7.5 s; foam 0.35 m wide.
+  Roughness 0.3: the only glossy ground.
+- Glints: facets that turn most of the way towards mirroring the sun or moon
+  into the camera glint as HDR emission of the light's colour, so they come
+  and go as the facets move. Strength 2.5 by day, a light sparkle under the
+  sun; Moonlit 5.0, above its 2.5 bloom threshold, so the moon's glints halo
+  under its bloom. A glint is a stylised flash, not a reflection: from the
+  high camera a flat surface almost never mirrors a light that is not behind
+  the camera.
+- Ink: the water draws no outline (style 0), as the ground: the Outline
+  effect takes the nearer surface's style at an edge, and the banks are
+  nearer than the water, so a water style would never show. The shore reads
+  by the foam line and the bank wall: the creek sits 0.6 m below the banks,
+  whose walls are earth (`ground_dirt`) under a thin layer of the palette's
+  ground, so the far bank shows a strip of earth above the water. Props on
+  the bank and in the stream are inked against the water as against the
+  ground.
 
 ## Silhouette and scale
 
