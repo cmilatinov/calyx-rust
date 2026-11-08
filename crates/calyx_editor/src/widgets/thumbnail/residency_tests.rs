@@ -6,6 +6,7 @@ use super::generator::ThumbnailGenerator;
 use super::pipeline::*;
 use super::service::{finish_worker_job, process_thumbnail_job, start_worker_job};
 use super::*;
+use crate::panel::FolderListings;
 use calyx_engine::context::AssetContext;
 use calyx_engine::test_support::TestAssets;
 
@@ -200,5 +201,56 @@ fn drawing_a_folder_whose_thumbnails_are_cached_loads_no_asset() {
         fixture.change_epoch(),
         epoch,
         "the registry did not change at all"
+    );
+}
+
+#[test]
+fn thumbnail_jobs_keep_the_content_browser_listing_and_a_created_asset_drops_it() {
+    let fixture = Fixture::new();
+    let folder = fixture
+        .context()
+        .registries
+        .assets
+        .read()
+        .root_path()
+        .join("meshes");
+    let mut listings = FolderListings::default();
+    let draw_folder = |listings: &mut FolderListings| {
+        let context = fixture.context();
+        let registry = context.registries.assets.read();
+        listings.refresh(&registry);
+        let listed = listings.is_listed(&folder);
+        listings.entries(&folder, &registry);
+        listed
+    };
+    draw_folder(&mut listings);
+
+    let texture = fixture.asset_id("textures/red");
+    let mesh = fixture.asset_id("meshes/teapot");
+    assert!(!fixture.is_loaded(texture) && !fixture.is_loaded(mesh));
+    let epoch = fixture.change_epoch();
+    assert_ready(&fixture.draw_tiles(&[texture, mesh]));
+    assert!(
+        fixture.change_epoch() > epoch,
+        "the jobs loaded and evicted assets"
+    );
+    assert!(!fixture.is_loaded(mesh), "the mesh was evicted");
+    assert!(
+        draw_folder(&mut listings),
+        "loading and evicting kept the listing"
+    );
+
+    let created = folder.join("listing_test.cxscene");
+    fs::write(&created, "{}").expect("the scene file is written");
+    fixture
+        .context()
+        .registries
+        .assets
+        .read()
+        .register_file(&created)
+        .expect("the scene registers");
+    assert!(
+        !draw_folder(&mut listings),
+        "a created asset dropped the listing"
     );
 }

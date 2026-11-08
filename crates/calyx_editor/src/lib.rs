@@ -29,7 +29,8 @@ use calyx_engine::error::BoxedError;
 use calyx_engine::input::Input;
 use calyx_engine::logging::{DefaultLogger, Log};
 use calyx_engine::render::{
-    GizmoOptions, ParticleSimulation, SceneRenderer, SceneRendererError, SceneRendererOptions,
+    DrawCollection, GizmoOptions, ParticleSimulation, SceneRenderer, SceneRendererError,
+    SceneRendererOptions,
 };
 use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
 use calyx_engine::scene::{Scene, SceneManager};
@@ -94,6 +95,9 @@ pub struct EditorAppState {
     pub game: GameContext,
     pub scene_renderer: SceneRenderer,
     pub game_renderer: SceneRenderer,
+    /// The draws of the scene the views render, collected once a frame and
+    /// shared by the Scene and Game views.
+    pub draws: DrawCollection,
     pub inspector_registry: InspectorRegistry,
     /// How each asset type opens, by asset type UUID.
     pub(crate) asset_openers: AssetOpenerRegistry,
@@ -196,6 +200,7 @@ impl EditorAppState {
             },
             initial_render_size,
         )?;
+        let draws = DrawCollection::new(&asset_context)?;
         drop(asset_context);
         let thumbnails = ThumbnailService::default();
         let scene_document = SceneDocument::new(&project_path).with_thumbnails(thumbnails.handle());
@@ -224,6 +229,7 @@ impl EditorAppState {
             focus_panel: None,
             scene_renderer,
             game_renderer,
+            draws,
             inspector_registry,
             asset_openers,
         }))
@@ -654,6 +660,7 @@ impl EditorApp {
             selection,
             scene_renderer,
             game_renderer,
+            draws,
             game_size,
             prefab_mode,
             camera: EditorCamera {
@@ -684,7 +691,13 @@ impl EditorApp {
 
         let scene = scenes.simulation_scene();
         let particles = Some(&*particles);
-        scene_renderer.render_scene_base(
+        // Both views draw the same scene, so its draws are collected once.
+        {
+            profile_scope!("Draw collection");
+            draws.collect(scene);
+        }
+        scene_renderer.render_scene_with(
+            draws,
             camera,
             transform,
             scene,
@@ -704,7 +717,7 @@ impl EditorApp {
                 render_state.queue.submit(Some(encoder.finish()));
                 return;
             }
-            Self::render_game_view(game_renderer, scene, particles, size);
+            Self::render_game_view(game_renderer, draws, scene, particles, size);
         } else {
             let device = &render_state.device;
             let queue = &render_state.queue;
@@ -716,10 +729,12 @@ impl EditorApp {
     }
 
     /// Renders `scene` from its main camera into `game_renderer` at
-    /// `width` x `height` physical pixels. Returns `false`, rendering
-    /// nothing, when the scene has no main camera.
+    /// `width` x `height` physical pixels, drawing the draws `draws`
+    /// collected from it. Returns `false`, rendering nothing, when the scene
+    /// has no main camera.
     fn render_game_view(
         game_renderer: &mut SceneRenderer,
+        draws: &DrawCollection,
         scene: &Scene,
         particles: Option<&ParticleSimulation>,
         (width, height): (u32, u32),
@@ -731,7 +746,7 @@ impl EditorApp {
         game_renderer.resize_textures(width, height);
         let transform = scene.world_transform(node);
         let camera = c.camera(width as f32 / height as f32);
-        game_renderer.render_scene_base(&camera, &transform, scene, particles, None);
+        game_renderer.render_scene_with(draws, &camera, &transform, scene, particles, None);
         game_renderer.finalize_scene();
         true
     }

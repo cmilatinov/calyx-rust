@@ -10,6 +10,7 @@ use crate::widgets::{
 use crate::{icons, EditorAppState};
 use calyx_engine::assets::animation_graph::AnimationGraph;
 use calyx_engine::assets::AssetRegistry;
+use calyx_engine::profile_scope;
 use egui::load::SizedTexture;
 use egui::text::LayoutJob;
 use egui::{
@@ -39,7 +40,7 @@ pub struct PanelContentBrowser {
 
 /// One entry of a listed folder.
 #[derive(Clone)]
-struct ListedEntry {
+pub(crate) struct ListedEntry {
     path: PathBuf,
     is_dir: bool,
     /// The asset the file is, when it is one.
@@ -47,12 +48,13 @@ struct ListedEntry {
 }
 
 /// The folders the content browser has listed, kept until the watcher
-/// reports a file created, removed or renamed, or the registry's assets
-/// change, so drawing the panel reads no directory and resolves no path when
-/// nothing changed.
+/// reports a file created, removed or renamed, or the registry registers or
+/// forgets an asset file, so drawing the panel reads no directory and
+/// resolves no path when nothing changed. Loading and evicting assets, as
+/// thumbnail jobs do, keeps them.
 #[derive(Default)]
-struct FolderListings {
-    /// The registry's file change count and change epoch the listings
+pub(crate) struct FolderListings {
+    /// The registry's file change count and metadata epoch the listings
     /// reflect.
     stamp: Option<(u64, u64)>,
     /// Each listed folder's subfolders, in the order the filesystem gives.
@@ -64,8 +66,8 @@ struct FolderListings {
 impl FolderListings {
     /// Forgets every listing when the registry reports a change since they
     /// were made.
-    fn refresh(&mut self, registry: &AssetRegistry) {
-        let stamp = (registry.file_change_count(), registry.change_epoch());
+    pub(crate) fn refresh(&mut self, registry: &AssetRegistry) {
+        let stamp = (registry.file_change_count(), registry.meta_epoch());
         if self.stamp != Some(stamp) {
             self.subfolders.clear();
             self.entries.clear();
@@ -77,6 +79,7 @@ impl FolderListings {
         self.subfolders
             .entry(folder.to_path_buf())
             .or_insert_with(|| {
+                profile_scope!("List subfolders");
                 fs::read_dir(folder)
                     .map(|entries| {
                         entries
@@ -89,8 +92,16 @@ impl FolderListings {
             })
     }
 
-    fn entries(&mut self, folder: &Path, registry: &AssetRegistry) -> &[ListedEntry] {
+    /// Whether the entries of `folder` are listed, so drawing it reads no
+    /// directory.
+    #[cfg(test)]
+    pub(crate) fn is_listed(&self, folder: &Path) -> bool {
+        self.entries.contains_key(folder)
+    }
+
+    pub(crate) fn entries(&mut self, folder: &Path, registry: &AssetRegistry) -> &[ListedEntry] {
         self.entries.entry(folder.to_path_buf()).or_insert_with(|| {
+            profile_scope!("List folder");
             let Ok(entries) = fs::read_dir(folder) else {
                 return Vec::new();
             };
