@@ -58,6 +58,14 @@ The original images are preserved without alteration:
   VICTORY in cyan, DEFEAT in red or DRAW in off-white, over what ended the
   match. Free for all ranks every tank in one list by kills, each name in its
   side's colour; team deathmatch keeps the friendly and opposing sections.
+- The match flow's screens (`sandbox/src/hud/menu.rs`) share the scoreboard's
+  panel, title plate, blur and darkened backdrop, and hide the gameplay
+  overlays. The main menu shows the arena's title and match rules over PLAY
+  and QUIT; the lobby lists each side's tanks with their ready state over
+  MAIN MENU and READY; the end screen puts MAIN MENU and REMATCH under the
+  final scoreboard. Buttons are bevelled plates with the one steel edge; the
+  screen's main choice takes a cyan edge, hover lights the fill, and Enter
+  picks the main choice.
 - Omit the bottom health and ammo panels entirely. Health remains visible in
   world HP bars; weapon, reload and respawn gameplay remains unchanged.
 - Use the bundled OFL Barlow Bold and Bold Italic faces, with
@@ -105,6 +113,17 @@ An enemy that comes into sight shows at once and its HP bar and blip fade
 in. Fog is current vision only and changes
 nothing but what is drawn: hidden enemies still collide, shoot and take
 damage.
+
+The arena's Game State (`sandbox/src/game_state.rs`) runs the match flow:
+the main menu, the lobby, the match and the end screen, then a rematch from
+the lobby or back to the menu. Combat runs only while the match is playing:
+in the menu, the lobby and the end screen, tanks, sentries, rounds and
+respawns hold still and no damage or kill counts. Leaving a match for the
+lobby or the menu removes the rounds still in flight and puts every tank back
+at its spawn point at full health and ammo; Match Rules clear the totals. The
+local player readying starts the match, since bots are always ready. Quit
+stops play in the editor, as its Stop button does, and closes the standalone
+player.
 
 Keep these presentation rules separate from
 configurable scoring, timing and damage rules.

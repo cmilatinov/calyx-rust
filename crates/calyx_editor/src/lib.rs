@@ -605,6 +605,12 @@ impl EditorApp {
             is_active,
         );
         self.state.game.update_scene(target, &input);
+        // A game's Quit, such as its main menu's, leaves play as the
+        // toolbar's Stop does.
+        if self.state.game.resources.take_quit_request() && self.state.game.scenes.is_simulating() {
+            log::info!("Game requested quit; stopping scene simulation");
+            self.state.game.scenes.stop_simulation();
+        }
     }
 
     fn update_window_title(&mut self, ctx: &egui::Context) {

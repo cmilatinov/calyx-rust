@@ -150,6 +150,10 @@ impl eframe::App for GameApp {
                 );
                 self.game.prepare_scene(UpdatedScene::Current);
                 self.game.update_scene(UpdatedScene::Current, &input);
+                if self.game.resources.take_quit_request() {
+                    log::info!("Game requested quit; closing the player");
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                }
                 self.hud.paint(
                     self.game.scenes.current_scene_mut(),
                     ui.painter(),

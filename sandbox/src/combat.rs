@@ -5,7 +5,8 @@
 //! gameplay reports a lethal projectile hit; a networked game can deserialize
 //! a [`KillEvent`] from the host and record it the same way.
 
-use crate::match_rules::{match_mode, match_over, MatchMode};
+use crate::game_state::combat_paused;
+use crate::match_rules::{match_mode, MatchMode};
 use crate::sentry::ComponentSentry;
 use crate::spawn::{ComponentRespawnState, SPAWN_TEAM_ANY};
 use crate::tank::ComponentTankController;
@@ -90,7 +91,7 @@ pub(crate) fn record_damage(
     amount: f32,
     max_health: f32,
 ) {
-    if !amount.is_finite() || amount <= 0.0 || match_over(scene) {
+    if !amount.is_finite() || amount <= 0.0 || combat_paused(scene) {
         return;
     }
     let Some(shooter) = shooter.filter(|shooter| *shooter != target) else {
@@ -175,12 +176,13 @@ impl KillEvent {
 
 /// Records deaths and tank kill credit, then adds the event to every kill feed.
 /// Hazards keep their display identity but award no kill, score or assist, and
-/// a kill of the killer's own side counts only the death. Once the match is
-/// over nothing more is recorded, so the final scoreboard stays as it ended.
+/// a kill of the killer's own side counts only the death. Outside play and
+/// once the match is over nothing is recorded, so the final scoreboard stays
+/// as it ended.
 /// A kill that reaches the kill limit ends the match at once, so a later kill
 /// in the same frame cannot change the result.
 pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
-    if match_over(scene) {
+    if combat_paused(scene) {
         return;
     }
     let victim = scene.find(event.victim.id);

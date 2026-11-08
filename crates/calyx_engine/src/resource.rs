@@ -30,6 +30,16 @@ impl dyn Resource {
     }
 }
 
+/// A game's request to leave play, such as a main menu's Quit. The editor
+/// stops the simulation when it sees one, and the standalone player closes
+/// its window. Set it with [`ResourceMap::request_quit`].
+#[derive(Debug, Default)]
+pub struct QuitRequest {
+    requested: bool,
+}
+
+impl Resource for QuitRequest {}
+
 /// Type-indexed runtime resource storage used by the engine loop.
 pub struct ResourceMap {
     inner: HashMap<TypeId, Box<dyn Resource>>,
@@ -52,6 +62,7 @@ impl ResourceMap {
         resources.insert_default::<Network>();
         resources.insert_default::<PhysicsConfiguration>();
         resources.insert_default::<InputState>();
+        resources.insert_default::<QuitRequest>();
         resources
     }
 
@@ -168,6 +179,22 @@ impl ResourceMap {
     pub fn physics_configuration_mut(&mut self) -> &mut PhysicsConfiguration {
         self.resource_mut::<PhysicsConfiguration>().unwrap()
     }
+
+    /// Asks the host to leave play once this frame's update is done: see
+    /// [`QuitRequest`].
+    pub fn request_quit(&mut self) {
+        match self.resource_mut::<QuitRequest>() {
+            Some(request) => request.requested = true,
+            None => self.insert(QuitRequest { requested: true }),
+        }
+    }
+
+    /// Returns whether play was asked to end since the last call, and clears
+    /// the request.
+    pub fn take_quit_request(&mut self) -> bool {
+        self.resource_mut::<QuitRequest>()
+            .is_some_and(|request| std::mem::take(&mut request.requested))
+    }
 }
 
 #[cfg(test)]
@@ -233,6 +260,21 @@ mod tests {
         f.0 = true;
         assert_eq!(m.resource::<Counter>().unwrap().0, 10);
         assert!(m.resource::<Flag>().unwrap().0);
+    }
+
+    #[test]
+    fn a_quit_request_is_taken_once() {
+        let mut resources = ResourceMap::new();
+        assert!(!resources.take_quit_request());
+        resources.request_quit();
+        assert!(resources.take_quit_request());
+        assert!(!resources.take_quit_request());
+        // A map without the resource still takes a request.
+        let mut bare = ResourceMap {
+            inner: Default::default(),
+        };
+        bare.request_quit();
+        assert!(bare.take_quit_request());
     }
 
     #[test]

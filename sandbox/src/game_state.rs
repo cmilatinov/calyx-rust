@@ -1,3 +1,4 @@
+use crate::tank::{ComponentHealth, ComponentProjectile, ComponentTankController};
 use calyx_engine::component::{
     Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
     ReflectComponentUpdate,
@@ -7,6 +8,7 @@ use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
+use legion::IntoQuery;
 use serde::{Deserialize, Serialize};
 
 pub const GAME_PHASE_MAIN_MENU: u32 = 0;
@@ -186,22 +188,186 @@ impl ComponentUpdate for ComponentGameState {
 
 /// Advances the scene's Game State. When the scene has Match Rules, they
 /// decide when the match ends, so the Game State's own timeout is off.
+/// Leaving a match for the lobby or the menu resets the arena for the next
+/// one: see [`reset_combat`].
 pub fn update_game_state(scene: &mut Scene, game_object: GameObject, dt: f32) -> Option<GamePhase> {
     let ruled = crate::match_rules::match_rules(scene).is_some();
     let mut transition = None;
+    let mut left_match = false;
     let _ = scene.write_component::<ComponentGameState, _>(game_object, |state| {
+        let from = state.current_phase();
         transition = if ruled {
             state.tick_under_match_rules(dt)
         } else {
             state.tick(dt)
         };
+        left_match = matches!(from, GamePhase::Playing | GamePhase::GameOver)
+            && matches!(transition, Some(GamePhase::Lobby | GamePhase::MainMenu));
     });
+    if left_match {
+        reset_combat(scene);
+    }
     transition
+}
+
+/// The phase of the scene's Game State, or `None` in a scene without one.
+pub fn game_phase(scene: &Scene) -> Option<GamePhase> {
+    <&ComponentGameState>::query()
+        .iter(scene.world())
+        .next()
+        .map(ComponentGameState::current_phase)
+}
+
+/// Whether combat is stopped: outside a Game State's Playing phase, and once
+/// the match is decided. Tanks, sentries, rounds and respawns then hold still,
+/// and no damage or kill is recorded. A scene without a Game State fights
+/// until its match is decided.
+pub fn combat_paused(scene: &Scene) -> bool {
+    crate::match_rules::match_over(scene)
+        || game_phase(scene).is_some_and(|phase| phase != GamePhase::Playing)
+}
+
+/// Clears the arena for the next match: rounds still in flight go, and every
+/// tank is back at its spawn point, alive, at full health and ammo, and
+/// ready to move the moment the match starts. Kills, deaths, assists and
+/// score are reset by the scene's Match Rules.
+pub fn reset_combat(scene: &mut Scene) {
+    let rounds: Vec<_> = scene
+        .objects()
+        .filter(|&object| {
+            scene
+                .read_component::<ComponentProjectile, _, _>(object, |_| ())
+                .is_some()
+        })
+        .collect();
+    for round in rounds {
+        scene.delete(round);
+    }
+    let tanks: Vec<_> = scene
+        .objects()
+        .filter(|&object| crate::combat::is_tank_combatant(scene, object))
+        .collect();
+    for tank in tanks {
+        crate::spawn::reset_for_match(scene, tank);
+        let _ = scene.write_component::<ComponentHealth, _>(tank, ComponentHealth::restore_full);
+        let _ = scene.write_component::<ComponentTankController, _>(tank, |controller| {
+            controller.ammo = controller.max_ammo;
+            controller.fire_cooldown_remaining = 0.0;
+            controller.reload_remaining = 0.0;
+            controller.speed = 0.0;
+        });
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{ComponentGameState, GamePhase};
+    use super::{combat_paused, update_game_state, ComponentGameState, GamePhase};
+    use crate::spawn::{ComponentRespawnState, ComponentSpawnPoint};
+    use crate::tank::{ComponentHealth, ComponentProjectile, ComponentTankController};
+    use calyx_engine::math::Transform;
+
+    #[test]
+    fn combat_is_paused_outside_playing() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        assert!(
+            !combat_paused(&scene),
+            "a scene without a Game State fights"
+        );
+        let state = scene.create(None, None);
+        scene.add_component(state, ComponentGameState::default());
+        for (phase, paused) in [
+            (GamePhase::MainMenu, true),
+            (GamePhase::Lobby, true),
+            (GamePhase::Playing, false),
+            (GamePhase::GameOver, true),
+        ] {
+            scene.write_component::<ComponentGameState, _>(state, |state| {
+                state.phase = phase.as_u32();
+            });
+            assert_eq!(combat_paused(&scene), paused, "{phase:?}");
+        }
+    }
+
+    #[test]
+    fn leaving_a_match_clears_rounds_and_restores_tanks_at_their_spawn() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let state = scene.create(None, None);
+        scene.add_component(
+            state,
+            ComponentGameState {
+                phase: GamePhase::Playing.as_u32(),
+                ..Default::default()
+            },
+        );
+        let spawn = scene.create(None, None);
+        scene.add_component(spawn, ComponentSpawnPoint::default());
+        scene.set_world_transform(spawn, Transform::from_xyz(5.0, 0.0, 7.0).matrix());
+        let tank = scene.create(None, None);
+        scene.add_component(
+            tank,
+            ComponentTankController {
+                ammo: 0,
+                max_ammo: 6,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            tank,
+            ComponentHealth {
+                current_health: 0.0,
+                dead: true,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            tank,
+            ComponentRespawnState {
+                alive: false,
+                respawn_remaining: 2.0,
+                ..Default::default()
+            },
+        );
+        let round = scene.create(None, None);
+        scene.add_component(round, ComponentProjectile::default());
+
+        let finish = |scene: &mut calyx_engine::scene::Scene,
+                      request: fn(&mut ComponentGameState)| {
+            scene.write_component::<ComponentGameState, _>(state, request);
+            update_game_state(scene, state, 0.1)
+        };
+        assert_eq!(
+            finish(&mut scene, |state| state.finish_match_requested = true),
+            Some(GamePhase::GameOver)
+        );
+        scene.flush_deletes();
+        assert!(
+            scene.find(scene.uuid(round)).is_some(),
+            "the end keeps rounds"
+        );
+
+        assert_eq!(
+            finish(&mut scene, |state| state.restart_match_requested = true),
+            Some(GamePhase::Lobby)
+        );
+        scene.flush_deletes();
+        assert!(scene.objects().all(|object| object != round));
+        assert_eq!(
+            scene.world_transform(tank).position,
+            nalgebra_glm::vec3(5.0, 0.0, 7.0)
+        );
+        let respawn = scene
+            .read_component::<ComponentRespawnState, _, _>(tank, |state| *state)
+            .unwrap();
+        assert!(respawn.alive && !respawn.is_gameplay_locked());
+        assert_eq!(
+            scene.read_component::<ComponentHealth, _, _>(tank, |h| (h.current_health, h.dead)),
+            Some((100.0, false))
+        );
+        assert_eq!(
+            scene.read_component::<ComponentTankController, _, _>(tank, |c| c.ammo),
+            Some(6)
+        );
+    }
 
     #[test]
     fn defaults_to_main_menu() {
