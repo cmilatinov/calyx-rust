@@ -111,7 +111,8 @@ pub(crate) fn cover_entry(start: Vec2, end: Vec2, cover: GroundRect) -> Option<f
 
 /// Whether an authored arena collider named `name` blocks sight: the walls
 /// and the boxes (crates and supply crates). Low cover such as barriers,
-/// sandbags and rocks stops rounds but not sight.
+/// sandbags and rocks stops rounds but not sight. A collider outside
+/// [`crate::collision::SIGHT_GROUP`] never blocks sight, whatever its name.
 fn blocks_sight(name: &str) -> bool {
     name.starts_with("Arena Wall")
         || (name.starts_with("Arena Cover") && (name.contains("Crate") || name.contains("Supply")))
@@ -149,30 +150,52 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
         scene.is_visible_in_hierarchy(*child)
             && scene.is_component_enabled::<ComponentCollider>(*child)
     };
+    // Only colliders in the sight group block sight; water, which stops
+    // only tanks, does not.
+    let in_sight_group = |child: &GameObject| {
+        scene
+            .read_component::<ComponentCollider, _, _>(*child, |collider| {
+                collider.groups.interacts_with(&crate::collision::SIGHT)
+            })
+            .unwrap_or(false)
+    };
     let children = scene.children(object).collect::<Vec<_>>();
     if generated {
-        let cover: Vec<GroundRect> = if children.is_empty() {
-            cover
+        if children.is_empty() {
+            let cover: Vec<GroundRect> = cover
                 .iter()
                 .map(|position| {
                     GroundRect::placed(&transform, *position, vec2(cell_size, cell_size))
                 })
-                .collect()
-        } else {
-            // Generated cover is one unit cube per cell; follow its live pose
-            // and visibility.
-            children
-                .into_iter()
-                .filter(|child| live(child) && scene.transform(*child).position.y > 0.0)
-                .map(|child| {
-                    GroundRect::placed(&scene.world_transform(child), Vec3::zeros(), vec2(1.0, 1.0))
-                })
-                .collect()
-        };
+                .collect();
+            return Some(ArenaGeometry {
+                floor,
+                sight_blockers: cover.clone(),
+                cover,
+            });
+        }
+        // Generated cover is one unit cube per cell; follow its live pose
+        // and visibility.
+        let cubes: Vec<(GroundRect, bool)> = children
+            .iter()
+            .filter(|child| live(child) && scene.transform(**child).position.y > 0.0)
+            .map(|child| {
+                let rect = GroundRect::placed(
+                    &scene.world_transform(*child),
+                    Vec3::zeros(),
+                    vec2(1.0, 1.0),
+                );
+                (rect, in_sight_group(child))
+            })
+            .collect();
         return Some(ArenaGeometry {
             floor,
-            sight_blockers: cover.clone(),
-            cover,
+            cover: cubes.iter().map(|(rect, _)| *rect).collect(),
+            sight_blockers: cubes
+                .iter()
+                .filter(|(_, blocks)| *blocks)
+                .map(|(rect, _)| *rect)
+                .collect(),
         });
     }
     // Authored kit instances have independent collider children; read their
@@ -180,18 +203,19 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
     let mut cover = Vec::new();
     let mut sight_blockers = Vec::new();
     for child in scene.descendants(object) {
-        let (is_cover, blocks) = scene
+        let (is_cover, blocks_by_name) = scene
             .read_component::<ComponentID, _, _>(child, |id| {
                 (id.name.starts_with("Arena Cover"), blocks_sight(&id.name))
             })
             .unwrap_or_default();
-        if (!is_cover && !blocks) || !live(&child) {
+        let blocks = blocks_by_name && in_sight_group(&child);
+        if (!is_cover && !blocks_by_name) || !live(&child) {
             continue;
         }
         // The perimeter's strips, the arena's own children, are the floor's
         // edge; the solids of interior walls, nested under each wall, stand
         // inside it as cover does.
-        let is_cover = is_cover || (blocks && scene.parent(child) != Some(object));
+        let is_cover = is_cover || (blocks_by_name && scene.parent(child) != Some(object));
         let Some(ColliderShape::Cuboid { half_extents }) =
             scene.read_component::<ComponentCollider, _, _>(child, |collider| collider.shape)
         else {

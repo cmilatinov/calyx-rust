@@ -1,6 +1,6 @@
 #[cfg(test)]
 mod tests {
-    use crate::component::{ColliderShape, ComponentCollider, ComponentRigidBody};
+    use crate::component::{ColliderShape, CollisionGroups, ComponentCollider, ComponentRigidBody};
     use crate::core::Time;
     use crate::math::Transform;
     use crate::physics::{PhysicsConfiguration, PhysicsContext};
@@ -1035,5 +1035,123 @@ mod tests {
             )
             .expect("ray should hit the moved sphere");
         assert!((hit.toi - 7.5).abs() < 1e-4, "unexpected toi {}", hit.toi);
+    }
+
+    /// Two fixed spheres on the +Z axis: a near one in group 2 only and a
+    /// far one with the default groups.
+    fn grouped_targets(
+        scene: &mut crate::scene::Scene,
+    ) -> (crate::scene::GameObject, crate::scene::GameObject) {
+        let sphere = |scene: &mut crate::scene::Scene, z: f32, groups: CollisionGroups| {
+            let target = scene.create(None, None);
+            scene.set_transform(target, &nalgebra_glm::translation(&Vec3::new(0.0, 0.0, z)));
+            scene.add_component(
+                target,
+                ComponentRigidBody {
+                    ty: RigidBodyType::Fixed,
+                    ..Default::default()
+                },
+            );
+            scene.add_component(
+                target,
+                ComponentCollider {
+                    shape: ColliderShape::Sphere { radius: 0.5 },
+                    groups,
+                    ..Default::default()
+                },
+            );
+            target
+        };
+        let near = sphere(scene, 3.0, CollisionGroups::new(0b10, u32::MAX));
+        let far = sphere(scene, 6.0, CollisionGroups::ALL);
+        scene.prepare();
+        (near, far)
+    }
+
+    #[test]
+    fn queries_filter_colliders_by_groups() {
+        let mut scene = test_scene();
+        let (near, far) = grouped_targets(&mut scene);
+        let physics = &scene.physics;
+        let ray = |filter: QueryFilter| {
+            physics
+                .cast_ray(Vec3::zeros(), Vec3::new(0.0, 0.0, 1.0), 10.0, true, filter)
+                .map(|hit| hit.entity)
+        };
+        let shape = |filter: QueryFilter| {
+            physics
+                .cast_shape(
+                    ColliderShape::Sphere { radius: 0.2 },
+                    Vec3::zeros(),
+                    UnitQuaternion::identity(),
+                    Vec3::new(0.0, 0.0, 10.0),
+                    1.0,
+                    filter,
+                )
+                .map(|hit| hit.entity)
+        };
+        let overlap = |z: f32, filter: QueryFilter| {
+            physics.intersect_shape(
+                ColliderShape::Sphere { radius: 0.2 },
+                Vec3::new(0.0, 0.0, z),
+                UnitQuaternion::identity(),
+                filter,
+            )
+        };
+        let group_2 = CollisionGroups::new(0b10, 0b10).query_filter();
+        let group_1 = CollisionGroups::new(0b01, 0b01).query_filter();
+
+        // Without groups, and with groups the near sphere is in, it blocks.
+        assert_eq!(ray(QueryFilter::default()), Some(near.entity));
+        assert_eq!(ray(group_2), Some(near.entity));
+        assert_eq!(shape(group_2), Some(near.entity));
+        assert_eq!(overlap(3.0, group_2), Some(near.entity));
+        // A query in a group it is not in passes through to the far one.
+        assert_eq!(ray(group_1), Some(far.entity));
+        assert_eq!(shape(group_1), Some(far.entity));
+        assert_eq!(overlap(3.0, group_1), None);
+        assert_eq!(overlap(6.0, group_1), Some(far.entity));
+    }
+
+    #[test]
+    fn collider_groups_reach_rapier_and_follow_edits() {
+        let mut scene = test_scene();
+        let (near, far) = grouped_targets(&mut scene);
+        let groups = |scene: &crate::scene::Scene, object: crate::scene::GameObject| {
+            let handle = scene.physics.entity_collider[&object.entity];
+            scene.physics.colliders[handle].collision_groups()
+        };
+        assert_eq!(groups(&scene, far), CollisionGroups::ALL.into());
+        assert_eq!(
+            groups(&scene, far),
+            rapier3d::geometry::InteractionGroups::all()
+        );
+        assert_eq!(
+            groups(&scene, near),
+            CollisionGroups::new(0b10, u32::MAX).into()
+        );
+
+        scene.write_component::<ComponentCollider, _>(near, |collider| {
+            collider.groups = CollisionGroups::new(0b100, 0b1);
+        });
+        scene.prepare();
+        assert_eq!(
+            groups(&scene, near),
+            CollisionGroups::new(0b100, 0b1).into()
+        );
+    }
+
+    #[test]
+    fn collision_groups_interact_as_rapier_decides() {
+        let hull = CollisionGroups::new(0b01, 0b01);
+        let round = CollisionGroups::new(0b10, 0b10);
+        let tank_only = CollisionGroups::new(0b01, u32::MAX);
+        assert!(CollisionGroups::ALL.interacts_with(&hull));
+        assert!(tank_only.interacts_with(&hull));
+        assert!(!tank_only.interacts_with(&round));
+        for (a, b) in [(tank_only, hull), (tank_only, round), (hull, round)] {
+            let rapier: rapier3d::geometry::InteractionGroups = a.into();
+            assert_eq!(a.interacts_with(&b), rapier.test(b.into()));
+        }
     }
 }

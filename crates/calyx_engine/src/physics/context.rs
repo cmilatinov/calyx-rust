@@ -1,3 +1,5 @@
+#[cfg(doc)]
+use crate::component::CollisionGroups;
 use crate::component::{
     ColliderShape, ComponentCollider, ComponentRigidBody, ComponentTransform, Orientation,
 };
@@ -121,6 +123,7 @@ impl PhysicsContext {
             .enabled(enabled)
             .friction(collider.friction)
             .density(collider.density)
+            .collision_groups(collider.groups.into())
             .active_events(ActiveEvents::COLLISION_EVENTS | ActiveEvents::CONTACT_FORCE_EVENTS)
             .build()
     }
@@ -145,6 +148,10 @@ impl PhysicsContext {
     ///
     /// `max_distance` is measured in world units. A zero-length direction
     /// returns no hit.
+    ///
+    /// `filter` picks the colliders the query sees; its groups, such as
+    /// [`CollisionGroups::query_filter`]'s, keep only the colliders whose
+    /// [`ComponentCollider::groups`] interact with them.
     pub fn cast_ray(
         &self,
         origin: Vector3<f32>,
@@ -184,6 +191,10 @@ impl PhysicsContext {
     /// The velocity vector determines the cast direction and distance. Use
     /// `max_time_of_impact` to clamp how far along that velocity the query may
     /// report hits.
+    ///
+    /// `filter` picks the colliders the query sees; its groups, such as
+    /// [`CollisionGroups::query_filter`]'s, keep only the colliders whose
+    /// [`ComponentCollider::groups`] interact with them.
     pub fn cast_shape(
         &self,
         shape: ColliderShape,
@@ -220,6 +231,10 @@ impl PhysicsContext {
 
     /// Returns the entity of a collider that overlaps a collider primitive
     /// placed at `position` and `rotation`, if any.
+    ///
+    /// `filter` picks the colliders the query sees; its groups, such as
+    /// [`CollisionGroups::query_filter`]'s, keep only the colliders whose
+    /// [`ComponentCollider::groups`] interact with them.
     pub fn intersect_shape(
         &self,
         shape: ColliderShape,
@@ -392,6 +407,7 @@ impl PhysicsContext {
         collider.set_shape(Self::collider_shape(component.shape));
         collider.set_friction(component.friction);
         collider.set_density(component.density);
+        collider.set_collision_groups(component.groups.into());
     }
 
     /// Sync explicit scene transform edits into Rapier before stepping.
