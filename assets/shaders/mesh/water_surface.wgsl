@@ -32,7 +32,7 @@ fn water_base_color(in: WaterVertexOut) -> vec3f {
 // - a band along both shores, about `foam_width` wide, whose inner edge swells and breaks;
 // - loose flecks just past the band;
 // - patches in the open water, stretched along the flow, covering about `foam_patches` of it;
-// - a broken ring `obstacle_foam` wide around each obstacle.
+// - a thin, broken ring about `obstacle_foam` wide around each obstacle.
 fn water_foam(river: vec4f) -> f32 {
     let s = river.x;
     let t = river.y;
@@ -48,9 +48,12 @@ fn water_foam(river: vec4f) -> f32 {
         + 0.35 * water_noise(vec2f(s * 1.1 - drift * 1.1, t * 2.2 + 5.0));
     let patch_threshold = mix(1.01, 0.55, clamp(water.foam_patches, 0.0, 1.0));
     foam = max(foam, step(patch_threshold, patch_shape));
-    let ring = water.obstacle_foam
-        * (0.5 + water_noise(vec2f(s * 1.6 - drift * 1.6, t * 1.6 + 31.0)));
-    foam = max(foam, step(obstacle, ring));
+    // The ring hugs the obstacle: a thin band whose outer edge swells with the flow, broken
+    // into pieces that drift downstream.
+    let swell = water_noise(vec2f(s * 1.8 - drift * 1.6, t * 1.8 + 31.0));
+    let pieces = water_noise(vec2f(s * 3.0 - drift * 1.4, t * 3.0 + 11.0));
+    let ring = water.obstacle_foam * (0.3 + 0.9 * swell);
+    foam = max(foam, step(obstacle, ring) * step(0.35, pieces));
     return foam;
 }
 
@@ -59,12 +62,12 @@ fn water_albedo(in: WaterVertexOut) -> vec3f {
     return mix(water_base_color(in), water.foam_color.rgb, water_foam(in.river));
 }
 
-// The glint of the light on the water, as HDR emission: a surface glints once it has turned from
-// rest most of the way towards mirroring the light into the camera. A flat surface seen from a
-// high camera rarely mirrors a sun that is not behind the camera, so the glints are where the
-// waves turn furthest towards it, and they come and go as the waves roll. Faceted, whole facets
-// flash, judged at their centroids; smooth, the glint follows each point's normal, in narrower
-// streaks along the crests.
+// The glint of the light on the water, as HDR emission, where the waves turn from rest most of the
+// way towards mirroring the light into the camera. A flat surface seen from a high camera rarely
+// mirrors a sun that is not behind the camera, so the glints are where the waves turn furthest
+// towards it, and they come and go as the waves roll. Faceted, whole facets flash, judged at
+// their centroids. Smooth, the light sparkles: small round points scattered over the turned
+// slopes, twinkling as they drift with the flow.
 fn water_glint(in: WaterVertexOut) -> vec3f {
     let is_smooth = water_is_smooth();
     let normal = water_normal(in);
@@ -76,7 +79,18 @@ fn water_glint(in: WaterVertexOut) -> vec3f {
     let at_rest = dot(reflect(-to_camera, in.rest_normal), to_light);
     let turned = (aligned - at_rest) / max(1.0 - at_rest, 1e-3);
     let lit = dot(normal, to_light) > 0.0 && dot(in.rest_normal, to_light) > 0.0;
-    let low = select(0.5, 0.6, is_smooth);
-    let high = select(0.8, 0.85, is_smooth);
-    return water.glint_color.rgb * smoothstep(low, high, turned) * select(0.0, 1.0, lit);
+    var amount = smoothstep(0.5, 0.8, turned);
+    if is_smooth {
+        // Sparkle points about 0.3 units across on a jittered lattice, each lit for part of
+        // its own cycle, shown where the slope turns towards the light.
+        let drift = water.flow_speed * water.time;
+        let p = vec2f(in.river.x - drift, in.river.y) * 2.2;
+        let cell = floor(p);
+        let jitter = vec2f(water_hash(cell + 0.37), water_hash(cell + 7.11));
+        let distance = length(fract(p) - (0.25 + 0.5 * jitter));
+        let twinkle = fract(water_hash(cell + 3.3) + water.time * 0.6);
+        let point_on = step(distance, 0.17) * step(0.65, twinkle);
+        amount = smoothstep(0.25, 0.6, turned) * point_on;
+    }
+    return water.glint_color.rgb * amount * select(0.0, 1.0, lit);
 }

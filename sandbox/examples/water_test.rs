@@ -125,7 +125,7 @@ fn creek(palette: &Palette, bank_material: Uuid) -> ComponentWater {
                 let (position, _) = along(s, across);
                 WaterObstacle {
                     position,
-                    radius: 0.75 * scale,
+                    radius: 0.6 * scale,
                 }
             })
             .collect(),

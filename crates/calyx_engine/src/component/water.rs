@@ -11,25 +11,26 @@ use egui::Color32;
 use nalgebra_glm::{vec2, vec3, Vec2, Vec3, Vec4};
 use serde::{Deserialize, Serialize};
 
-/// Stylized low-poly water: a river along a smooth centreline through
-/// `points`, as wide as each point says, whose faceted surface rolls with
-/// waves running downstream.
+/// Stylized water: a river along a smooth centreline through `points`, as
+/// wide as each point says, whose surface rolls with waves running
+/// downstream.
 ///
 /// The surface lies on its owner's local Y = 0, cut into irregular facets
 /// about `cell_size` across (see [`WaterPath`]), and is drawn through the
 /// ordinary mesh and material path, opaque, into the G-buffer: it is lit,
 /// shadowed and fogged like the ground, and casts no shadow itself. Every
 /// displacement happens on the GPU: the mesh is built once, and the vertex
-/// shader rolls layered waves along the flow, keeping each facet flat with
-/// its own normal so the light flickers across the facets as they move.
+/// shader rolls layered waves along the flow. `shading` picks how the waves
+/// are lit: smooth (the default), with normals from the waves' slope, or
+/// faceted, each facet flat with its own normal and colour.
 ///
-/// Each facet takes one colour, `shallow_color` at the shore running to
-/// `deep_color` over `shore_distance`. Foam is drawn per pixel over it, in
-/// hard-edged shapes: a broken band about `foam_width` wide along both
-/// shores, patches drifting downstream, and rings around each of
-/// `obstacles`, all moving with the flow. The scene's brightest directional
-/// light glints off the facets that turn towards its mirror direction, as
-/// HDR emission of `glint_strength`, so bloom halos them.
+/// The colour runs from `shallow_color` at the shore to `deep_color` over
+/// `shore_distance`. Foam is drawn per pixel over it, in hard-edged shapes:
+/// a broken band about `foam_width` wide along both shores, patches drifting
+/// downstream, and broken rings around each of `obstacles`, all moving with
+/// the flow. The scene's brightest directional light glints where the waves
+/// turn towards its mirror direction, as HDR emission of `glint_strength`,
+/// so bloom halos them.
 ///
 /// With a `bank_material`, the water also draws its banks: a wall along each
 /// shore from below the water up to `bank_height`, then a flat lip, carved
@@ -127,11 +128,11 @@ pub enum WaterShading {
     /// Low-poly: each facet flat, with its own normal and one colour, so the
     /// light flickers from facet to facet as the waves roll; glints flash
     /// whole facets.
-    #[default]
     Faceted,
-    /// Smooth: normals taken from the waves' slope at each vertex and
-    /// interpolated across the facets, so the waves read round; colour and
-    /// glints vary per pixel.
+    /// Smooth, the default: normals taken from the waves' slope at each
+    /// vertex and interpolated across the facets, so the waves read round;
+    /// colour varies per pixel and the light sparkles in small points.
+    #[default]
     Smooth,
 }
 
@@ -203,7 +204,7 @@ impl Default for ComponentWater {
                 point(0.0, 15.0, 7.0),
             ],
             cell_size: 0.8,
-            shading: WaterShading::Faceted,
+            shading: WaterShading::Smooth,
             obstacles: Vec::new(),
             wave_amplitude: 0.22,
             wave_length: 5.0,
@@ -215,7 +216,7 @@ impl Default for ComponentWater {
             shore_distance: 2.5,
             foam_width: 0.45,
             foam_patches: 0.35,
-            obstacle_foam: 0.45,
+            obstacle_foam: 0.3,
             facet_variation: 0.1,
             roughness: 0.3,
             glint_strength: 2.5,
@@ -324,7 +325,7 @@ mod tests {
                 },
             ],
             cell_size: 0.5,
-            shading: WaterShading::Smooth,
+            shading: WaterShading::Faceted,
             obstacles: vec![WaterObstacle {
                 position: vec2(2.0, 4.0),
                 radius: 0.75,

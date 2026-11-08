@@ -6951,21 +6951,21 @@
         "foam_patches": 0.3499999940395355,
         "foam_width": 0.44999998807907104,
         "glint_strength": 1.5,
-        "obstacle_foam": 0.44999998807907104,
+        "obstacle_foam": 0.30000001192092896,
         "obstacles": [
           {
             "position": [
               -5.77630090713501,
               -13.340739250183105
             ],
-            "radius": 1.0499999523162842
+            "radius": 0.8400000333786011
           },
           {
             "position": [
               6.845853805541992,
               11.821600914001465
             ],
-            "radius": 0.75
+            "radius": 0.6000000238418579
           }
         ],
         "outline_style": 0,
@@ -7028,7 +7028,7 @@
           }
         ],
         "roughness": 0.30000001192092896,
-        "shading": "Faceted",
+        "shading": "Smooth",
         "shallow_color": [
           106,
           168,
@@ -10078,21 +10078,21 @@
         "foam_patches": 0.3499999940395355,
         "foam_width": 0.44999998807907104,
         "glint_strength": 5.0,
-        "obstacle_foam": 0.44999998807907104,
+        "obstacle_foam": 0.30000001192092896,
         "obstacles": [
           {
             "position": [
               -5.77630090713501,
               -13.340739250183105
             ],
-            "radius": 1.0499999523162842
+            "radius": 0.8400000333786011
           },
           {
             "position": [
               6.845853805541992,
               11.821600914001465
             ],
-            "radius": 0.75
+            "radius": 0.6000000238418579
           }
         ],
         "outline_style": 0,
@@ -10155,7 +10155,7 @@
           }
         ],
         "roughness": 0.30000001192092896,
-        "shading": "Faceted",
+        "shading": "Smooth",
         "shallow_color": [
           44,
           90,
@@ -20707,21 +20707,21 @@
         "foam_patches": 0.3499999940395355,
         "foam_width": 0.44999998807907104,
         "glint_strength": 1.5,
-        "obstacle_foam": 0.44999998807907104,
+        "obstacle_foam": 0.30000001192092896,
         "obstacles": [
           {
             "position": [
               -5.77630090713501,
               -13.340739250183105
             ],
-            "radius": 1.0499999523162842
+            "radius": 0.8400000333786011
           },
           {
             "position": [
               6.845853805541992,
               11.821600914001465
             ],
-            "radius": 0.75
+            "radius": 0.6000000238418579
           }
         ],
         "outline_style": 0,
@@ -20784,7 +20784,7 @@
           }
         ],
         "roughness": 0.30000001192092896,
-        "shading": "Faceted",
+        "shading": "Smooth",
         "shallow_color": [
           93,
           180,
