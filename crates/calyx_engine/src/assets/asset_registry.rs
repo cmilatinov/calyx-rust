@@ -118,10 +118,12 @@ struct AssetData {
 
 /// A write lock on the registry's metadata or cache that moves the
 /// registry's [`AssetRegistry::change_epoch`] on when it is released after a
-/// write. Reading through it changes nothing.
+/// write, and its [`AssetRegistry::meta_epoch`] too when it was taken to
+/// register or forget asset files. Reading through it changes nothing.
 struct ChangeGuard<'a, T> {
     guard: RwLockWriteGuard<'a, T>,
     epoch: &'a AtomicU64,
+    meta_epoch: Option<&'a AtomicU64>,
     changed: bool,
 }
 
@@ -144,6 +146,9 @@ impl<T> Drop for ChangeGuard<'_, T> {
     fn drop(&mut self) {
         if self.changed {
             self.epoch.fetch_add(1, Ordering::AcqRel);
+            if let Some(meta_epoch) = self.meta_epoch {
+                meta_epoch.fetch_add(1, Ordering::AcqRel);
+            }
         }
     }
 }
@@ -363,6 +368,9 @@ pub struct AssetRegistry {
     /// keep what it resolved through the registry until the next one; see
     /// [`Self::change_epoch`].
     change_epoch: AtomicU64,
+    /// Counts the writes that register, forget, rename or move asset files;
+    /// see [`Self::meta_epoch`].
+    meta_epoch: AtomicU64,
     /// Counts the watcher's reports of files and folders created, removed
     /// or renamed under the asset roots; see [`Self::file_change_count`].
     file_changes: AtomicU64,
@@ -406,6 +414,7 @@ impl AssetRegistry {
                 color_texture_cache: Default::default(),
                 asset_data: Default::default(),
                 change_epoch: Default::default(),
+                meta_epoch: Default::default(),
                 file_changes: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
@@ -456,6 +465,7 @@ impl AssetRegistry {
             color_texture_cache: Default::default(),
             asset_data: Default::default(),
             change_epoch: Default::default(),
+            meta_epoch: Default::default(),
             file_changes: Default::default(),
             asset_constructors: Default::default(),
             loading: Default::default(),
@@ -489,6 +499,7 @@ impl AssetRegistry {
                 color_texture_cache: Default::default(),
                 asset_data: Default::default(),
                 change_epoch: Default::default(),
+                meta_epoch: Default::default(),
                 file_changes: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
@@ -1337,10 +1348,27 @@ impl AssetRegistry {
         self.asset_data.read().unwrap()
     }
 
+    /// A write lock on the metadata for bookkeeping that leaves the asset
+    /// files' registrations alone: dirty marks, reload errors, dependencies,
+    /// waiting files, and the sub-assets and in-memory assets a load
+    /// records. It moves only [`Self::change_epoch`].
     fn asset_data_mut(&self) -> ChangeGuard<'_, AssetData> {
         ChangeGuard {
             guard: self.asset_data.write().unwrap(),
             epoch: &self.change_epoch,
+            meta_epoch: None,
+            changed: false,
+        }
+    }
+
+    /// A write lock on the metadata to register, forget, rename or move
+    /// asset files. It moves [`Self::meta_epoch`] as well as
+    /// [`Self::change_epoch`].
+    fn asset_meta_mut(&self) -> ChangeGuard<'_, AssetData> {
+        ChangeGuard {
+            guard: self.asset_data.write().unwrap(),
+            epoch: &self.change_epoch,
+            meta_epoch: Some(&self.meta_epoch),
             changed: false,
         }
     }
@@ -1353,6 +1381,7 @@ impl AssetRegistry {
         ChangeGuard {
             guard: self.asset_cache.write().unwrap(),
             epoch: &self.change_epoch,
+            meta_epoch: None,
             changed: false,
         }
     }
@@ -1364,6 +1393,17 @@ impl AssetRegistry {
     /// many references every frame can keep their results until it moves.
     pub fn change_epoch(&self) -> u64 {
         self.change_epoch.load(Ordering::Acquire)
+    }
+
+    /// A counter that moves on whenever an asset file is registered,
+    /// forgotten, renamed or moved, or its `.meta` gives it another id: a
+    /// write to which files are assets and which ids they have. Loading,
+    /// reloading or evicting an asset leaves it alone, and so do the
+    /// sub-assets a load records, so a listing of the asset folders that
+    /// resolves each file to its asset stays current while it and
+    /// [`Self::file_change_count`] hold still.
+    pub fn meta_epoch(&self) -> u64 {
+        self.meta_epoch.load(Ordering::Acquire)
     }
 
     /// A counter that moves on whenever the watcher reports a file or folder
@@ -1670,7 +1710,7 @@ impl AssetRegistry {
     /// generations, dependency entries and cached values of `ids`, and
     /// returns the names they held. Holders keep their own refs.
     fn drop_asset_ids(&self, ids: &HashSet<Uuid>) -> HashSet<RelativePathBuf> {
-        let mut data = self.asset_data_mut();
+        let mut data = self.asset_meta_mut();
         let freed: HashSet<RelativePathBuf> = data
             .names
             .iter()
@@ -1905,7 +1945,7 @@ impl AssetRegistry {
         });
         let id = meta.id;
         let source = meta.path.clone().unwrap_or_default();
-        let mut data = self.asset_data_mut();
+        let mut data = self.asset_meta_mut();
         let children = meta.children.clone();
         data.meta.insert(id, meta);
         data.names.insert(name_path.clone(), id);
@@ -2054,7 +2094,7 @@ impl AssetRegistry {
             child.name = Self::local_sub_asset_name(&meta.main.name, &child.name);
         }
         meta.main.name = name_path.to_string();
-        let mut data = self.asset_data_mut();
+        let mut data = self.asset_meta_mut();
         meta.main.children = meta.inner.iter().map(|m| m.id).collect();
         data.meta.insert(meta.main.id, meta.main.clone());
         data.names.insert(name_path, meta.main.id);
@@ -3718,6 +3758,56 @@ mod tests {
             registry.file_change_count() > files,
             "a created folder is a file change"
         );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn the_meta_epoch_moves_on_a_create_a_rename_and_a_delete_but_not_on_a_load_or_an_eviction() {
+        let root = temp_asset_root("calyx-meta-epoch");
+        std::fs::write(root.join("kept.cxtesttext"), "kept").unwrap();
+        let registries = registry_with_test_assets(&root);
+        let registry = registries.assets.read();
+        let kept = registry.asset_id("kept").unwrap();
+        let epoch = registry.meta_epoch();
+
+        let record = AssetLoadRecord::start();
+        registry.load_by_id::<TextTestAsset>(kept).unwrap();
+        let loaded = record.finish();
+        assert_eq!(registry.evict_unheld(&loaded), 1);
+        assert!(registry.change_epoch() > 0);
+        assert_eq!(registry.meta_epoch(), epoch, "a load and an eviction");
+
+        let created = root.join("created.cxtesttext");
+        std::fs::write(&created, "created").unwrap();
+        registry
+            .register_file(&created)
+            .expect("the file registers");
+        let after_create = registry.meta_epoch();
+        assert!(after_create > epoch, "a create moves it");
+
+        let renamed = root.join("renamed.cxtesttext");
+        std::fs::rename(&created, &renamed).unwrap();
+        std::fs::rename(
+            created.with_extension("meta"),
+            renamed.with_extension("meta"),
+        )
+        .unwrap();
+        registry.recv_notify_event(
+            Event::new(EventKind::Modify(ModifyKind::Name(
+                notify::event::RenameMode::To,
+            )))
+            .add_path(renamed.clone()),
+        );
+        let after_rename = registry.meta_epoch();
+        assert!(after_rename > after_create, "a rename moves it");
+        assert!(registry.asset_id_from_path(&renamed).is_some());
+
+        std::fs::remove_file(&renamed).unwrap();
+        registry.recv_notify_event(
+            Event::new(EventKind::Remove(notify::event::RemoveKind::File)).add_path(renamed),
+        );
+        assert!(registry.meta_epoch() > after_rename, "a delete moves it");
         drop(registry);
         std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
