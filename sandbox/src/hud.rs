@@ -18,6 +18,7 @@ use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
+use calyx_engine::runtime::HostCommand;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
 use calyx_engine::ui::{
     PaintCommand, PointerEvents, UiArena, UiColor, UiLength, UiNodeHandle, UiRect,
@@ -234,11 +235,11 @@ fn update_menu(
 }
 
 /// Does what a menu button does: asks the scene's Game State to move on, or
-/// the host to leave play.
+/// the host to leave play with [`HostCommand::Quit`].
 pub fn choose(scene: &mut Scene, resources: &mut ResourceMap, action: MenuAction) {
     log::info!("Menu choice: {action:?}");
     if action == MenuAction::Quit {
-        resources.request_quit();
+        resources.host_commands_mut().push(HostCommand::Quit);
         return;
     }
     let Some(state) = scene.objects().find(|&object| {

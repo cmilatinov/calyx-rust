@@ -4,6 +4,7 @@
 // enough that proving it `Send`/`Sync` passes the default limit.
 #![recursion_limit = "256"]
 
+use calyx_engine::runtime::HostCommand;
 use calyx_engine::scene::{GameObject, Scene, SceneHud};
 use calyx_engine::test_support::{HeadlessSceneRunner, TestAssets};
 use calyx_engine::ui::{PaintCommand, UiInput, UiPoint, UiRect, UiSize};
@@ -84,8 +85,13 @@ fn assert_shows(scene: &Scene, expected: &[&str]) {
 /// Clicks `action`'s button on `screen` with the mouse, as a press and a
 /// release a frame apart, then lets the Game State act on it: a frame for
 /// the choice to reach the Game State, whichever hook updates first, and one
-/// more for the objects a match reset deletes to go.
-fn click(runner: &mut HeadlessSceneRunner, screen: MenuScreen, action: MenuAction) {
+/// more for the objects a match reset deletes to go. Returns the commands
+/// the game issued its host meanwhile.
+fn click(
+    runner: &mut HeadlessSceneRunner,
+    screen: MenuScreen,
+    action: MenuAction,
+) -> Vec<HostCommand> {
     let button = menu_buttons(screen, SCREEN.0, SCREEN.1)
         .into_iter()
         .find(|button| button.action == action)
@@ -93,11 +99,14 @@ fn click(runner: &mut HeadlessSceneRunner, screen: MenuScreen, action: MenuActio
     let (x, y) = button.center();
     let position = egui::pos2(x, y);
     runner.move_pointer(position);
-    runner.step();
+    let mut commands = runner.step();
     runner.press_pointer_button(position, egui::PointerButton::Primary);
-    runner.step();
+    commands.extend(runner.step());
     runner.release_pointer_button(position, egui::PointerButton::Primary);
-    runner.step_many(3);
+    for _ in 0..3 {
+        commands.extend(runner.step());
+    }
+    commands
 }
 
 fn rounds(scene: &Scene) -> Vec<GameObject> {
@@ -240,10 +249,17 @@ fn the_arena_plays_menu_lobby_match_end_screen_and_rematch() {
 fn quit_asks_the_host_to_leave_play() {
     let (copy, assets) = sandbox_assets();
     let mut runner = HeadlessSceneRunner::from_scene(load_arena(&copy, &assets));
-    runner.step();
-    assert!(!runner.resources_mut().take_quit_request());
-    click(&mut runner, MenuScreen::MainMenu, MenuAction::Quit);
-    assert!(runner.resources_mut().take_quit_request());
+    assert!(runner.step().is_empty());
+    assert!(
+        click(&mut runner, MenuScreen::MainMenu, MenuAction::Play).is_empty(),
+        "only Quit asks anything of the host"
+    );
+    click(&mut runner, MenuScreen::Lobby, MenuAction::MainMenu);
+    assert_eq!(
+        click(&mut runner, MenuScreen::MainMenu, MenuAction::Quit),
+        [HostCommand::Quit]
+    );
+    assert!(runner.step().is_empty(), "the host gets Quit once");
     assert_eq!(phase(&runner), GamePhase::MainMenu);
 }
 

@@ -32,7 +32,7 @@ use calyx_engine::render::{
     DrawCollection, GizmoOptions, ParticleSimulation, SceneRenderer, SceneRendererError,
     SceneRendererOptions,
 };
-use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter};
+use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter, HostCommand};
 use calyx_engine::scene::{Scene, SceneManager};
 use calyx_engine::{profile_scope, profiler};
 use eframe::{wgpu, NativeOptions};
@@ -610,12 +610,17 @@ impl EditorApp {
             self.state.game.resources.input_mut(),
             is_active,
         );
-        self.state.game.update_scene(target, &input);
-        // A game's Quit, such as its main menu's, leaves play as the
-        // toolbar's Stop does.
-        if self.state.game.resources.take_quit_request() && self.state.game.scenes.is_simulating() {
-            log::info!("Game requested quit; stopping scene simulation");
-            self.state.game.scenes.stop_simulation();
+        for command in self.state.game.update_scene(target, &input) {
+            match command {
+                // A game's Quit, such as its main menu's, leaves play as the
+                // toolbar's Stop does.
+                HostCommand::Quit => {
+                    if self.state.game.scenes.is_simulating() {
+                        log::info!("Game requested quit; stopping scene simulation");
+                        self.state.game.scenes.stop_simulation();
+                    }
+                }
+            }
         }
     }
 

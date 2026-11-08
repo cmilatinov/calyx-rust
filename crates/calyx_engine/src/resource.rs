@@ -3,6 +3,7 @@ use crate::core::{Ref, Time};
 use crate::input::InputState;
 use crate::net::Network;
 use crate::physics::PhysicsConfiguration;
+use crate::runtime::HostCommands;
 pub use calyx_engine_derive::Resource;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -30,16 +31,6 @@ impl dyn Resource {
     }
 }
 
-/// A game's request to leave play, such as a main menu's Quit. The editor
-/// stops the simulation when it sees one, and the standalone player closes
-/// its window. Set it with [`ResourceMap::request_quit`].
-#[derive(Debug, Default)]
-pub struct QuitRequest {
-    requested: bool,
-}
-
-impl Resource for QuitRequest {}
-
 /// Type-indexed runtime resource storage used by the engine loop.
 pub struct ResourceMap {
     inner: HashMap<TypeId, Box<dyn Resource>>,
@@ -62,7 +53,7 @@ impl ResourceMap {
         resources.insert_default::<Network>();
         resources.insert_default::<PhysicsConfiguration>();
         resources.insert_default::<InputState>();
-        resources.insert_default::<QuitRequest>();
+        resources.insert_default::<HostCommands>();
         resources
     }
 
@@ -180,20 +171,11 @@ impl ResourceMap {
         self.resource_mut::<PhysicsConfiguration>().unwrap()
     }
 
-    /// Asks the host to leave play once this frame's update is done: see
-    /// [`QuitRequest`].
-    pub fn request_quit(&mut self) {
-        match self.resource_mut::<QuitRequest>() {
-            Some(request) => request.requested = true,
-            None => self.insert(QuitRequest { requested: true }),
-        }
-    }
-
-    /// Returns whether play was asked to end since the last call, and clears
-    /// the request.
-    pub fn take_quit_request(&mut self) -> bool {
-        self.resource_mut::<QuitRequest>()
-            .is_some_and(|request| std::mem::take(&mut request.requested))
+    /// Returns the queue of commands for the game's host: see
+    /// [`HostCommand`](crate::runtime::HostCommand).
+    #[inline]
+    pub fn host_commands_mut(&mut self) -> &mut HostCommands {
+        self.resource_mut::<HostCommands>().unwrap()
     }
 }
 
@@ -263,21 +245,6 @@ mod tests {
     }
 
     #[test]
-    fn a_quit_request_is_taken_once() {
-        let mut resources = ResourceMap::new();
-        assert!(!resources.take_quit_request());
-        resources.request_quit();
-        assert!(resources.take_quit_request());
-        assert!(!resources.take_quit_request());
-        // A map without the resource still takes a request.
-        let mut bare = ResourceMap {
-            inner: Default::default(),
-        };
-        bare.request_quit();
-        assert!(bare.take_quit_request());
-    }
-
-    #[test]
     fn new_registers_builtin_resources() {
         let resources = ResourceMap::new();
         assert!(resources.resource::<crate::core::Time>().is_some());
@@ -287,6 +254,9 @@ mod tests {
             .is_some());
         assert!(resources
             .resource::<crate::core::Ref<crate::background::Background>>()
+            .is_some());
+        assert!(resources
+            .resource::<crate::runtime::HostCommands>()
             .is_some());
     }
 

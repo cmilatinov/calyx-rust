@@ -2,8 +2,10 @@
 //! project's runtime settings, the GPU device both open, and per-frame
 //! bookkeeping. [`run_player`] hosts a linked project in the standalone player.
 
+mod host_command;
 mod player;
 
+pub use host_command::{HostCommand, HostCommands};
 pub use player::run_player;
 
 use std::fs;

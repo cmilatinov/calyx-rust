@@ -122,8 +122,8 @@ respawns hold still and no damage or kill counts. Leaving a match for the
 lobby or the menu removes the rounds still in flight and puts every tank back
 at its spawn point at full health and ammo; Match Rules clear the totals. The
 local player readying starts the match, since bots are always ready. Quit
-stops play in the editor, as its Stop button does, and closes the standalone
-player.
+sends the host `HostCommand::Quit`: the editor stops play, as its Stop button
+does, and the standalone player closes.
 
 Keep these presentation rules separate from
 configurable scoring, timing and damage rules.

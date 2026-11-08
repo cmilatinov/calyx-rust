@@ -895,7 +895,8 @@ fn game_with_particles(assets: &TestAssets) -> GameContext {
 fn update_simulation(game: &mut GameContext) {
     let context = egui::Context::default();
     let input = Input::from_ctx(&context, None, game.resources.input_mut(), false);
-    game.update_scene(UpdatedScene::Simulation, &input);
+    let commands = game.update_scene(UpdatedScene::Simulation, &input);
+    assert!(commands.is_empty());
 }
 
 #[test]
