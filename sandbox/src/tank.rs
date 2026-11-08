@@ -356,7 +356,7 @@ impl ComponentUpdate for ComponentTankController {
             return;
         };
 
-        if crate::match_rules::match_over(scene)
+        if crate::game_state::combat_paused(scene)
             || scene
                 .read_component::<ComponentRespawnState, _, _>(game_object, |state| {
                     state.is_gameplay_locked()
@@ -364,7 +364,7 @@ impl ComponentUpdate for ComponentTankController {
                 .unwrap_or(false)
         {
             // A dead or respawning tank comes back at rest, and every tank
-            // stops when the match is over.
+            // stops outside play and once the match is over.
             let _ = this.write(scene, |component| {
                 component.speed = 0.0;
             });
@@ -1032,8 +1032,9 @@ pub(crate) fn update_projectile(
     else {
         return;
     };
-    // Rounds in flight hold still once the match is over.
-    if crate::match_rules::match_over(scene) {
+    // Rounds in flight hold still outside play and once the match is over;
+    // a match reset removes them.
+    if crate::game_state::combat_paused(scene) {
         return;
     }
 

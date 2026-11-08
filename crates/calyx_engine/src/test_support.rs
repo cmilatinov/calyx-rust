@@ -550,8 +550,10 @@ impl HeadlessSceneRunner {
         self.scene.prepare();
     }
 
-    /// Advances the scene by one fixed step.
-    pub fn step(&mut self) {
+    /// Advances the scene by one fixed step, and returns the
+    /// [`HostCommand`](crate::runtime::HostCommand)s game code issued in it,
+    /// as a host would get them.
+    pub fn step(&mut self) -> Vec<crate::runtime::HostCommand> {
         self.prepare();
         self.resources.time_mut().advance_by(self.step_seconds);
 
@@ -580,7 +582,7 @@ impl HeadlessSceneRunner {
             self.resources.input_mut(),
             self.input_active,
         );
-        match &mut self.particles {
+        let commands = match &mut self.particles {
             Some(particles) => update_scene(
                 &mut self.scene,
                 &self.registries,
@@ -589,11 +591,14 @@ impl HeadlessSceneRunner {
                 particles,
                 &test_render_context(),
             ),
-            None => self
-                .scene
-                .update(&self.registries, &mut self.resources, &input),
-        }
+            None => {
+                self.scene
+                    .update(&self.registries, &mut self.resources, &input);
+                self.resources.host_commands_mut().drain()
+            }
+        };
         let _ = self.input_context.end_pass();
+        commands
     }
 
     /// Advances the scene by `step_count` fixed steps.

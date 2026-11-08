@@ -44316,6 +44316,47 @@
         }
       }
     },
+    "da5372cb-4d15-fc68-651f-a3b8ec574a50": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "da5372cb-4d15-fc68-651f-a3b8ec574a50",
+        "name": "Game State",
+        "visible": true
+      },
+      "58a0bdbb-d356-4192-a473-b84314830748": {
+        "enter_lobby_requested": false,
+        "finish_match_requested": false,
+        "match_duration": 300.0,
+        "match_time_remaining": 300.0,
+        "phase": 0,
+        "phase_elapsed": 0.0,
+        "players_ready": false,
+        "previous_phase": 4294967295,
+        "restart_match_requested": false,
+        "return_to_menu_requested": false,
+        "start_match_requested": false,
+        "winning_team": 4294967295
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            0.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
     "da584ee6-1de0-26cd-8419-4115e7ffd31c": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "da584ee6-1de0-26cd-8419-4115e7ffd31c",
@@ -54942,7 +54983,8 @@
     "e182d194-5e14-42f5-a9f7-ea133c90aaa7",
     "a33bc813-1f8f-475d-967d-d9a309dad8bd",
     "91f28f9a-80f2-43d8-b48e-fc1895500a86",
-    "5e1c0a47-2b6d-4c93-8f1e-7a3d9b0c6e24"
+    "5e1c0a47-2b6d-4c93-8f1e-7a3d9b0c6e24",
+    "da5372cb-4d15-fc68-651f-a3b8ec574a50"
   ],
   "prefab_links": {
     "002d93a0-50f1-ee62-699d-6250fca95b5d": {

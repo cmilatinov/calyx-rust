@@ -6,6 +6,7 @@ use crate::component::{
 use crate::input::Input;
 use crate::math::{CurveKey, GradientKey, Transform};
 use crate::render::{Camera, SceneRenderer, SceneRendererOptions};
+use crate::runtime::HostCommand;
 use crate::scene::GameObject;
 use crate::test_support::TestAssets;
 use egui::Color32;
@@ -63,7 +64,8 @@ fn editor_frame(game: &mut GameContext, preview_particles: bool, delta_time: f64
     game.resources.time_mut().advance_by(delta_time);
     let context = egui::Context::default();
     let input = Input::from_ctx(&context, None, game.resources.input_mut(), false);
-    game.update_scene(UpdatedScene::Editor { preview_particles }, &input);
+    let commands = game.update_scene(UpdatedScene::Editor { preview_particles }, &input);
+    assert!(commands.is_empty());
 }
 
 /// The game objects whose particles `renderer` draws after rendering the
@@ -242,4 +244,41 @@ fn preparing_the_editor_uploads_edit_scene_curve_and_gradient_edits_to_the_previ
     let (curve_range, gradient_range) = system.key_ranges();
     assert_eq!(gradient_range.count, gradient.keys.len() as u32);
     assert_eq!(curve_range.count, curve.keys.len() as u32);
+}
+
+/// Runs one frame of the current scene, as the player does, and returns the
+/// host commands it issued.
+fn player_frame(game: &mut GameContext) -> Vec<HostCommand> {
+    let context = egui::Context::default();
+    let input = Input::from_ctx(&context, None, game.resources.input_mut(), false);
+    game.update_scene(UpdatedScene::Current, &input)
+}
+
+#[test]
+fn a_host_command_comes_back_from_the_update_once() {
+    let assets = TestAssets::engine();
+    let mut game = GameContext::new(assets.asset_context());
+    assert!(player_frame(&mut game).is_empty());
+    game.resources.host_commands_mut().push(HostCommand::Quit);
+    assert_eq!(player_frame(&mut game), [HostCommand::Quit]);
+    assert!(player_frame(&mut game).is_empty(), "returned twice");
+}
+
+#[test]
+fn every_host_command_of_a_frame_comes_back_in_order() {
+    let assets = TestAssets::engine();
+    let mut game = GameContext::new(assets.asset_context());
+    for _ in 0..3 {
+        game.resources.host_commands_mut().push(HostCommand::Quit);
+    }
+    assert_eq!(player_frame(&mut game), [HostCommand::Quit; 3]);
+    // A paused simulation updates no scene, and still hands back what was
+    // issued.
+    game.resources.host_commands_mut().push(HostCommand::Quit);
+    let context = egui::Context::default();
+    let input = Input::from_ctx(&context, None, game.resources.input_mut(), false);
+    assert_eq!(
+        game.update_scene(UpdatedScene::Simulation, &input),
+        [HostCommand::Quit]
+    );
 }

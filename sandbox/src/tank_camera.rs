@@ -527,14 +527,24 @@ mod tests {
                     &test_assets.sandbox_root().join("game/scenes/arena.cxscene"),
                 )
                 .expect("the arena should load");
-            let scene = scene_ref.read().clone();
-            let named = |name: &str| {
+            let mut scene = scene_ref.read().clone();
+            let named = |scene: &Scene, name: &str| {
                 scene
                     .objects()
                     .find(|go| scene.name(*go) == name)
                     .unwrap_or_else(|| panic!("the arena should have a {name}"))
             };
-            let (tank, camera, crosshair) = (named("Tank"), named("Camera"), named("Crosshair"));
+            // The arena opens on its main menu; the camera follows the tank
+            // in play.
+            let state = named(&scene, "Game State");
+            scene.write_component::<crate::game_state::ComponentGameState, _>(state, |state| {
+                state.transition_to(crate::game_state::GamePhase::Playing);
+            });
+            let (tank, camera, crosshair) = (
+                named(&scene, "Tank"),
+                named(&scene, "Camera"),
+                named(&scene, "Crosshair"),
+            );
             Self {
                 runner: calyx_engine::test_support::HeadlessSceneRunner::from_scene(scene),
                 tank,

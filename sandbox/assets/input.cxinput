@@ -10,6 +10,16 @@
         "Key": "Tab"
       }
     ],
+    "menu_confirm": [
+      {
+        "Key": "Enter"
+      }
+    ],
+    "menu_select": [
+      {
+        "PointerButton": "Primary"
+      }
+    ],
     "shoot": [
       {
         "PointerButton": "Primary"

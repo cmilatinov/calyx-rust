@@ -174,24 +174,13 @@ pub(super) fn paint_scoreboard(
     width: f32,
     height: f32,
     page: usize,
+    reserve: f32,
 ) {
-    p.fill(0.0, 0.0, width, height, UiColor::rgba(3, 8, 15, 185), 0.0);
-    // A translucent radial vignette leaves the panel legible over any scene.
-    let mut points = vec![(width * 0.5, height * 0.5)];
-    let mut colors = vec![UiColor::rgba(0, 0, 0, 0)];
-    let mut indices = Vec::new();
-    for i in 0..=64 {
-        let a = i as f32 * std::f32::consts::TAU / 64.0;
-        points.push((
-            width * 0.5 + a.cos() * width * 0.72,
-            height * 0.5 + a.sin() * height * 0.72,
-        ));
-        colors.push(UiColor::rgba(0, 0, 0, 190));
-        if i > 0 {
-            indices.extend([0, i, i + 1]);
-        }
-    }
-    p.gradient(&points, &colors, &indices);
+    p.backdrop(width, height);
+    let unit = super::menu::unit(height);
+    // The end screen's buttons take a strip at the bottom; the board centres
+    // in the rest.
+    let height = height - reserve;
     let w = (width * 0.83).clamp(560.0, 1500.0).min(width - 36.0);
     let x = (width - w) * 0.5;
     let pages = board.page_count();
@@ -201,7 +190,6 @@ pub(super) fn paint_scoreboard(
         .iter()
         .map(|(_, _, rows)| rows.len().max(1))
         .sum::<usize>();
-    let unit = (height / 941.0).clamp(0.65, 1.2);
     let padding = 32.0 * unit;
     let gap = 30.0 * unit;
     let header = 115.0 * unit;

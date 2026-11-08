@@ -1,7 +1,10 @@
 mod kill_feed;
+mod menu;
 mod minimap;
 mod paint;
 mod scoreboard;
+
+pub use menu::{menu_buttons, MenuAction, MenuButton, MenuScreen};
 
 use crate::combat::{same_side, ComponentCombatStats};
 use crate::game_state::ComponentGameState;
@@ -15,6 +18,7 @@ use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
+use calyx_engine::runtime::HostCommand;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
 use calyx_engine::ui::{
     PaintCommand, PointerEvents, UiArena, UiColor, UiLength, UiNodeHandle, UiRect,
@@ -24,8 +28,10 @@ use nalgebra_glm::{vec2, vec4, Mat4, Vec3};
 use paint::{Painter, BLACK, CYAN, LIGHT, MUTED, RED};
 use serde::{Deserialize, Serialize};
 
-/// Concept-driven presentation over real scene combat state. No input is
-/// captured by the HUD; the scoreboard follows the existing held action.
+/// Concept-driven presentation over real scene combat state. In play the HUD
+/// captures no input and the scoreboard follows the existing held action;
+/// outside play it shows the Game State's screens (`menu`), whose buttons
+/// take clicks.
 #[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "b7f3a8d2-5c41-4e8b-9a6f-0d2e7c1b4f93"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate, ComponentHud)]
@@ -53,6 +59,9 @@ pub struct ComponentTankHud {
     scoreboard_blur: GameObjectRef,
     #[serde(skip)]
     #[reflect_skip]
+    menu_pointer: menu::MenuPointer,
+    #[serde(skip)]
+    #[reflect_skip]
     map_boundary: std::sync::Arc<std::sync::Mutex<minimap::BoundaryCache>>,
     /// What fog of war hid from this HUD's player.
     #[serde(skip)]
@@ -76,6 +85,7 @@ impl Default for ComponentTankHud {
             elapsed: 0.0,
             scoreboard_page: 0,
             scoreboard_blur: Default::default(),
+            menu_pointer: Default::default(),
             map_boundary: Default::default(),
             fog: Default::default(),
             fog_sight: Default::default(),
@@ -125,8 +135,15 @@ impl ComponentUpdate for ComponentTankHud {
         resources: &mut ResourceMap,
         input: &Input,
     ) {
-        // The final scoreboard stays up once the match is over.
-        let open = input.action("scoreboard").pressed() || crate::match_rules::match_over(scene);
+        let screen = MenuScreen::in_scene(scene);
+        update_menu(scene, this.game_object(), resources, input, screen);
+        // The final scoreboard stays up once the match is over; the menu and
+        // the lobby have none.
+        let open = match screen {
+            Some(MenuScreen::MainMenu | MenuScreen::Lobby) => false,
+            Some(MenuScreen::GameOver) => true,
+            None => input.action("scoreboard").pressed() || crate::match_rules::match_over(scene),
+        };
         let dt = resources.time().delta_time();
         let pages = scoreboard::Scoreboard::in_scene(scene, this.game_object()).page_count();
         let _ = this.write(scene, |hud| {
@@ -144,7 +161,13 @@ impl ComponentUpdate for ComponentTankHud {
         let previous = this
             .read(scene, |hud| hud.scoreboard_blur)
             .unwrap_or_default();
-        let blur = update_scoreboard_blur(scene, this.game_object(), open, previous);
+        // Every screen over the arena blurs it.
+        let blur = update_scoreboard_blur(
+            scene,
+            this.game_object(),
+            open || screen.is_some(),
+            previous,
+        );
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
         if let Some(mut fog) = this.write(scene, |hud| std::mem::take(&mut hud.fog)) {
             fog.advance(dt);
@@ -159,6 +182,85 @@ impl ComponentUpdate for ComponentTankHud {
             crate::vision::sight::show_sight(scene, &sight);
         }
     }
+}
+
+/// Follows the pointer over the screen's buttons and acts on the one clicked:
+/// a press and release over the same button, or Enter for the screen's main
+/// choice. Acting on the release keeps the click from also firing the tank's
+/// gun once the match starts.
+fn update_menu(
+    scene: &mut Scene,
+    hud: GameObject,
+    resources: &mut ResourceMap,
+    input: &Input,
+    screen: Option<MenuScreen>,
+) {
+    let previous = scene
+        .read_component::<ComponentTankHud, _, _>(hud, |hud| hud.menu_pointer)
+        .unwrap_or_default();
+    let mut pointer = menu::MenuPointer::default();
+    let mut chosen = None;
+    if let (Some(screen), Some(rect)) = (screen, input.surface_rect()) {
+        let buttons = menu_buttons(screen, rect.width(), rect.height());
+        pointer.hovered = input.pointer_pos().and_then(|position| {
+            let local = position - rect.min;
+            buttons
+                .iter()
+                .find(|button| button.contains(local.x, local.y))
+                .map(|button| button.action)
+        });
+        let select = input.action("menu_select");
+        pointer.pressed = if select.just_pressed() {
+            pointer.hovered
+        } else {
+            previous.pressed
+        };
+        if select.just_released() {
+            chosen = pointer
+                .pressed
+                .filter(|&action| pointer.hovered == Some(action));
+            pointer.pressed = None;
+        }
+        if input.action("menu_confirm").just_pressed() {
+            chosen = buttons
+                .iter()
+                .find(|button| button.primary)
+                .map(|button| button.action);
+        }
+    }
+    let _ = scene.write_component::<ComponentTankHud, _>(hud, |hud| hud.menu_pointer = pointer);
+    if let Some(action) = chosen {
+        choose(scene, resources, action);
+    }
+}
+
+/// Does what a menu button does: asks the scene's Game State to move on, or
+/// the host to leave play with [`HostCommand::Quit`].
+pub fn choose(scene: &mut Scene, resources: &mut ResourceMap, action: MenuAction) {
+    log::info!("Menu choice: {action:?}");
+    if action == MenuAction::Quit {
+        resources.host_commands_mut().push(HostCommand::Quit);
+        return;
+    }
+    let Some(state) = scene.objects().find(|&object| {
+        scene
+            .read_component::<ComponentGameState, _, _>(object, |_| ())
+            .is_some()
+    }) else {
+        return;
+    };
+    let _ = scene.write_component::<ComponentGameState, _>(state, |state| match action {
+        MenuAction::Play => state.enter_lobby_requested = true,
+        MenuAction::Ready => {
+            // Bots are always ready, so the local player readying starts the
+            // match.
+            state.players_ready = true;
+            state.start_match_requested = true;
+        }
+        MenuAction::MainMenu => state.return_to_menu_requested = true,
+        MenuAction::Rematch => state.restart_match_requested = true,
+        MenuAction::Quit => {}
+    });
 }
 
 /// A transient local volume defocuses the backdrop and suppresses late ink;
@@ -242,7 +344,21 @@ impl ComponentHud for ComponentTankHud {
             // The map lights what the main view's fog shows, eased alike.
             map.sight.clone_from(hud.fog_sight.sight());
         }
-        let scoreboard_open = hud.scoreboard_open || crate::match_rules::match_over(scene);
+        let screen = MenuScreen::in_scene(scene);
+        match screen {
+            Some(MenuScreen::MainMenu) => {
+                menu::paint_main_menu(&mut p, scene, width, height, hud.menu_pointer);
+                return Some(finish_hud(ui, p, viewport));
+            }
+            Some(MenuScreen::Lobby) => {
+                menu::paint_lobby(&mut p, scene, player, width, height, hud.menu_pointer);
+                return Some(finish_hud(ui, p, viewport));
+            }
+            Some(MenuScreen::GameOver) | None => {}
+        }
+        let scoreboard_open = hud.scoreboard_open
+            || crate::match_rules::match_over(scene)
+            || screen == Some(MenuScreen::GameOver);
         if !scoreboard_open {
             paint_world(&mut p, scene, player, hud, &map, width, height);
             let feed_width = (width * 0.24).clamp(230.0, 390.0);
@@ -278,23 +394,38 @@ impl ComponentHud for ComponentTankHud {
             );
         }
         if scoreboard_open {
+            let end_screen = screen == Some(MenuScreen::GameOver);
             scoreboard::paint_scoreboard(
                 &mut p,
                 &scoreboard::Scoreboard::in_scene(scene, player),
                 width,
                 height,
                 hud.scoreboard_page,
+                if end_screen {
+                    menu::game_over_reserve(height)
+                } else {
+                    0.0
+                },
             );
+            if end_screen {
+                menu::paint_buttons(
+                    &mut p,
+                    &menu_buttons(MenuScreen::GameOver, width, height),
+                    hud.menu_pointer,
+                );
+            }
         }
-        p.commands.push(PaintCommand::PopClip);
-        Some(
-            ui.custom_paint(p.commands)
-                .id(ui, "sandbox-ui")
-                .width(ui, UiLength::Px(viewport.width()))
-                .height(ui, UiLength::Px(viewport.height()))
-                .pointer_events(ui, PointerEvents::None),
-        )
+        Some(finish_hud(ui, p, viewport))
     }
+}
+
+fn finish_hud(ui: &mut UiArena, mut p: Painter, viewport: UiRect) -> UiNodeHandle {
+    p.commands.push(PaintCommand::PopClip);
+    ui.custom_paint(p.commands)
+        .id(ui, "sandbox-ui")
+        .width(ui, UiLength::Px(viewport.width()))
+        .height(ui, UiLength::Px(viewport.height()))
+        .pointer_events(ui, PointerEvents::None)
 }
 
 fn format_time(seconds: f32) -> String {

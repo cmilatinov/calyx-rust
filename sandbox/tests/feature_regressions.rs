@@ -28,15 +28,25 @@ fn sandbox_assets() -> (TestAssets, calyx_engine::context::AssetContext) {
     (copy, assets)
 }
 
+/// The arena with its match already playing: it opens on the main menu,
+/// where combat is paused (see `tests/match_flow.rs`).
 fn load_sandbox_scene(copy: &TestAssets, assets: &calyx_engine::context::AssetContext) -> Scene {
-    assets
+    use sandbox::game_state::{ComponentGameState, GamePhase};
+    let mut scene = assets
         .registries
         .assets
         .read()
         .reload_by_path::<Scene>(&copy.sandbox_root().join("game/scenes/arena.cxscene"))
         .expect("sandbox scene should load")
         .read()
-        .clone()
+        .clone();
+    let state = object_named(&scene, "Game State");
+    scene
+        .write_component::<ComponentGameState, _>(state, |state| {
+            state.transition_to(GamePhase::Playing);
+        })
+        .expect("the arena should carry a Game State");
+    scene
 }
 
 fn object_named(scene: &Scene, name: &str) -> calyx_engine::scene::GameObject {

@@ -196,6 +196,27 @@ impl Painter {
         }
     }
 
+    /// Darkens the whole view under a screen, with a translucent radial
+    /// vignette that keeps a panel legible over any scene.
+    pub fn backdrop(&mut self, width: f32, height: f32) {
+        self.fill(0.0, 0.0, width, height, UiColor::rgba(3, 8, 15, 185), 0.0);
+        let mut points = vec![(width * 0.5, height * 0.5)];
+        let mut colors = vec![UiColor::rgba(0, 0, 0, 0)];
+        let mut indices = Vec::new();
+        for i in 0..=64 {
+            let a = i as f32 * std::f32::consts::TAU / 64.0;
+            points.push((
+                width * 0.5 + a.cos() * width * 0.72,
+                height * 0.5 + a.sin() * height * 0.72,
+            ));
+            colors.push(UiColor::rgba(0, 0, 0, 190));
+            if i > 0 {
+                indices.extend([0, i, i + 1]);
+            }
+        }
+        self.gradient(&points, &colors, &indices);
+    }
+
     pub fn circle(&mut self, x: f32, y: f32, r: f32, color: UiColor) {
         self.fill(x - r, y - r, 2.0 * r, 2.0 * r, color, r);
     }

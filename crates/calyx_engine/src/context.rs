@@ -7,6 +7,7 @@ use crate::net::Network;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::{ParticleSimulation, RenderContext};
 use crate::resource::ResourceMap;
+use crate::runtime::HostCommand;
 use crate::scene::{Scene, SceneManager};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -167,7 +168,11 @@ impl GameContext {
     /// context's resources and particle simulation. Does nothing for
     /// [`UpdatedScene::Simulation`] while simulation is paused or stopped;
     /// [`UpdatedScene::Editor`] says what it does then.
-    pub fn update_scene(&mut self, target: UpdatedScene, input: &Input) {
+    ///
+    /// Returns the commands game code issued for the host this frame, in
+    /// order, for the host to carry out.
+    #[must_use = "the host must handle the commands game code issued"]
+    pub fn update_scene(&mut self, target: UpdatedScene, input: &Input) -> Vec<HostCommand> {
         let assets = self.assets.lock_read();
         let scene = match target {
             UpdatedScene::Simulation => self.scenes.running_simulation_scene_mut(),
@@ -179,15 +184,16 @@ impl GameContext {
             }
             UpdatedScene::Current => Some(self.scenes.current_scene_mut()),
         };
-        if let Some(scene) = scene {
-            update_scene(
+        match scene {
+            Some(scene) => update_scene(
                 scene,
                 &assets.registries,
                 &mut self.resources,
                 input,
                 &mut self.particles,
                 &assets.render_context,
-            );
+            ),
+            None => self.resources.host_commands_mut().drain(),
         }
     }
 
@@ -246,6 +252,10 @@ impl GameContext {
 /// Runs one frame of `scene`: its physics and component updates, then its
 /// particles on the GPU, by the resources' delta time. The particle
 /// simulation submits its work before any view draws the frame.
+///
+/// Returns the [`HostCommand`]s game code issued during the update, in order;
+/// each comes back once.
+#[must_use = "the host must handle the commands game code issued"]
 pub fn update_scene(
     scene: &mut Scene,
     registries: &ReadOnlyRegistryContext,
@@ -253,9 +263,10 @@ pub fn update_scene(
     input: &Input,
     particles: &mut ParticleSimulation,
     render_context: &RenderContext,
-) {
+) -> Vec<HostCommand> {
     scene.update(registries, resources, input);
     particles.simulate(scene, render_context, resources.time().delta_time());
+    resources.host_commands_mut().drain()
 }
 
 #[cfg(test)]

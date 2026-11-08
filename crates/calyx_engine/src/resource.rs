@@ -3,6 +3,7 @@ use crate::core::{Ref, Time};
 use crate::input::InputState;
 use crate::net::Network;
 use crate::physics::PhysicsConfiguration;
+use crate::runtime::HostCommands;
 pub use calyx_engine_derive::Resource;
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
@@ -52,6 +53,7 @@ impl ResourceMap {
         resources.insert_default::<Network>();
         resources.insert_default::<PhysicsConfiguration>();
         resources.insert_default::<InputState>();
+        resources.insert_default::<HostCommands>();
         resources
     }
 
@@ -168,6 +170,13 @@ impl ResourceMap {
     pub fn physics_configuration_mut(&mut self) -> &mut PhysicsConfiguration {
         self.resource_mut::<PhysicsConfiguration>().unwrap()
     }
+
+    /// Returns the queue of commands for the game's host: see
+    /// [`HostCommand`](crate::runtime::HostCommand).
+    #[inline]
+    pub fn host_commands_mut(&mut self) -> &mut HostCommands {
+        self.resource_mut::<HostCommands>().unwrap()
+    }
 }
 
 #[cfg(test)]
@@ -245,6 +254,9 @@ mod tests {
             .is_some());
         assert!(resources
             .resource::<crate::core::Ref<crate::background::Background>>()
+            .is_some());
+        assert!(resources
+            .resource::<crate::runtime::HostCommands>()
             .is_some());
     }
 
