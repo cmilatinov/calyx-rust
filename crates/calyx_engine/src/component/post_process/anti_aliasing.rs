@@ -33,6 +33,8 @@ pub struct ComponentAntiAliasing {
     /// (softest).
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.01)]
     pub subpixel: f32,
+    /// How far FXAA searches along an edge, and how faint an edge it treats.
+    pub quality: FxaaQuality,
 }
 
 impl Component for ComponentAntiAliasing {
@@ -48,6 +50,46 @@ impl Default for ComponentAntiAliasing {
         Self {
             edge_threshold: 0.166,
             subpixel: 0.75,
+            quality: FxaaQuality::Low,
+        }
+    }
+}
+
+/// FXAA 3.11 Quality presets: how far the search along an edge reaches, in
+/// how fine steps, and the contrast below which nothing is an edge.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize, TypeUuid, Reflect)]
+#[uuid = "c3746dce-29bb-435b-b2f5-e862a487fa71"]
+pub enum FxaaQuality {
+    /// Preset 12, the reference's default: 5 search steps reaching 20.5
+    /// pixels each way, sampled up to 8.5, and no edge below a contrast of
+    /// 0.0833.
+    #[default]
+    Low,
+    /// Preset 39, the reference's highest: 12 search steps reaching 26.5
+    /// pixels each way, sampled one pixel at a time for the first 5 and up
+    /// to 18.5, and edges down to a contrast of 0.0312. Smooths long, thin
+    /// and dark edges that `Low` leaves aliased, at a higher cost.
+    High,
+}
+
+impl FxaaQuality {
+    /// The longest search a preset takes, in steps.
+    pub const MAX_SEARCH_STEPS: usize = 12;
+
+    /// The preset's search step sizes along the edge, in pixels.
+    pub fn search_step_sizes(self) -> &'static [f32] {
+        match self {
+            Self::Low => &[1.0, 1.5, 2.0, 4.0, 12.0],
+            Self::High => &[1.0, 1.0, 1.0, 1.0, 1.0, 1.5, 2.0, 2.0, 2.0, 2.0, 4.0, 8.0],
+        }
+    }
+
+    /// Local contrast below which nothing is an edge, whatever the edge
+    /// threshold, so dark noise is left alone.
+    pub fn edge_threshold_min(self) -> f32 {
+        match self {
+            Self::Low => 0.0833,
+            Self::High => 0.0312,
         }
     }
 }

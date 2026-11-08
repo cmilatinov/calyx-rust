@@ -5,9 +5,9 @@
 use super::*;
 use crate::assets::{Asset, AssetRef};
 use crate::component::{
-    ComponentBloom, ComponentCamera, ComponentFog, ComponentGlobalPostProcessVolume,
-    ComponentLocalPostProcessVolume, ComponentOutline, ComponentTonemap, ComponentVignette,
-    FogMode, TonemappingPreset,
+    ComponentAntiAliasing, ComponentBloom, ComponentCamera, ComponentFog,
+    ComponentGlobalPostProcessVolume, ComponentLocalPostProcessVolume, ComponentOutline,
+    ComponentTonemap, ComponentVignette, FogMode, FxaaQuality, TonemappingPreset,
 };
 use crate::context::ReadOnlyRegistryContext;
 use crate::render::postprocess::PostProcessSettings;
@@ -239,6 +239,36 @@ fn a_fog_entry_round_trips_and_switches_fog_on() {
             .copied(),
         Some(fog),
         "a volume using the profile renders with its fog"
+    );
+}
+
+#[test]
+fn an_anti_aliasing_entry_round_trips_its_quality() {
+    let root = TempRoot::new();
+    let path = root.path("fxaa.cxpostfx");
+    let fxaa = ComponentAntiAliasing {
+        edge_threshold: 0.063,
+        subpixel: 1.0,
+        quality: FxaaQuality::High,
+    };
+    let profile = PostProcessProfile::from_entries([ProfileEntry::new(fxaa)]);
+    save(&profile, &path);
+    let saved: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+    assert_eq!(saved["entries"][0]["settings"]["quality"], "High");
+
+    let (registries, id) = registries_with_profile(&root, &path);
+    let loaded = load(&registries, id);
+
+    assert_eq!(loaded.read().effect::<ComponentAntiAliasing>(), Some(&fxaa));
+    let mut scene = registries.scene();
+    spawn_global(&mut scene, id);
+    assert_eq!(
+        PostProcessSettings::resolve(&scene, &nalgebra_glm::Vec3::zeros())
+            .get::<ComponentAntiAliasing>()
+            .copied(),
+        Some(fxaa),
+        "a volume using the profile renders at its quality"
     );
 }
 
