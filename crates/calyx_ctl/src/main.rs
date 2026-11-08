@@ -170,6 +170,11 @@ enum Action {
         /// working directory, i.e. the repo root when using `launch`).
         #[arg(long)]
         out: PathBuf,
+        /// Render the game view offscreen at WIDTHxHEIGHT pixels, such as
+        /// 1920x1080, with the HUD painted over it, instead of at the Game
+        /// tab's size. Only for `--target game`.
+        #[arg(long, value_name = "WIDTHxHEIGHT", value_parser = parse_size)]
+        size: Option<[u32; 2]>,
     },
     /// Read or control the frame profiler.
     #[command(subcommand)]
@@ -546,6 +551,15 @@ fn frame_timeout(base: Duration, frames: u32) -> Duration {
     base + Duration::from_millis(frames as u64 * 50)
 }
 
+/// Parses a `WIDTHxHEIGHT` size such as `1920x1080`. The editor decides
+/// which sizes it can render at.
+fn parse_size(value: &str) -> Result<[u32; 2], String> {
+    let invalid = || format!("expected WIDTHxHEIGHT in pixels, such as 1920x1080, got `{value}`");
+    let (width, height) = value.split_once(['x', 'X']).ok_or_else(invalid)?;
+    let parse = |part: &str| part.trim().parse::<u32>().map_err(|_| invalid());
+    Ok([parse(width)?, parse(height)?])
+}
+
 /// The three values of a `num_args = 3` option.
 fn triple(values: &Option<Vec<f32>>) -> Option<[f32; 3]> {
     values.as_ref().map(|v| [v[0], v[1], v[2]])
@@ -781,7 +795,7 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                 frame_timeout(base, total_frames),
             ))
         }
-        Action::Screenshot { target, out } => Ok((
+        Action::Screenshot { target, out, size } => Ok((
             Command::Screenshot {
                 target: match target {
                     CaptureTargetArg::Window => CaptureTarget::Window,
@@ -789,6 +803,7 @@ fn build_command(action: &Action, base: Duration) -> Result<(Command, Duration),
                     CaptureTargetArg::Viewport => CaptureTarget::Viewport,
                 },
                 path: out.clone(),
+                size: *size,
             },
             frame_timeout(base, 150),
         )),
@@ -870,6 +885,65 @@ mod tests {
                 parent: None,
             }
         );
+    }
+
+    #[test]
+    fn screenshot_passes_a_requested_size() {
+        assert_eq!(
+            command(&[
+                "screenshot",
+                "--target",
+                "game",
+                "--size",
+                "1920x1080",
+                "--out",
+                "shot.png"
+            ]),
+            Command::Screenshot {
+                target: CaptureTarget::Game,
+                path: PathBuf::from("shot.png"),
+                size: Some([1920, 1080]),
+            }
+        );
+        assert_eq!(
+            command(&["screenshot", "--target", "game", "--out", "shot.png"]),
+            Command::Screenshot {
+                target: CaptureTarget::Game,
+                path: PathBuf::from("shot.png"),
+                size: None,
+            }
+        );
+    }
+
+    /// Zero and oversized sizes parse; the editor refuses them with
+    /// `bad_request`, since only it knows the sizes it can render at.
+    #[test]
+    fn screenshot_size_must_be_width_x_height() {
+        assert_eq!(parse_size("1920x1080"), Ok([1920, 1080]));
+        assert_eq!(parse_size("640X480"), Ok([640, 480]));
+        assert_eq!(parse_size("0x0"), Ok([0, 0]));
+        for value in [
+            "1920",
+            "1920x",
+            "x1080",
+            "1920x1080x2",
+            "-1x5",
+            "wide x tall",
+            "",
+        ] {
+            assert!(parse_size(value).is_err(), "{value:?}");
+        }
+        assert!(Cli::try_parse_from([
+            "calyx_ctl",
+            "screenshot",
+            "--target",
+            "game",
+            "--size",
+            "1920",
+            "--out",
+            "shot.png",
+        ])
+        .is_err());
     }
 
     /// Leaving the parent out by mistake must not move the object to the

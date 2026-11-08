@@ -6,6 +6,7 @@
 //! full protocol and usage guide.
 
 mod handlers;
+mod hud_capture;
 mod runtime;
 mod server;
 
