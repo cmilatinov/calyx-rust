@@ -306,8 +306,8 @@ impl DrawCollection {
     }
 
     /// Adds every visible, enabled water, through the ordinary mesh
-    /// batches, with the material its cache fills from the component. Water
-    /// casts no shadows.
+    /// batches, with the material its cache fills from the component, and
+    /// its banks with their material. Water casts no shadows; banks do.
     fn collect_water(&mut self, scene: &Scene) {
         self.water.begin_frame(scene.id());
         let mut light = None;
@@ -323,14 +323,21 @@ impl DrawCollection {
             }
             let light = light.get_or_insert_with(|| WaterLight::of_scene(scene));
             let uuid = scene.uuid(owner);
-            let Some((mesh, material)) =
-                self.water
-                    .draw(&self.asset_context, uuid, water, light.as_ref())
+            let Some(draw) = self
+                .water
+                .draw(&self.asset_context, uuid, water, light.as_ref())
             else {
                 continue;
             };
-            let transform = scene.world_transform(owner).matrix().into();
-            self.insert(&mesh, &material, uuid, None, transform, false);
+            let transform: [[f32; 4]; 4] = scene.world_transform(owner).matrix().into();
+            self.insert(&draw.mesh, &draw.material, uuid, None, transform, false);
+            let registries = &self.asset_context.registries;
+            if let (Some(banks), Some(material)) = (
+                draw.banks,
+                self.resolved.resolve(registries, &water.bank_material),
+            ) {
+                self.insert(&banks, &material, uuid, None, transform, true);
+            }
         }
         self.water.end_frame();
     }

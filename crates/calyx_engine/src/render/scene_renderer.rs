@@ -1827,7 +1827,8 @@ mod tests {
         ParticleVelocity, TonemappingPreset,
     };
     use crate::component::{
-        ComponentFoliage, ComponentSkinnedMesh, ComponentTerrain, ComponentWater,
+        ComponentFoliage, ComponentSkinnedMesh, ComponentTerrain, ComponentWater, WaterPoint,
+        WaterShading,
     };
     use crate::math::Transform;
     use crate::render::postprocess::{
@@ -3869,13 +3870,23 @@ mod tests {
         builder.add_component(
             owner,
             ComponentWater {
-                size: glm::vec2(8.0, 8.0),
-                columns: 4,
-                rows: 4,
+                points: vec![
+                    WaterPoint {
+                        position: glm::vec2(0.0, -4.0),
+                        width: 8.0,
+                    },
+                    WaterPoint {
+                        position: glm::vec2(0.0, 4.0),
+                        width: 8.0,
+                    },
+                ],
+                cell_size: 2.0,
                 wave_amplitude: 0.0,
                 deep_color: deep,
                 shore_distance: 0.0,
                 foam_width: 0.0,
+                foam_patches: 0.0,
+                obstacle_foam: 0.0,
                 facet_variation: 0.0,
                 roughness: 0.5,
                 glint_strength: 0.0,
@@ -3922,6 +3933,21 @@ mod tests {
             "metallic, roughness, occlusion, style",
         );
         assert_eq!(renderer.pick_game_object(center.0, center.1), Some(uuid));
+
+        // Shaded smooth, the still water writes the same colour and normal.
+        scene.write_component::<ComponentWater, _>(owner, |water| {
+            water.shading = WaterShading::Smooth;
+        });
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_bytes_near(&albedo[..3], &[0x20, 0x60, 0xA0], "the smooth deep colour");
+        let [sx, sy, _, _] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+        let normal = octahedral_decode(sx, sy);
+        assert!(
+            normal.z < -0.99,
+            "the smooth surface faces the camera: {normal}"
+        );
 
         scene.set_component_enabled::<ComponentWater>(owner, false);
         renderer.build_asset_data(&scene);

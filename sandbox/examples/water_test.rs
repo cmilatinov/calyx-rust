@@ -1,6 +1,8 @@
-//! Build the water look-dev scene: a sunken creek with banks under each
-//! combat palette, with the palette's water colours, its look-dev rig and the
-//! gameplay camera's Far framing and its closest zoom.
+//! Build the water look-dev scene: a sunken, meandering creek with carved
+//! banks under each combat palette, with the palette's water colours, its
+//! look-dev rig, and the gameplay camera's Far framing and its closest zoom.
+//! It also writes the scene's ground heightmap and its inked ground and bank
+//! materials under `sandbox/assets/lookdev/water/`.
 //! Run from the repository root: cargo run -p sandbox --example water_test.
 #![recursion_limit = "256"]
 
@@ -8,13 +10,17 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use calyx_engine::assets::AssetRef;
-use calyx_engine::component::{ComponentCamera, ComponentID, ComponentMesh, ComponentWater};
-use calyx_engine::math::Transform;
+use calyx_engine::component::{
+    ComponentCamera, ComponentID, ComponentMesh, ComponentTerrain, ComponentWater, WaterObstacle,
+    WaterPoint,
+};
+use calyx_engine::math::{Transform, WaterSection};
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
-use calyx_engine::utils::{TypeUuid, Uuid};
+use calyx_engine::utils::{uuid_from_str, TypeUuid, Uuid};
+use calyx_model_gen::palette::{self, Map};
 use egui::Color32;
 use nalgebra::UnitQuaternion;
-use nalgebra_glm::{vec2, vec3, Vec3};
+use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 use sandbox::tank_camera::ComponentTankCamera;
 use serde_json::{json, Value};
 
@@ -23,25 +29,25 @@ const CUBE: &str = "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9";
 /// How far apart the palettes' groups stand along X, so no camera sees
 /// another palette's ground.
 const GROUP_SPACING: f32 = 150.0;
-/// The creek's width between its banks, and its length.
-const CREEK_WIDTH: f32 = 8.0;
-const CREEK_LENGTH: f32 = 140.0;
-/// The creek's yaw in degrees, so its banks cross the view on a diagonal.
-const CREEK_YAW: f32 = 25.0;
 /// Top of the banks, the ground every prop stands on.
 const BANK_TOP: f32 = 0.0;
-/// The water's rest surface, below the banks: the creek is sunken.
-const WATER_LEVEL: f32 = -0.6;
-/// Thickness of the ground layer on top of each bank's dirt body.
-const GROUND_LAYER: f32 = 0.12;
-/// Top of the creek bed, under the water.
-const BED_TOP: f32 = -1.2;
+/// How far the water's rest surface sits below the bank top: the creek is
+/// sunken.
+const SUNKEN: f32 = 0.6;
+/// The ground's terrain: its side, heightmap samples per side and how far
+/// its white lies above its black.
+const GROUND_SIZE: f32 = 100.0;
+const GROUND_SAMPLES: u32 = 1024;
+const GROUND_DROP: f32 = 2.0;
+/// The ground lies this far below the banks' lip, so the lip covers the
+/// edge of the trench the ground is carved with.
+const GROUND_UNDER_LIP: f32 = 0.02;
 
-/// One combat palette: its folder of generated kit and materials, the
-/// group's name in the look-dev scene whose rig it reuses, and its water.
+/// One combat palette: its map, the group's name in the look-dev scene
+/// whose rig it reuses, and its water.
 struct Palette {
     name: &'static str,
-    folder: &'static str,
+    map: Map,
     water: WaterColours,
 }
 
@@ -56,27 +62,27 @@ struct WaterColours {
 const PALETTES: [Palette; 3] = [
     Palette {
         name: "Sunny Battlefield",
-        folder: "sunny",
+        map: Map::SunnyBattlefield,
         water: WaterColours {
             deep: Color32::from_rgb(0x2F, 0x7C, 0xA0),
             shallow: Color32::from_rgb(0x5D, 0xB4, 0xBF),
             foam: Color32::from_rgb(0xE6, 0xF4, 0xEE),
-            glint_strength: 2.5,
+            glint_strength: 1.5,
         },
     },
     Palette {
         name: "Sunbaked",
-        folder: "sunbaked",
+        map: Map::Sunbaked,
         water: WaterColours {
             deep: Color32::from_rgb(0x2E, 0x74, 0x7A),
             shallow: Color32::from_rgb(0x6A, 0xA8, 0x9C),
             foam: Color32::from_rgb(0xEC, 0xE6, 0xD6),
-            glint_strength: 2.5,
+            glint_strength: 1.5,
         },
     },
     Palette {
         name: "Moonlit",
-        folder: "moonlit",
+        map: Map::Moonlit,
         water: WaterColours {
             deep: Color32::from_rgb(0x1B, 0x35, 0x4E),
             shallow: Color32::from_rgb(0x2C, 0x5A, 0x73),
@@ -85,6 +91,172 @@ const PALETTES: [Palette; 3] = [
         },
     },
 ];
+
+/// The creek's centreline and widths, in each group's frame: it meanders
+/// across the Far view in four bends, from 6 to 10 m wide.
+fn creek_points() -> Vec<WaterPoint> {
+    [
+        (2.0, -80.0, 7.0),
+        (-5.0, -56.0, 8.0),
+        (5.0, -34.0, 9.5),
+        (-5.0, -12.0, 7.0),
+        (5.0, 10.0, 10.0),
+        (-4.5, 32.0, 6.5),
+        (4.5, 54.0, 8.5),
+        (-2.0, 80.0, 7.0),
+    ]
+    .into_iter()
+    .map(|(x, z, width)| WaterPoint {
+        position: vec2(x, z),
+        width,
+    })
+    .collect()
+}
+
+/// The creek's water, banks and stream rocks for `palette`, in its group's
+/// frame, before it is lowered to the water level.
+fn creek(palette: &Palette, bank_material: Uuid) -> ComponentWater {
+    ComponentWater {
+        points: creek_points(),
+        cell_size: 0.8,
+        obstacles: STREAM_ROCKS
+            .iter()
+            .map(|&(s, across, scale)| {
+                let (position, _) = along(s, across);
+                WaterObstacle {
+                    position,
+                    radius: 0.75 * scale,
+                }
+            })
+            .collect(),
+        deep_color: palette.water.deep,
+        shallow_color: palette.water.shallow,
+        foam_color: palette.water.foam,
+        glint_strength: palette.water.glint_strength,
+        bank_material: AssetRef::from_id(bank_material),
+        bank_height: SUNKEN,
+        bank_depth: 0.6,
+        bank_run: 0.4,
+        bank_lip: 0.5,
+        ..Default::default()
+    }
+}
+
+/// Rocks standing in the stream: distance along the creek, share of the
+/// half width across it (left positive) and scale.
+const STREAM_ROCKS: [(f32, f32, f32); 2] = [(73.0, 0.25, 1.4), (100.0, -0.4, 1.0)];
+
+/// The creek's cross-sections, as its water meshes them.
+fn sections() -> Vec<WaterSection> {
+    ComponentWater {
+        points: creek_points(),
+        cell_size: 0.8,
+        ..Default::default()
+    }
+    .path()
+    .sections()
+    .expect("the creek meshes")
+}
+
+/// The point `s` along the creek and `across` its half width to the left
+/// (negative to the right), and the flow's yaw there in degrees.
+fn along(s: f32, across: f32) -> (Vec2, f32) {
+    let sections = sections();
+    let section = sections
+        .iter()
+        .min_by(|a, b| (a.s - s).abs().total_cmp(&(b.s - s).abs()))
+        .unwrap();
+    (
+        section.center + section.normal * section.half_width * across,
+        section.tangent.x.atan2(section.tangent.y).to_degrees(),
+    )
+}
+
+/// The point `s` along the creek, `out` beyond the shore on side `side`
+/// (1 left, -1 right).
+fn beside(s: f32, side: f32, out: f32) -> Vec2 {
+    let sections = sections();
+    let section = sections
+        .iter()
+        .min_by(|a, b| (a.s - s).abs().total_cmp(&(b.s - s).abs()))
+        .unwrap();
+    section.center + section.normal * side * (section.half_width + out)
+}
+
+/// Writes `text` to `path`, and its `.meta` naming the asset by its path
+/// under the asset root `assets`, as type `type_uuid`. Returns its id.
+fn write_asset(assets: &Path, relative: &str, bytes: &[u8], type_uuid: &str) -> Uuid {
+    let path = assets.join(relative);
+    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+    std::fs::write(&path, bytes).unwrap();
+    let id = uuid_from_str(relative);
+    let name = relative.rsplit_once('.').unwrap().0;
+    let display = name.rsplit_once('/').unwrap().1;
+    let meta = format!(
+        "{{\n  \"main\": {{\n    \"id\": \"{id}\",\n    \"name\": \"{name}\",\n    \"display_name\": \"{display}\",\n    \"type_uuid\": \"{type_uuid}\"\n  }},\n  \"inner\": []\n}}"
+    );
+    std::fs::write(path.with_extension("meta"), meta).unwrap();
+    id
+}
+
+const MATERIAL_TYPE: &str = "f98a7f41-84d4-482d-b7af-a670b07035ae";
+const TEXTURE_TYPE: &str = "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2";
+
+/// Writes `palette`'s `role` material, inked on the terrain's outline layer
+/// (style 1), as `lookdev/water/<name>.cxmat`, and returns its id.
+fn inked_material(assets: &Path, palette: &Palette, role: &str, name: &str) -> Uuid {
+    let mut material = palette::find(role).unwrap().material(palette.map);
+    for variable in material["variables"].as_array_mut().unwrap() {
+        if variable["name"] == "outline_style" {
+            variable["value"] = json!({ "Uint": 1 });
+        }
+    }
+    write_asset(
+        assets,
+        &format!("lookdev/water/{}_{name}.cxmat", palette.map.folder()),
+        serde_json::to_string_pretty(&material).unwrap().as_bytes(),
+        MATERIAL_TYPE,
+    )
+}
+
+/// Writes the ground's heightmap, `lookdev/water/creek_ground.png`: white
+/// (the bank top) everywhere but a trench along the creek, black (the
+/// bed) out to the middle of the banks' lip and rising to white before its
+/// edge, so the lip covers the trench's edge. Returns its id.
+fn ground_heightmap(assets: &Path, water: &ComponentWater) -> Uuid {
+    let sections = water.path().sections().unwrap();
+    let foot = water.bank_run * water.bank_depth / (water.bank_depth + water.bank_height);
+    let lip_start = water.bank_run - foot;
+    let low = lip_start + 0.15;
+    let high = lip_start + water.bank_lip - 0.1;
+    let samples = GROUND_SAMPLES;
+    let mut image = image::ImageBuffer::<image::Luma<u16>, Vec<u16>>::new(samples, samples);
+    for (column, row, pixel) in image.enumerate_pixels_mut() {
+        let p = vec2(
+            column as f32 / (samples - 1) as f32 * GROUND_SIZE - GROUND_SIZE * 0.5,
+            GROUND_SIZE * 0.5 - row as f32 / (samples - 1) as f32 * GROUND_SIZE,
+        );
+        // Distance beyond the shore, along the nearest piece of the
+        // centreline.
+        let mut beyond = f32::MAX;
+        for pair in sections.windows(2) {
+            let (a, b) = (pair[0].center, pair[1].center);
+            let ab = b - a;
+            let f = ((p - a).dot(&ab) / ab.norm_squared()).clamp(0.0, 1.0);
+            let distance = (p - (a + ab * f)).norm();
+            let half = pair[0].half_width + (pair[1].half_width - pair[0].half_width) * f;
+            beyond = beyond.min(distance - half);
+        }
+        let height = ((beyond - low) / (high - low)).clamp(0.0, 1.0);
+        let height = height * height * (3.0 - 2.0 * height);
+        *pixel = image::Luma([(height * 65535.0).round() as u16]);
+    }
+    let mut png = Vec::new();
+    image
+        .write_to(&mut std::io::Cursor::new(&mut png), image::ImageFormat::Png)
+        .unwrap();
+    write_asset(assets, "lookdev/water/creek_ground.png", &png, TEXTURE_TYPE)
+}
 
 fn stable(name: &str) -> Uuid {
     let hash = format!("calyx/water_test/{name}").bytes().fold(
@@ -167,7 +339,7 @@ impl Author {
         object
     }
 
-    /// A box of the unit cube, `size` large with its top at `top`, drawn with
+    /// A box of the unit cube, `size` large around `center`, drawn with
     /// `palette`'s `role` material.
     fn slab(
         &mut self,
@@ -182,7 +354,7 @@ impl Author {
         self.scene.set_transform(object, &pose(center, 0.0, size));
         let material = self.assets.join(format!(
             "generated/materials/{}/{role}.cxmat",
-            palette.folder
+            palette.map.folder()
         ));
         self.scene.add_component(
             object,
@@ -195,6 +367,7 @@ impl Author {
     }
 
     /// A linked instance of `palette`'s kit `model` under `parent`.
+    #[allow(clippy::too_many_arguments)]
     fn kit(
         &mut self,
         palette: &Palette,
@@ -208,7 +381,7 @@ impl Author {
         self.claim(name);
         let path = self.assets.join(format!(
             "generated/prefabs/{}/{model}.cxprefab",
-            palette.folder
+            palette.map.folder()
         ));
         let source = read(&path);
         let prefab = Prefab {
@@ -259,135 +432,107 @@ impl Author {
         );
     }
 
-    /// One palette's group: its ground and the creek cut through it, the
-    /// water, props on the banks and its cameras.
-    fn group(&mut self, palette: &Palette, origin: Vec3) -> GameObject {
-        let group = self.object(palette.name, None, origin);
-        let rig = self.object(&format!("{} Rig", palette.name), Some(group), Vec3::zeros());
+    /// One palette's group: its carved ground, the creek's water and banks,
+    /// props on the banks and in the stream, and its cameras.
+    fn group(&mut self, palette: &Palette, origin: Vec3, heightmap: Uuid) -> GameObject {
+        let name = palette.name;
+        let group = self.object(name, None, origin);
+        let rig = self.object(&format!("{name} Rig"), Some(group), Vec3::zeros());
+        self.camera(&format!("{name} Camera Far"), rig, Vec3::zeros(), 1.0);
+        // The closest zoom, on a bend with a rock standing in the stream.
+        let (rock, _) = along(STREAM_ROCKS[0].0, STREAM_ROCKS[0].1);
         self.camera(
-            &format!("{} Camera Far", palette.name),
+            &format!("{name} Camera Close"),
             rig,
-            Vec3::zeros(),
-            1.0,
-        );
-        self.camera(
-            &format!("{} Camera Close", palette.name),
-            rig,
-            vec3(-1.0, 0.0, 1.0),
+            vec3(rock.x, 0.0, rock.y + 1.0),
             0.6,
         );
 
-        // A wide floor under everything, below the creek bed.
+        // A wide floor far under everything, for any gap at the ground's
+        // edge.
         self.slab(
             palette,
-            &format!("{} Floor", palette.name),
+            &format!("{name} Floor"),
             group,
-            vec3(0.0, BED_TOP - 1.0, 0.0),
-            vec3(200.0, 1.0, 200.0),
+            vec3(0.0, BANK_TOP - GROUND_DROP - 0.6, 0.0),
+            vec3(300.0, 1.0, 300.0),
             "ground_dirt",
         );
-        let creek = self.object(
-            &format!("{} Creek", palette.name),
+        let assets = self.assets.clone();
+        let ground_material = inked_material(&assets, palette, "ground", "ground");
+        let bank_material = inked_material(&assets, palette, "ground_dirt", "bank");
+        let ground = self.object(
+            &format!("{name} Ground"),
             Some(group),
-            Vec3::zeros(),
-        );
-        self.scene
-            .set_transform(creek, &pose(Vec3::zeros(), CREEK_YAW, Vec3::repeat(1.0)));
-        // Each bank is a dirt body under a thin layer of the palette's
-        // ground, so the bank wall above the water shows earth.
-        let body_top = BANK_TOP - GROUND_LAYER;
-        let body_depth = body_top - (BED_TOP - 0.5);
-        for (side, sign) in [("West", -1.0), ("East", 1.0)] {
-            let x = sign * (CREEK_WIDTH * 0.5 + 40.0);
-            self.slab(
-                palette,
-                &format!("{} {side} Bank", palette.name),
-                creek,
-                vec3(x, BANK_TOP - GROUND_LAYER * 0.5, 0.0),
-                vec3(80.0, GROUND_LAYER, CREEK_LENGTH),
-                "ground",
-            );
-            self.slab(
-                palette,
-                &format!("{} {side} Bank Wall", palette.name),
-                creek,
-                vec3(x, body_top - body_depth * 0.5, 0.0),
-                vec3(80.0, body_depth, CREEK_LENGTH),
-                "ground_dirt",
-            );
-        }
-        self.slab(
-            palette,
-            &format!("{} Creek Bed", palette.name),
-            creek,
-            vec3(0.0, BED_TOP - 0.5, 0.0),
-            vec3(CREEK_WIDTH, 1.0, CREEK_LENGTH),
-            "ground_dirt",
-        );
-        let water = self.object(
-            &format!("{} Water", palette.name),
-            Some(creek),
-            vec3(0.0, WATER_LEVEL, 0.0),
+            vec3(0.0, BANK_TOP - GROUND_UNDER_LIP - GROUND_DROP, 0.0),
         );
         self.scene.add_component(
-            water,
-            ComponentWater {
-                size: vec2(CREEK_WIDTH, CREEK_LENGTH),
-                columns: 10,
-                rows: 175,
-                deep_color: palette.water.deep,
-                shallow_color: palette.water.shallow,
-                foam_color: palette.water.foam,
-                glint_strength: palette.water.glint_strength,
-                ..Default::default()
+            ground,
+            ComponentTerrain {
+                heightmap: AssetRef::from_id(heightmap),
+                material: AssetRef::from_id(ground_material),
+                size: vec2(GROUND_SIZE, GROUND_SIZE),
+                height_scale: GROUND_DROP,
+                cast_shadows: false,
             },
         );
+        let water = self.object(
+            &format!("{name} Water"),
+            Some(group),
+            vec3(0.0, BANK_TOP - SUNKEN, 0.0),
+        );
+        self.scene
+            .add_component(water, creek(palette, bank_material));
 
-        // Props along both banks, in the creek's frame: rocks at the water's
-        // edge, a rock standing in the stream, trees and grass further back.
-        let half = CREEK_WIDTH * 0.5;
-        for (i, (model, x, z, yaw, scale)) in [
-            ("rock_large", -half - 0.6, -6.0, 20.0, 1.0),
-            ("rock_small", -half - 0.3, -3.5, 0.0, 1.0),
-            ("rock_medium", half + 0.5, 3.0, -30.0, 1.0),
-            ("rock_small", half + 0.2, 5.0, 60.0, 1.0),
-            ("rock_medium", -half - 0.4, 9.0, 45.0, 1.0),
-            ("rock_small", half + 0.3, -10.0, 10.0, 1.0),
-            ("tree", -half - 5.0, -1.0, 0.0, 1.0),
-            ("tree_large", half + 7.0, -5.0, 30.0, 1.0),
-            ("tree_small", half + 4.0, 9.0, 15.0, 1.0),
-            ("tree_small", -half - 3.5, 13.0, 70.0, 1.0),
-            ("berry_bush", -half - 2.0, 4.0, 0.0, 1.0),
-            ("berry_bush", half + 2.5, -1.5, 40.0, 1.0),
-            ("grass_tuft", -half - 1.5, 1.0, 0.0, 1.0),
-            ("grass_tuft", -half - 2.5, -8.0, 50.0, 1.0),
-            ("grass_tuft", half + 1.5, 7.0, 100.0, 1.0),
-            ("grass_tuft", half + 1.2, -7.5, 20.0, 1.0),
-            ("crate_framed", half + 5.0, 2.0, 10.0, 1.0),
-            ("barrier_plain", -half - 6.0, 7.0, 75.0, 1.0),
+        // Props along both banks: rocks on the lip at the water's edge, trees,
+        // bushes and grass further back, and cover by the bends.
+        for (i, &(model, s, side, out, yaw, scale)) in [
+            ("rock_large", 60.0, 1.0, 0.6, 20.0, 1.0),
+            ("rock_small", 66.0, -1.0, 0.5, 0.0, 1.0),
+            ("rock_medium", 84.0, -1.0, 0.7, -30.0, 1.0),
+            ("rock_small", 88.0, 1.0, 0.5, 60.0, 1.0),
+            ("rock_medium", 97.0, 1.0, 0.7, 45.0, 1.0),
+            ("rock_small", 54.0, -1.0, 0.5, 10.0, 1.0),
+            ("tree", 70.0, 1.0, 5.0, 0.0, 1.0),
+            ("tree_large", 76.0, -1.0, 7.5, 30.0, 1.0),
+            ("tree_small", 92.0, -1.0, 4.0, 15.0, 1.0),
+            ("tree_small", 100.0, 1.0, 3.5, 70.0, 1.0),
+            ("tree", 52.0, -1.0, 9.0, 40.0, 1.0),
+            ("berry_bush", 80.0, 1.0, 2.0, 0.0, 1.0),
+            ("berry_bush", 63.0, -1.0, 2.5, 40.0, 1.0),
+            ("grass_tuft", 74.0, 1.0, 1.5, 0.0, 1.0),
+            ("grass_tuft", 58.0, 1.0, 2.5, 50.0, 1.0),
+            ("grass_tuft", 90.0, -1.0, 1.5, 100.0, 1.0),
+            ("grass_tuft", 69.0, -1.0, 1.2, 20.0, 1.0),
+            ("crate_framed", 86.0, -1.0, 6.0, 10.0, 1.0),
+            ("barrier_plain", 66.0, 1.0, 9.0, 75.0, 1.0),
         ]
-        .into_iter()
+        .iter()
         .enumerate()
         {
+            let at = beside(s, side, out);
             self.kit(
                 palette,
-                creek,
+                group,
                 model,
-                &format!("{} Bank {i} {model}", palette.name),
-                vec3(x, BANK_TOP, z),
+                &format!("{name} Bank {i} {model}"),
+                vec3(at.x, BANK_TOP, at.y),
                 yaw,
                 scale,
             );
         }
-        self.kit(
-            palette,
-            creek,
-            "rock_medium",
-            &format!("{} Stream Rock", palette.name),
-            vec3(0.8, BED_TOP, -2.0),
-            15.0,
-            1.4,
-        );
+        for (i, &(s, across, scale)) in STREAM_ROCKS.iter().enumerate() {
+            let (at, yaw) = along(s, across);
+            self.kit(
+                palette,
+                group,
+                "rock_medium",
+                &format!("{name} Stream Rock {i}"),
+                vec3(at.x, BANK_TOP - SUNKEN - 0.6 * scale, at.y),
+                yaw + 15.0,
+                scale,
+            );
+        }
         rig
     }
 }
@@ -444,10 +589,11 @@ fn main() {
         identity_bases: BTreeMap::new(),
         names: Default::default(),
     };
+    let heightmap = ground_heightmap(&author.assets, &creek(&PALETTES[0], Uuid::nil()));
     let mut rigs = Vec::new();
     for (i, palette) in PALETTES.iter().enumerate() {
         let origin = vec3(i as f32 * GROUP_SPACING, 0.0, 0.0);
-        let rig = author.group(palette, origin);
+        let rig = author.group(palette, origin, heightmap);
         rigs.push((palette, author.scene.uuid(rig)));
     }
 

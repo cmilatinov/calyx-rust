@@ -278,40 +278,49 @@ not an additional gameplay signal.
 ## Water
 
 Water is uncrossable terrain, opaque (the renderer has no transparent pass)
-and read from the Far framing by colour and motion alone: a faceted,
-flat-shaded surface whose facets bob in a slow looping wave, shallow colour at
-the banks running to deep in the middle, and a broken foam line along the
-shore. It sits in a sunken channel below the banks, as the creek in
-`sandbox/assets/lookdev/water_test.cxscene` (built by `cargo run -p sandbox
---example water_test`) shows in each palette.
+and read from the Far framing by shape, colour and motion: a river that
+meanders between carved banks, its faceted, flat-shaded surface rolling with
+waves that run downstream, shallow colour at the banks running to deep in the
+middle, and hard-edged foam along the shores, around rocks and drifting with
+the flow. Never a straight channel: a river bends, and its width changes. The
+creek in `sandbox/assets/lookdev/water_test.cxscene` (built by `cargo run -p
+sandbox --example water_test`) shows it in each palette.
 
 - Colours: the Water rows of the palette table, as the component's
   `deep_color`, `shallow_color` and `foam_color`. Deep is clearly darker than
-  the ground and shallow differs from it by hue, so the creek reads as a
-  channel at a glance; foam is the lightest value on the map after the light
-  player, and only a thin line.
+  the ground and shallow differs from it by hue, so the river reads at a
+  glance; foam is the lightest value on the map after the light player.
 - Every palette's water leans to its own neutrals: Sunny's teal sits beside
   the grass, Sunbaked's is a muted oasis green-teal against the sand, and
   Moonlit's is a deep navy-slate, cool like every Moonlit neutral (CIELAB
   b\* below 0, a\* between −8 and −1), never purple.
-- Facets: about 0.8 m cells, irregular, `facet_variation` 0.12; waves 0.12 m
-  high, 6 m long, at 0.8 m/s, so each loop takes 7.5 s; foam 0.35 m wide.
-  Roughness 0.3: the only glossy ground.
+- Shading: faceted, the low-poly look, is the default: each facet flat with
+  one colour, so the waves read as facets flickering in the light. The
+  component's `shading` can switch a river to smooth (normals from the waves'
+  slope, interpolated), for comparison; it reads calmer and less like clay.
+- Shape: 6–10 m wide, bends about 20 m apart, facets about 0.8 m. Waves
+  0.22 m high, 5 m long, flowing at 1.2 m/s, with a shorter crossing train,
+  a ripple and drifting noise, so the facets visibly roll and catch the
+  light from the Far camera. Roughness 0.3: the only glossy ground.
+- Foam: flat foam colour in hard-edged shapes, never a gradient: a broken
+  band about 0.45 m wide along both shores whose inner edge swells and
+  breaks, loose flecks past it, patches stretched along the flow, and a
+  broken ring around each rock standing in the water. All of it drifts
+  downstream.
 - Glints: facets that turn most of the way towards mirroring the sun or moon
-  into the camera glint as HDR emission of the light's colour, so they come
-  and go as the facets move. Strength 2.5 by day, a light sparkle under the
-  sun; Moonlit 5.0, above its 2.5 bloom threshold, so the moon's glints halo
-  under its bloom. A glint is a stylised flash, not a reflection: from the
+  into the camera glint as HDR emission of the light's colour, coming and
+  going as the waves roll. Strength 1.5 by day, a sparkle under the sun;
+  Moonlit 5.0, above its 2.5 bloom threshold, so the moon's glints halo under
+  its bloom at Far. A glint is a stylised flash, not a reflection: from the
   high camera a flat surface almost never mirrors a light that is not behind
   the camera.
-- Ink: the water draws no outline (style 0), as the ground: the Outline
-  effect takes the nearer surface's style at an edge, and the banks are
-  nearer than the water, so a water style would never show. The shore reads
-  by the foam line and the bank wall: the creek sits 0.6 m below the banks,
-  whose walls are earth (`ground_dirt`) under a thin layer of the palette's
-  ground, so the far bank shows a strip of earth above the water. Props on
-  the bank and in the stream are inked against the water as against the
-  ground.
+- Banks: the river sits 0.6 m below the ground. Its banks follow the same
+  curve: an earth wall (`ground_dirt`) rising from under the water, 0.4 m of
+  run, then a 0.5 m earth lip, inked on the terrain's outline layer (style
+  1). The ink line falls where the bank meets the water on both shores,
+  since the bank is the nearer surface there; the water itself uses style 0.
+  The look-dev ground around the creek is inked on the same layer so the lip
+  meets it without a line.
 
 ## Silhouette and scale
 

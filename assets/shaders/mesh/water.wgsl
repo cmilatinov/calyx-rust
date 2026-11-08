@@ -13,9 +13,10 @@ var<uniform> water: WaterProperties;
 fn fs_main(in: WaterVertexOut) -> @location(0) vec4f {
     var point: PbrShadingPoint;
     point.world_position = in.world_position;
-    point.albedo = water_albedo(in.facet);
-    point.normal = in.normal;
-    point.geometric_normal = in.normal;
+    point.albedo = water_albedo(in);
+    let normal = water_normal(in);
+    point.normal = normal;
+    point.geometric_normal = normal;
     point.metallic = 0.0;
     point.roughness = water.roughness;
     point.occlusion = 1.0;

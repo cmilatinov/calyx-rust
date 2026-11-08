@@ -3,7 +3,7 @@ use crate::assets::mesh::Mesh;
 use crate::component::{ComponentDirectionalLight, ComponentWater};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
-use crate::math::WaterGrid;
+use crate::math::{BankProfile, WaterPath};
 use crate::render::{SceneRendererError, Shader};
 use crate::scene::{Scene, SceneId};
 use egui::{Color32, Rgba};
@@ -17,9 +17,12 @@ use uuid::Uuid;
 /// binds.
 pub(crate) const WATER_SHADER: &str = "shaders/mesh/water";
 
-/// Longest step the waves take in one frame, in seconds, so a stall does not
-/// jump them forward.
-const MAX_WAVE_STEP: f64 = 0.25;
+/// Longest step the water's clock takes in one frame, in seconds, so a
+/// stall does not jump the waves forward.
+const MAX_TIME_STEP: f64 = 0.25;
+/// The water's clock wraps after this many seconds, so it keeps its
+/// precision as an `f32` in the shader; the waves jump once each wrap.
+const TIME_WRAP: f64 = 3600.0;
 
 /// The light the water glints with: the scene's brightest enabled
 /// directional light.
@@ -53,21 +56,10 @@ impl WaterLight {
     }
 }
 
-/// How far `phase`, a share of the waves' loop, moves in `seconds` for a
-/// main wave `wave_length` long whose crests travel at `wave_speed`,
-/// wrapped to `[0, 1)`. Stays put for a wave that is not finite and
-/// positive.
-pub(crate) fn advance_wave_phase(
-    phase: f64,
-    seconds: f64,
-    wave_speed: f32,
-    wave_length: f32,
-) -> f64 {
-    let rate = wave_speed as f64 / wave_length as f64;
-    if !rate.is_finite() || wave_length <= 0.0 {
-        return phase;
-    }
-    (phase + seconds * rate).rem_euclid(1.0)
+/// The water's clock after `seconds` more from `time`, wrapped to
+/// `[0, TIME_WRAP)`.
+pub(crate) fn advance_water_time(time: f64, seconds: f64) -> f64 {
+    (time + seconds.max(0.0)).rem_euclid(TIME_WRAP)
 }
 
 /// A linear RGBA colour for a material, from an sRGB colour.
@@ -75,41 +67,53 @@ fn linear(color: Color32) -> ShaderVariableValue {
     ShaderVariableValue::Color(Rgba::from(color).to_array())
 }
 
-#[derive(PartialEq)]
-struct MeshKey([u32; 4]);
-
-impl MeshKey {
-    fn new(grid: &WaterGrid) -> Self {
-        Self([
-            grid.size.x.to_bits(),
-            grid.size.y.to_bits(),
-            grid.columns,
-            grid.rows,
-        ])
+/// What the meshes are built from, bit for bit: the path's points, cell
+/// size and obstacles, and the bank profile.
+fn mesh_key(path: &WaterPath, banks: &BankProfile) -> Vec<u32> {
+    let mut key = vec![path.cell_size.to_bits(), path.points.len() as u32];
+    for point in &path.points {
+        key.extend([point.position.x, point.position.y, point.width].map(f32::to_bits));
     }
+    for circle in &path.obstacles {
+        key.extend([circle.center.x, circle.center.y, circle.radius].map(f32::to_bits));
+    }
+    key.extend([banks.height, banks.depth, banks.run, banks.lip].map(f32::to_bits));
+    key
 }
 
 struct CachedWater {
-    key: MeshKey,
+    key: Vec<u32>,
     mesh: Option<Ref<Mesh>>,
+    banks: Option<Ref<Mesh>>,
     material: Ref<Material>,
-    /// Where this water's waves are in their loop.
-    phase: f64,
+    /// This water's clock, in seconds.
+    time: f64,
     seen: bool,
 }
 
-/// The mesh and material of each water a scene renderer draws, one per
-/// water owner. The mesh is rebuilt only when the owner's size or cells
-/// change; the material, the renderer's own on the water shader, takes the
-/// component's colours and waves every frame, so inspector edits show at
-/// once.
+/// What a water draws this frame.
+pub(crate) struct WaterDraw {
+    /// The surface, with the water material.
+    pub mesh: Ref<Mesh>,
+    pub material: Ref<Material>,
+    /// The banks, when the profile has walls; drawn with the component's
+    /// bank material.
+    pub banks: Option<Ref<Mesh>>,
+}
+
+/// The meshes and material of each water a scene renderer draws, one per
+/// water owner. The meshes are built on the CPU once and rebuilt only when
+/// the owner's path, obstacles or bank profile change; every displacement
+/// happens in the water shader. The material, the renderer's own on the
+/// water shader, takes the component's colours, waves and the water's clock
+/// every frame, so inspector edits show at once.
 #[derive(Default)]
 pub(super) struct WaterCache {
     scene: Option<SceneId>,
     shader: Option<Ref<Shader>>,
-    /// When the last frame was collected, which times the waves.
+    /// When the last frame was collected, which times the water.
     last_frame: Option<Instant>,
-    /// Seconds since the last frame, at most [`MAX_WAVE_STEP`].
+    /// Seconds since the last frame, at most [`MAX_TIME_STEP`].
     step: f64,
     waters: HashMap<Uuid, CachedWater>,
 }
@@ -123,24 +127,25 @@ impl WaterCache {
         let now = Instant::now();
         self.step = self
             .last_frame
-            .map_or(0.0, |last| (now - last).as_secs_f64().min(MAX_WAVE_STEP));
+            .map_or(0.0, |last| (now - last).as_secs_f64().min(MAX_TIME_STEP));
         self.last_frame = Some(now);
         for water in self.waters.values_mut() {
             water.seen = false;
         }
     }
 
-    /// The mesh and material of `owner`'s `water`, lit by `light`, or `None`
-    /// when its grid is not valid or the water shader did not load.
+    /// What `owner`'s `water`, lit by `light`, draws, or `None` when its path
+    /// is not valid or the water shader did not load.
     pub fn draw(
         &mut self,
         context: &ReadOnlyAssetContext,
         owner: Uuid,
         water: &ComponentWater,
         light: Option<&WaterLight>,
-    ) -> Option<(Ref<Mesh>, Ref<Material>)> {
-        let grid = water.grid();
-        let key = MeshKey::new(&grid);
+    ) -> Option<WaterDraw> {
+        let path = water.path();
+        let profile = water.bank_profile();
+        let key = mesh_key(&path, &profile);
         if !self.waters.contains_key(&owner) {
             let shader = self.shader(context)?;
             let material = Material::from_shader(context, shader);
@@ -149,24 +154,30 @@ impl WaterCache {
             self.waters.insert(
                 owner,
                 CachedWater {
-                    key: MeshKey([0; 4]),
+                    key: Vec::new(),
                     mesh: None,
+                    banks: None,
                     material: Ref::from_id_value(Uuid::new_v4(), material),
-                    phase: 0.0,
+                    time: 0.0,
                     seen: true,
                 },
             );
         }
+        let step = self.step;
         let cached = self.waters.get_mut(&owner)?;
         if cached.mesh.is_none() || cached.key != key {
-            cached.mesh = build_mesh(context, &grid);
+            cached.mesh = build_water_mesh(context, &path);
+            cached.banks = build_bank_mesh(context, &path, &profile);
             cached.key = key;
         }
         cached.seen = true;
-        cached.phase =
-            advance_wave_phase(cached.phase, self.step, water.wave_speed, water.wave_length);
-        write_material(&mut cached.material.write(), water, cached.phase, light);
-        Some((cached.mesh.clone()?, cached.material.clone()))
+        cached.time = advance_water_time(cached.time, step);
+        write_material(&mut cached.material.write(), water, cached.time, light);
+        Some(WaterDraw {
+            mesh: cached.mesh.clone()?,
+            material: cached.material.clone(),
+            banks: cached.banks.clone(),
+        })
     }
 
     pub fn end_frame(&mut self) {
@@ -189,11 +200,11 @@ impl WaterCache {
     }
 }
 
-/// Fills the water material from `water`, its waves at `phase`.
+/// Fills the water material from `water`, at `time` on its clock.
 fn write_material(
     material: &mut Material,
     water: &ComponentWater,
-    phase: f64,
+    time: f64,
     light: Option<&WaterLight>,
 ) {
     let (direction, glint) = match light {
@@ -205,6 +216,7 @@ fn write_material(
         ),
         None => (-Vec3::y(), [0.0; 3]),
     };
+    let float = ShaderVariableValue::Float;
     for (name, value) in [
         ("deep_color", linear(water.deep_color)),
         ("shallow_color", linear(water.shallow_color)),
@@ -217,40 +229,56 @@ fn write_material(
             "light_direction",
             ShaderVariableValue::Vec4([direction.x, direction.y, direction.z, 0.0]),
         ),
-        (
-            "wave_amplitude",
-            ShaderVariableValue::Float(water.wave_amplitude),
-        ),
-        ("wave_length", ShaderVariableValue::Float(water.wave_length)),
-        ("wave_phase", ShaderVariableValue::Float(phase as f32)),
-        (
-            "shore_distance",
-            ShaderVariableValue::Float(water.shore_distance),
-        ),
-        ("foam_width", ShaderVariableValue::Float(water.foam_width)),
-        (
-            "facet_variation",
-            ShaderVariableValue::Float(water.facet_variation),
-        ),
-        ("roughness", ShaderVariableValue::Float(water.roughness)),
+        ("wave_amplitude", float(water.wave_amplitude)),
+        ("wave_length", float(water.wave_length)),
+        ("flow_speed", float(water.flow_speed)),
+        ("time", float(time as f32)),
+        ("shore_distance", float(water.shore_distance)),
+        ("foam_width", float(water.foam_width)),
+        ("foam_patches", float(water.foam_patches)),
+        ("obstacle_foam", float(water.obstacle_foam)),
+        ("facet_variation", float(water.facet_variation)),
+        ("roughness", float(water.roughness)),
         (
             "outline_style",
             ShaderVariableValue::Uint(water.outline_style),
+        ),
+        (
+            "shading",
+            ShaderVariableValue::Uint(water.shading.shader_value()),
         ),
     ] {
         material.set_variable(name, value);
     }
 }
 
-fn build_mesh(context: &ReadOnlyAssetContext, grid: &WaterGrid) -> Option<Ref<Mesh>> {
-    let geometry = grid.geometry()?;
+fn build_water_mesh(context: &ReadOnlyAssetContext, path: &WaterPath) -> Option<Ref<Mesh>> {
+    let geometry = path.geometry()?;
+    let mut mesh = Mesh::new(&context.render_context);
+    // The water shader reads its own attributes from the mesh channels; see
+    // `WaterGeometry`.
+    mesh.vertices = geometry.positions;
+    mesh.normals = geometry.facets;
+    mesh.tangents = geometry.extra;
+    mesh.uvs[0] = geometry.river;
+    mesh.uvs[1] = geometry.next;
+    mesh.uvs[2] = geometry.previous;
+    mesh.uvs[3] = geometry.next_river;
+    mesh.indices = geometry.indices;
+    mesh.mark_dirty();
+    Some(Ref::from_id_value(Uuid::new_v4(), mesh))
+}
+
+fn build_bank_mesh(
+    context: &ReadOnlyAssetContext,
+    path: &WaterPath,
+    profile: &BankProfile,
+) -> Option<Ref<Mesh>> {
+    let geometry = path.banks(profile)?;
     let mut mesh = Mesh::new(&context.render_context);
     mesh.tangents = vec![Mesh::DEFAULT_TANGENT; geometry.positions.len()];
     mesh.vertices = geometry.positions;
     mesh.normals = geometry.normals;
-    mesh.uvs[0] = geometry.facets;
-    mesh.uvs[1] = geometry.next;
-    mesh.uvs[2] = geometry.previous;
     mesh.indices = geometry.indices;
     mesh.mark_dirty();
     Some(Ref::from_id_value(Uuid::new_v4(), mesh))
@@ -260,39 +288,28 @@ fn build_mesh(context: &ReadOnlyAssetContext, grid: &WaterGrid) -> Option<Ref<Me
 mod tests {
     use super::*;
     use crate::assets::AssetAccess;
+    use crate::component::WaterObstacle;
     use crate::test_support::{test_scene, TestAssets};
     use approx::assert_abs_diff_eq;
     use nalgebra_glm::vec2;
 
     #[test]
-    fn the_waves_loop_once_per_wave_length_over_their_speed() {
-        // A 6 m wave at 0.8 m/s loops every 7.5 s.
-        // Within f32 rounding of the speed, and of a whole loop either side of 0.
-        let looped = |phase: f64| phase.min(1.0 - phase);
-        assert_abs_diff_eq!(advance_wave_phase(0.0, 3.75, 0.8, 6.0), 0.5, epsilon = 1e-6);
+    fn the_waters_clock_runs_on_and_wraps() {
+        assert_abs_diff_eq!(advance_water_time(1.0, 0.5), 1.5);
         assert_abs_diff_eq!(
-            looped(advance_wave_phase(0.0, 7.5, 0.8, 6.0)),
-            0.0,
-            epsilon = 1e-6
+            advance_water_time(TIME_WRAP - 0.25, 0.5),
+            0.25,
+            epsilon = 1e-9
         );
-        assert_abs_diff_eq!(advance_wave_phase(0.9, 1.5, 0.8, 6.0), 0.1, epsilon = 1e-6);
-        // Still water, or a wave with no length, stays put.
-        assert_eq!(advance_wave_phase(0.3, 1.0, 0.0, 6.0), 0.3);
-        assert_eq!(advance_wave_phase(0.3, 1.0, 0.8, 0.0), 0.3);
-        assert_eq!(advance_wave_phase(0.3, 1.0, f32::NAN, 6.0), 0.3);
+        assert_eq!(advance_water_time(2.0, -1.0), 2.0);
     }
 
     #[test]
-    fn cache_rebuilds_the_mesh_only_for_a_new_grid_and_fills_the_material_each_frame() {
+    fn cache_builds_the_meshes_once_and_fills_the_material_each_frame() {
         let assets = TestAssets::engine();
         let context = assets.asset_context();
         let context = context.lock_read();
-        let mut water = ComponentWater {
-            size: vec2(4.0, 2.0),
-            columns: 4,
-            rows: 2,
-            ..Default::default()
-        };
+        let mut water = ComponentWater::default();
         let owner = Uuid::new_v4();
         let scene = test_scene();
         let light = WaterLight {
@@ -301,13 +318,20 @@ mod tests {
         };
         let mut cache = WaterCache::default();
         cache.begin_frame(scene.id());
-        let (mesh, material) = cache.draw(&context, owner, &water, Some(&light)).unwrap();
-        assert_eq!(mesh.read().vertices.len(), 4 * 2 * 6);
-        assert_eq!(mesh.read().indices.len(), 4 * 2 * 6);
-        assert_eq!(material.read().shader.id(), {
-            let shader: Ref<Shader> = SceneRendererError::load(&context, WATER_SHADER).unwrap();
-            shader.id()
-        });
+        let first = cache.draw(&context, owner, &water, Some(&light)).unwrap();
+        let vertices = first.mesh.read().vertices.len();
+        assert_eq!(vertices, water.path().geometry().unwrap().positions.len());
+        assert_eq!(
+            first.banks.as_ref().unwrap().read().vertices.len(),
+            water
+                .path()
+                .banks(&water.bank_profile())
+                .unwrap()
+                .positions
+                .len()
+        );
+        let shader: Ref<Shader> = SceneRendererError::load(&context, WATER_SHADER).unwrap();
+        assert_eq!(first.material.read().shader.id(), shader.id());
         cache.end_frame();
 
         // Colours and waves reach the same material without a rebuild.
@@ -315,9 +339,10 @@ mod tests {
         water.wave_amplitude = 0.3;
         water.deep_color = Color32::from_rgb(0x20, 0x40, 0x60);
         water.glint_strength = 2.0;
-        let (same_mesh, same_material) = cache.draw(&context, owner, &water, Some(&light)).unwrap();
-        assert_eq!(same_mesh.id(), mesh.id());
-        assert_eq!(same_material.id(), material.id());
+        let same = cache.draw(&context, owner, &water, Some(&light)).unwrap();
+        assert_eq!(same.mesh.id(), first.mesh.id());
+        assert_eq!(same.material.id(), first.material.id());
+        let material = first.material.clone();
         let variable = |name: &str| {
             material
                 .read()
@@ -344,17 +369,29 @@ mod tests {
         );
         assert_eq!(material.read().outline_style(), 0);
 
-        // A new size or cell count rebuilds the mesh.
-        water.columns = 5;
-        let (rebuilt, _) = cache.draw(&context, owner, &water, None).unwrap();
-        assert_ne!(rebuilt.id(), mesh.id());
-        assert_eq!(rebuilt.read().vertices.len(), 5 * 2 * 6);
+        // A new point, obstacle or bank rebuilds the meshes.
+        water.points[1].position.x += 1.0;
+        let moved = cache.draw(&context, owner, &water, None).unwrap();
+        assert_ne!(moved.mesh.id(), first.mesh.id());
+        water.obstacles.push(WaterObstacle {
+            position: vec2(0.0, 0.0),
+            radius: 1.0,
+        });
+        let ringed = cache.draw(&context, owner, &water, None).unwrap();
+        assert_ne!(ringed.mesh.id(), moved.mesh.id());
         assert_eq!(
             variable("glint_color"),
             bytes(ShaderVariableValue::Color([0.0, 0.0, 0.0, 1.0])),
             "no light, no glints"
         );
-        water.size.x = 0.0;
+        water.bank_height = 0.0;
+        water.bank_depth = 0.0;
+        assert!(cache
+            .draw(&context, owner, &water, None)
+            .unwrap()
+            .banks
+            .is_none());
+        water.points.truncate(1);
         assert!(cache.draw(&context, owner, &water, None).is_none());
         cache.end_frame();
 

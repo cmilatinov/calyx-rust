@@ -24,10 +24,10 @@ fn water_view_normal(world: vec3f) -> vec3f {
 
 @fragment
 fn fs_main(in: WaterVertexOut) -> GBufferOut {
-    let normal = gbuffer_encode_normal(water_view_normal(in.normal));
+    let normal = gbuffer_encode_normal(water_view_normal(water_normal(in)));
     var out: GBufferOut;
-    out.albedo = vec4f(water_albedo(in.facet), 1.0);
-    // The facet normal is both the shading and the geometric normal.
+    out.albedo = vec4f(water_albedo(in), 1.0);
+    // The shading normal is also the geometric one.
     out.normals = vec4f(normal, normal);
     out.material = vec4f(0.0, water.roughness, 1.0, f32(min(water.outline_style, 255u)) / 255.0);
     out.emissive = vec4f(water_glint(in), 1.0);
