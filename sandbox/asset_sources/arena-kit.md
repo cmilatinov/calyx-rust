@@ -155,6 +155,21 @@ east sand lane up to the deck; the west ramp, root `(11, 24)` turned 90
 degrees, climbs from the middle of the arena, north of the rear crates. A
 sandbag stack on the deck at `(17, 21)` gives cover overlooking the middle.
 
+Interior walls, each an `Arena Wall ...` object holding its kit modules,
+divide the pen into lanes and corners. Corners shield the spawn from the two
+sand lanes (`Southwest Corner`, `Southeast Corner`, roots at `(-16, -25)` and
+`(16, -25)`), a run across the west middle at z = 11 splits the west lane
+from the centre (`West Middle`), a corner at `(-6, 25)` faces the raised area
+across the north (`Northwest Corner`), and a run at x = 10 screens the west
+ramp's approach from the centre (`East Middle`). Their modules join at their
+connection ports, and each straight run has one continuous solid, as the
+perimeter does, rising to the shell-blocking top. Every wall leaves the sand
+lanes, the ramps' feet and the spawn's first six metres clear, with gaps wider
+than a tank (at least 2.8 m) to other obstacles and 4.8 m to the perimeter.
+Like every wall they block sight and cast fog shadows; the minimap outlines
+their solids as it does cover, while the perimeter strips, the Arena's own
+children, bound its floor.
+
 Tanks ride drive surfaces (`ComponentDriveSurface`: the floor, ramp slabs and
 the deck): the hull never collides with them, settles on the surface under
 its centre, nose and tail, and pitches with the slope. Kerbs, the platform

@@ -117,11 +117,12 @@ fn blocks_sight(name: &str) -> bool {
         || (name.starts_with("Arena Cover") && (name.contains("Crate") || name.contains("Supply")))
 }
 
-/// The arena's floor, walls included, each wall-height block of cover, and
-/// the blocks that stop sight.
+/// The arena's floor, perimeter walls included, each wall-height block of
+/// cover and interior wall, and the blocks that stop sight.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct ArenaGeometry {
     pub floor: GroundRect,
+    /// The cover and interior walls the minimap outlines inside the floor.
     pub cover: Vec<GroundRect>,
     /// The walls and the cover that blocks sight; see [`blocks_sight`].
     pub sight_blockers: Vec<GroundRect>,
@@ -187,6 +188,10 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
         if (!is_cover && !blocks) || !live(&child) {
             continue;
         }
+        // The perimeter's strips, the arena's own children, are the floor's
+        // edge; the solids of interior walls, nested under each wall, stand
+        // inside it as cover does.
+        let is_cover = is_cover || (blocks && scene.parent(child) != Some(object));
         let Some(ColliderShape::Cuboid { half_extents }) =
             scene.read_component::<ComponentCollider, _, _>(child, |collider| collider.shape)
         else {
