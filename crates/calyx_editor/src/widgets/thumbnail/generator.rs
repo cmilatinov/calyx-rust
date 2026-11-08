@@ -309,10 +309,14 @@ impl ThumbnailGenerator {
         let Some(downscaler) = &self.texture_downscaler else {
             return Err("texture thumbnail downscaler was not initialized".into());
         };
-        let Some(renderer) = &self.scene_renderer else {
+        let Some(renderer) = self.scene_renderer.as_mut() else {
             return Err("thumbnail scene renderer was not initialized".into());
         };
-        Ok(downscaler.downscale(context, gpu, renderer.scene_texture(), size_px))
+        let thumbnail = downscaler.downscale(context, gpu, renderer.scene_texture(), size_px);
+        // The renderer outlives the job; it must not keep the job's assets
+        // alive, or the job could not evict them.
+        renderer.release_assets();
+        Ok(thumbnail)
     }
 }
 

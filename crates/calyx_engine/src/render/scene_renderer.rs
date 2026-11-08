@@ -874,6 +874,22 @@ impl SceneRenderer {
         self.post_process_settings.clear();
     }
 
+    /// Drops every asset the last render kept to draw again: the meshes,
+    /// materials, textures, shaders and skyboxes it resolved, and the meshes
+    /// and prefab parts of its terrain and foliage caches. The next render
+    /// resolves them again. A renderer that draws one scene once and is kept
+    /// for the next, as the thumbnail generator's is, calls it after each
+    /// render, so it holds none of the scene's assets in between.
+    pub fn release_assets(&mut self) {
+        self.assets.clear();
+        self.draw_list.clear();
+        self.material_shaders.clear();
+        self.resolved = ResolvedRefs::default();
+        self.foliage = FoliageCache::default();
+        self.terrain = TerrainCache::default();
+        self.skybox_renderer.set_skybox(None);
+    }
+
     /// The settings resolved by the most recent scene render.
     pub fn post_process_settings(&self) -> &PostProcessSettings {
         &self.post_process_settings

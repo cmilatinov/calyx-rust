@@ -71,7 +71,7 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 
 | CLI | Protocol | Notes |
 |---|---|---|
-| `ping`, `info`, `shutdown` | `ping`/`info`/`shutdown` | `info` includes `assemblies_loaded`, `is_simulating`, `object_count`, and an `input_debug` block |
+| `ping`, `info`, `shutdown` | `ping`/`info`/`shutdown` | `info` includes `assemblies_loaded`, `is_simulating`, `object_count`, `loaded_assets` (how many assets the registry's cache holds), and an `input_debug` block |
 | `play [--scene PATH]`, `pause`, `stop` | `play`/`pause`/`stop` | same semantics as the toolbar buttons, so a fresh `play` runs the scene open in the editor, unsaved edits included (the project's `startup_scene` is only for the standalone player); `--scene` runs that scene file instead (refused while a simulation exists); `stop` discards simulation edits. Anything that pauses, stops, or replaces the simulation - these commands, a successful `load_scene`, or the toolbar and scene loads in the editor UI - cancels an in-flight `step_frames` (that client gets a `cancelled` error) |
 | `step --frames N` | `step_frames` | ensures simulation (a fresh start runs the open scene, so `play --scene` first to step a different scene file), advances exactly N editor frames, pauses, then responds; only one step may be in flight at a time, and disconnecting mid-step pauses the simulation |
 | `wait --frames N` / `wait --simulating BOOL` | `wait_frames` / client-side polling | |

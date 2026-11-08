@@ -11,7 +11,7 @@ use calyx_engine::assets::material::Material;
 use calyx_engine::assets::mesh::Mesh;
 use calyx_engine::assets::skybox::Skybox;
 use calyx_engine::assets::texture::Texture;
-use calyx_engine::assets::{Asset, AssetAccess, AssetRef, AssetRegistry};
+use calyx_engine::assets::{Asset, AssetAccess, AssetLoadRecord, AssetRef, AssetRegistry};
 use calyx_engine::component::{
     Component, ComponentAmbientLight, ComponentDirectionalLight, ComponentMesh,
     ComponentPointLight, ComponentSkinnedMesh, ComponentSkyLight, ComponentSpotLight,
@@ -37,6 +37,8 @@ mod handle;
 #[cfg(test)]
 mod handle_tests;
 mod pipeline;
+#[cfg(test)]
+mod residency_tests;
 #[cfg(test)]
 mod scene_tests;
 mod service;

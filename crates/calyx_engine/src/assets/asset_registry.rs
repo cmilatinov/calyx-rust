@@ -8,6 +8,7 @@ use relative_path::{PathExt, RelativePathBuf};
 use serde::{Deserialize, Serialize};
 use std::any::TypeId;
 use std::borrow::Cow;
+use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::fs::OpenOptions;
 use std::io::BufWriter;
@@ -239,6 +240,69 @@ impl Drop for LoadSlotGuard<'_> {
             .owners
             .remove(&self.id);
         self.slots.released.notify_all();
+    }
+}
+
+thread_local! {
+    /// The ids this thread put into a registry's cache since the innermost
+    /// live [`AssetLoadRecord`] started, or `None` when none is live.
+    static LOAD_RECORD: RefCell<Option<Vec<Uuid>>> = const { RefCell::new(None) };
+}
+
+/// Records which assets the current thread puts into the registry's cache
+/// while it lives: each asset a load reads from its file, and each sub-asset
+/// such a load creates. An asset that was already cached is not recorded, so
+/// [`AssetRegistry::evict_unheld`] given what this records only drops what
+/// the recorded work loaded itself.
+///
+/// Loads on other threads are not recorded, background loads included.
+/// Records nest: an inner record's ids are also an outer record's.
+#[must_use = "a record stops recording when it is dropped"]
+pub struct AssetLoadRecord {
+    /// What the enclosing record had recorded when this one started.
+    outer: Option<Option<Vec<Uuid>>>,
+}
+
+impl AssetLoadRecord {
+    /// Starts recording the current thread's cache insertions.
+    pub fn start() -> Self {
+        let outer = LOAD_RECORD.with(|record| record.replace(Some(Vec::new())));
+        Self { outer: Some(outer) }
+    }
+
+    /// Stops recording and returns the ids recorded, in insertion order.
+    pub fn finish(mut self) -> Vec<Uuid> {
+        self.stop()
+    }
+
+    fn stop(&mut self) -> Vec<Uuid> {
+        let Some(outer) = self.outer.take() else {
+            return Vec::new();
+        };
+        let ids = LOAD_RECORD
+            .with(|record| record.replace(outer))
+            .unwrap_or_default();
+        LOAD_RECORD.with(|record| {
+            if let Some(outer) = record.borrow_mut().as_mut() {
+                outer.extend_from_slice(&ids);
+            }
+        });
+        ids
+    }
+
+    /// Records that this thread cached `id`, when a record is live.
+    fn cached(id: Uuid) {
+        LOAD_RECORD.with(|record| {
+            if let Some(ids) = record.borrow_mut().as_mut() {
+                ids.push(id);
+            }
+        });
+    }
+}
+
+impl Drop for AssetLoadRecord {
+    fn drop(&mut self) {
+        self.stop();
     }
 }
 
@@ -522,6 +586,11 @@ impl AssetRegistry {
             .and_then(|asset| asset.try_downcast::<A>())
     }
 
+    /// How many assets the cache holds, of every type.
+    pub fn loaded_count(&self) -> usize {
+        self.asset_cache().len()
+    }
+
     /// Returns every cached asset of type `A`, without loading any from disk.
     pub fn loaded_assets<A: Asset + TypeUuid>(&self) -> Vec<Ref<A>> {
         self.asset_cache()
@@ -799,6 +868,7 @@ impl AssetRegistry {
             self.load_sub_asset_meta_locked(&mut data, id, sub_assets);
             if existing.is_none() {
                 cache.insert(id, asset.clone());
+                AssetLoadRecord::cached(id);
             }
         }
         match mode {
@@ -820,6 +890,83 @@ impl AssetRegistry {
 
     fn cached_asset(&self, id: Uuid) -> Option<Ref<dyn Asset>> {
         self.asset_cache().get(&id).cloned()
+    }
+
+    /// Drops from the cache the assets of `loaded` that nothing outside the
+    /// cache holds, and returns how many it dropped. `loaded` is what an
+    /// [`AssetLoadRecord`] recorded, so an asset cached before that work
+    /// started is never dropped.
+    ///
+    /// An asset goes with its sub-assets: only a recorded asset with no
+    /// parent is considered, together with its sub-assets, and a sub-asset
+    /// recorded under a parent cached before is kept, since it could not be
+    /// loaded again while its parent stays cached. Shaders are kept: they
+    /// are shared by every material that uses them, and compiling them is
+    /// the slow part of loading them.
+    ///
+    /// An asset that something else holds stays cached, and so does every
+    /// asset it holds. The assets are taken out of the cache and their strong
+    /// references dropped under the cache's lock, and those that are still
+    /// alive afterwards are put back, so the check never misses a reference
+    /// one evicted asset holds to another. When a parent stays alive but one
+    /// of its sub-assets does not, the whole family leaves the cache, so the
+    /// next load reads it again in full; its holders keep their copy.
+    pub fn evict_unheld(&self, loaded: &[Uuid]) -> usize {
+        let families = {
+            let data = self.asset_data();
+            let mut seen = HashSet::new();
+            loaded
+                .iter()
+                .filter(|id| seen.insert(**id))
+                .filter_map(|id| data.meta.get(id))
+                .filter(|meta| meta.parent.is_none() && meta.type_uuid != Shader::type_uuid())
+                .map(|meta| {
+                    let mut members = vec![meta.id];
+                    members.extend(meta.children.iter().copied());
+                    (meta.id, members)
+                })
+                .collect::<Vec<_>>()
+        };
+        if families.is_empty() {
+            return 0;
+        }
+
+        let mut cache = self.asset_cache_mut();
+        let taken = families
+            .into_iter()
+            .map(|(root, members)| {
+                let members = members
+                    .into_iter()
+                    .filter_map(|id| cache.remove(&id).map(|asset| (id, asset.downgrade())))
+                    .collect::<Vec<_>>();
+                (root, members)
+            })
+            .collect::<Vec<_>>();
+
+        let mut evicted = 0;
+        for (root, members) in taken {
+            let alive = members
+                .into_iter()
+                .map(|(id, asset)| (id, asset.upgrade()))
+                .collect::<Vec<_>>();
+            let root_alive = alive
+                .iter()
+                .any(|(id, asset)| *id == root && asset.is_some());
+            let all_alive = alive.iter().all(|(_, asset)| asset.is_some());
+            if root_alive && !all_alive {
+                evicted += alive.len();
+                continue;
+            }
+            for (id, asset) in alive {
+                match asset {
+                    Some(asset) => {
+                        cache.insert(id, asset);
+                    }
+                    None => evicted += 1,
+                }
+            }
+        }
+        evicted
     }
 
     /// Creates a new in-memory asset entry with the provided `name`.
@@ -953,6 +1100,7 @@ impl AssetRegistry {
             display_name,
         );
         cache.insert(id, asset.as_asset());
+        AssetLoadRecord::cached(id);
         Ok(asset)
     }
 
@@ -3216,6 +3364,147 @@ mod tests {
                 sub_assets: vec![child.id()],
             })
         }
+    }
+
+    /// A registry over `root` that loads [`TextTestAsset`] and
+    /// [`GatedTestAsset`] files.
+    fn registry_with_test_assets(root: &Path) -> ReadOnlyRegistryContext {
+        let registries = test_registries_with_assets(vec![root.to_path_buf()]);
+        {
+            let registry = registries.assets.read();
+            registry.register_asset_type::<TextTestAsset>();
+            registry.register_asset_type::<GatedTestAsset>();
+            registry.build_meta().expect("failed to rebuild metadata");
+        }
+        registries
+    }
+
+    #[test]
+    fn eviction_drops_only_what_the_record_loaded_and_nothing_holds() {
+        let root = temp_asset_root("calyx-evict-unheld");
+        std::fs::write(root.join("before.cxtesttext"), "before").unwrap();
+        std::fs::write(root.join("during.cxtesttext"), "during").unwrap();
+        let registries = registry_with_test_assets(&root);
+        let registry = registries.assets.read();
+        let before = registry.asset_id("before").unwrap();
+        let during = registry.asset_id("during").unwrap();
+        let held_before = registry.load_by_id::<TextTestAsset>(before).unwrap();
+
+        let record = AssetLoadRecord::start();
+        registry.load_by_id::<TextTestAsset>(before).unwrap();
+        registry.load_by_id::<TextTestAsset>(during).unwrap();
+        let loaded = record.finish();
+
+        assert_eq!(
+            loaded,
+            vec![during],
+            "an asset already cached is not recorded"
+        );
+        let count = registry.loaded_count();
+        assert_eq!(registry.evict_unheld(&loaded), 1);
+        assert!(registry.loaded_by_id::<TextTestAsset>(during).is_none());
+        assert_eq!(registry.loaded_count(), count - 1);
+        assert_eq!(
+            registry
+                .loaded_by_id::<TextTestAsset>(before)
+                .map(|asset| asset.ptr_id()),
+            Some(held_before.ptr_id())
+        );
+        assert_eq!(
+            registry
+                .load_by_id::<TextTestAsset>(during)
+                .unwrap()
+                .read()
+                .text,
+            "during",
+            "an evicted asset loads again"
+        );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn eviction_keeps_a_held_sub_asset_cached_and_loadable() {
+        let root = temp_asset_root("calyx-evict-held-child");
+        std::fs::write(root.join("parent.cxtestgated"), "plain").unwrap();
+        let registries = registry_with_test_assets(&root);
+        let registry = registries.assets.read();
+        let parent = registry.asset_id("parent").unwrap();
+
+        let record = AssetLoadRecord::start();
+        registry.load_by_id::<GatedTestAsset>(parent).unwrap();
+        let loaded = record.finish();
+        let child = registry.asset_id("parent/Child").unwrap();
+        assert_eq!(loaded.len(), 2, "the parent and the sub-asset it created");
+        let held_child = registry.loaded_by_id::<TextTestAsset>(child).unwrap();
+
+        assert_eq!(registry.evict_unheld(&loaded), 1);
+        assert!(registry.loaded_by_id::<GatedTestAsset>(parent).is_none());
+        assert_eq!(
+            registry
+                .load_by_id::<TextTestAsset>(child)
+                .map(|asset| asset.ptr_id())
+                .ok(),
+            Some(held_child.ptr_id()),
+            "the held sub-asset stays the cached one"
+        );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn eviction_drops_a_whole_family_when_a_held_parent_lost_a_sub_asset() {
+        let root = temp_asset_root("calyx-evict-held-parent");
+        std::fs::write(root.join("parent.cxtestgated"), "plain").unwrap();
+        let registries = registry_with_test_assets(&root);
+        let registry = registries.assets.read();
+        let parent = registry.asset_id("parent").unwrap();
+
+        let record = AssetLoadRecord::start();
+        let held_parent = registry.load_by_id::<GatedTestAsset>(parent).unwrap();
+        let loaded = record.finish();
+        let child = registry.asset_id("parent/Child").unwrap();
+
+        assert_eq!(registry.evict_unheld(&loaded), 2);
+        assert!(registry.loaded_by_id::<GatedTestAsset>(parent).is_none());
+        assert!(registry.loaded_by_id::<TextTestAsset>(child).is_none());
+        assert!(
+            registry.load_by_id::<TextTestAsset>(child).is_ok(),
+            "the sub-asset loads again with a fresh parent"
+        );
+        assert_ne!(
+            registry
+                .loaded_by_id::<GatedTestAsset>(parent)
+                .map(|asset| asset.ptr_id()),
+            Some(held_parent.ptr_id())
+        );
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
+    }
+
+    #[test]
+    fn records_nest_and_stop_when_dropped() {
+        let root = temp_asset_root("calyx-load-record-nesting");
+        std::fs::write(root.join("a.cxtesttext"), "a").unwrap();
+        std::fs::write(root.join("b.cxtesttext"), "b").unwrap();
+        let registries = registry_with_test_assets(&root);
+        let registry = registries.assets.read();
+        let (a, b) = (
+            registry.asset_id("a").unwrap(),
+            registry.asset_id("b").unwrap(),
+        );
+
+        let outer = AssetLoadRecord::start();
+        let inner = AssetLoadRecord::start();
+        registry.load_by_id::<TextTestAsset>(a).unwrap();
+        assert_eq!(inner.finish(), vec![a]);
+        {
+            let _dropped = AssetLoadRecord::start();
+            registry.load_by_id::<TextTestAsset>(b).unwrap();
+        }
+        assert_eq!(outer.finish(), vec![a, b]);
+        drop(registry);
+        std::fs::remove_dir_all(root).expect("failed to remove temp asset root");
     }
 
     #[test]

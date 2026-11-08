@@ -575,6 +575,14 @@ impl EditorApp {
                 input.pointer.latest_pos().map(|pos| [pos.x, pos.y]),
             )
         });
+        let loaded_assets = self
+            .state
+            .game
+            .assets
+            .registries
+            .assets
+            .read()
+            .loaded_count();
         let scenes = &self.state.game.scenes;
         Ok(Some(serde_json::json!({
             "input_debug": {
@@ -592,6 +600,7 @@ impl EditorApp {
             "scene_file": scenes.current_scene_meta().file.as_ref().map(|f| f.display().to_string()),
             "scene_name": scenes.current_scene_meta().asset_name,
             "object_count": scenes.simulation_scene().objects().count(),
+            "loaded_assets": loaded_assets,
             "prefab": self.remote_prefab_state(),
             "port": runtime.server.bound_port(),
         })))

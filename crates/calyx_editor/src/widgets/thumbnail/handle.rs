@@ -11,8 +11,9 @@ use super::*;
 use egui::Ui;
 use std::time::Duration;
 
-/// How long a memoized [`ThumbnailRequest`] is reused before its source
-/// version is computed again. Source edits show up after at most this long.
+/// How long a memoized [`ThumbnailRequest`] is reused at most before its
+/// source version is computed again. Source edits show up after at most this
+/// long.
 const THUMBNAIL_REQUEST_REFRESH_INTERVAL: Duration = Duration::from_secs(1);
 
 /// What an asset UI should draw for one asset's thumbnail.
@@ -136,6 +137,12 @@ pub(super) fn thumbnail_view(
 /// Reuses each asset's [`ThumbnailRequest`] for a refresh interval, so UI code
 /// that asks every frame does not reread and rehash the asset's files every
 /// frame.
+///
+/// Each asset's request is reused for between half and all of the refresh
+/// interval, a fraction fixed by its id. A folder's tiles all ask in the
+/// same frame when it opens; with one interval for all, every request of the
+/// folder would be computed again in one frame each interval, a frame-time
+/// spike once a second, where spread out they cost a few each frame.
 pub(super) struct ThumbnailRequestMemo {
     entries: HashMap<Uuid, ThumbnailRequestMemoEntry>,
     refresh_interval: Duration,
@@ -143,7 +150,7 @@ pub(super) struct ThumbnailRequestMemo {
 
 struct ThumbnailRequestMemoEntry {
     request: Option<ThumbnailRequest>,
-    computed_at: Instant,
+    expires_at: Instant,
 }
 
 impl Default for ThumbnailRequestMemo {
@@ -167,8 +174,16 @@ impl ThumbnailRequestMemo {
         self.entries.len()
     }
 
+    /// How long the request of `asset_id` is reused once computed: between
+    /// half and all of the refresh interval.
+    pub(super) fn reuse_interval(&self, asset_id: Uuid) -> Duration {
+        let (high, low) = asset_id.as_u64_pair();
+        let fraction = ((high ^ low) % 1024) as u32;
+        self.refresh_interval / 2 + self.refresh_interval * fraction / 2048
+    }
+
     /// Returns the memoized request for `asset_id`, calling `compute` when there
-    /// is none or it is at least one refresh interval old at `now`.
+    /// is none or it is at least its [`Self::reuse_interval`] old at `now`.
     pub(super) fn get_or_compute(
         &mut self,
         asset_id: Uuid,
@@ -176,7 +191,7 @@ impl ThumbnailRequestMemo {
         compute: impl FnOnce() -> Option<ThumbnailRequest>,
     ) -> Option<ThumbnailRequest> {
         if let Some(entry) = self.entries.get(&asset_id) {
-            if now.saturating_duration_since(entry.computed_at) < self.refresh_interval {
+            if now < entry.expires_at {
                 return entry.request.clone();
             }
         }
@@ -193,16 +208,14 @@ impl ThumbnailRequestMemo {
         request: Option<ThumbnailRequest>,
     ) -> Option<ThumbnailRequest> {
         if self.entries.len() >= Self::PRUNE_THRESHOLD && !self.entries.contains_key(&asset_id) {
-            let refresh_interval = self.refresh_interval;
-            self.entries.retain(|_, entry| {
-                now.saturating_duration_since(entry.computed_at) < refresh_interval
-            });
+            self.entries.retain(|_, entry| now < entry.expires_at);
         }
+        let expires_at = now + self.reuse_interval(asset_id);
         self.entries.insert(
             asset_id,
             ThumbnailRequestMemoEntry {
                 request: request.clone(),
-                computed_at: now,
+                expires_at,
             },
         );
         request
