@@ -175,6 +175,13 @@ Adding a player colour, or changing one:
   strength.
 - SSAO is part of the clay look: intensity 2.2, radius 0.9, bias 0.025,
   16 samples, giving the soft dark contact shadow under every tank and prop.
+- Terrain relief reads like a clay relief map, because shading alone
+  barely shows a 2 m hill from the high camera. Its baked colour map is
+  the only texture: the map's ground colour on the floor, blending towards
+  the light leaf colour as the ground rises (80% by 1.8 m), with a thin
+  dark leaf line (half strength, 0.18 m wide) on every half-metre contour.
+  The ground still draws no ink outline. The remade arena's generator
+  bakes it (`sandbox/examples/remake_arena.rs`).
 
 ## Ink outlines
 

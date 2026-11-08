@@ -985,35 +985,94 @@ fn main() {
     );
 }
 
-/// The gentle relief under the open ground. Its highest rise stays well
-/// under the 2 m cover: a round flies at the gun's height above the ground
-/// under the shooter and the aim point, so standing on a rise lifts it over
-/// cover on lower ground by at most the rise. With 0.3 m, plus the barrel
-/// tip's lift on the gentlest slope, the bottom of a round still passes no
-/// higher than about 1.95 m over cover standing on level ground.
-const RELIEF_HEIGHT: f32 = 0.3;
-/// How far below the tiles the terrain lies where tiles cover the ground,
-/// hidden under the lanes, paving and the outer ring.
-const RELIEF_BASE: f32 = 0.15;
-/// Ground the relief keeps level around cover, walls, ramps, the platform,
-/// tiles and the actors, before it rises over this falloff.
-const RELIEF_FLAT_MARGIN: f32 = 1.2;
-const RELIEF_FALLOFF: f32 = 3.0;
 /// The terrain's samples: one every half metre over the 60 by 64 m pen,
 /// the same grid the one-metre kit tiles sit on.
 const RELIEF_COLUMNS: usize = 121;
 const RELIEF_ROWS: usize = 129;
+const RELIEF_SPACING: f32 = 0.5;
 const RELIEF_SIZE: Vec2 = Vec2::new(60.0, 64.0);
+/// How far below the floor the terrain lies under tiles, out of sight.
+const RELIEF_BASE: f32 = 0.15;
+/// The terrain's height range above its base: room for the highest hill.
+const RELIEF_RANGE: f32 = 3.0;
+/// The steepest the ground climbs to any of its eight neighbouring samples,
+/// as rise over run, while it is shaped.
+const RELIEF_GRADE: f32 = 0.335;
+/// The steepest a pad's level may lie above the level ground round it, or
+/// another pad, as rise over run between their edges.
+const PAD_GRADE: f32 = 0.25;
+/// The steepest any triangle of the surface may be: tanks drive every slope.
+const RELIEF_MAX_SLOPE_DEGREES: f32 = 20.0;
+/// Level ground kept at the floor round walls, the platform and ramps, and
+/// round tiles; and at a prop's own level round its solids.
+const RELIEF_WALL_MARGIN: f32 = 0.5;
+/// Level ground round the platform and ramps, so tanks meet their sides
+/// and feet on the floor.
+const RELIEF_RAISED_AREA_MARGIN: f32 = 2.5;
+const RELIEF_TILE_MARGIN: f32 = 0.0;
+const RELIEF_PAD_MARGIN: f32 = 0.75;
+/// Level ground round the spawn, targets and sentry.
+const RELIEF_ACTOR_PAD: f32 = 2.0;
+/// The colour map's texels per metre.
+const RELIEF_COLOR_DENSITY: usize = 8;
+/// The colour map's contour interval and line width, in metres.
+const RELIEF_CONTOUR: f32 = 0.5;
+const RELIEF_CONTOUR_WIDTH: f32 = 0.18;
+
+/// A landform the relief is shaped from: ground rising to `height` along
+/// the segment from `from` to `to`, out to `top` metres from it, then
+/// falling away. The grade and the level ground round everything placed
+/// cut it down where it would be too steep or too close.
+struct Landform {
+    from: Vec2,
+    to: Vec2,
+    top: f32,
+    height: f32,
+}
+
+const fn landform(from: (f32, f32), to: (f32, f32), top: f32, height: f32) -> Landform {
+    Landform {
+        from: Vec2::new(from.0, from.1),
+        to: Vec2::new(to.0, to.1),
+        top,
+        height,
+    }
+}
+
+/// The arena's hills, ridges and berms, in its frame. Hills fill the open
+/// ground between the cover clusters; the valleys between them, the road
+/// north of the centre, the sentry's field of fire and the raised area stay
+/// at the floor. Berms run along the outer side of both sand lanes.
+const LANDFORMS: [Landform; 8] = [
+    // South of the cross lane, either side of the spawn's approach.
+    landform((-10.0, -12.0), (-6.0, -10.0), 1.5, 2.8),
+    landform((6.0, -10.0), (10.0, -12.0), 1.5, 2.8),
+    // West of the centre, between the west lane and Target A.
+    landform((-14.0, 2.0), (-12.0, 7.0), 1.0, 2.8),
+    // Between the west middle wall and the northwest corner.
+    landform((-14.0, 15.5), (-10.0, 19.0), 1.0, 2.8),
+    // North of the centre, west of the raised area's ramp.
+    landform((-2.0, 25.0), (3.0, 26.0), 1.0, 2.8),
+    // East, south of the cross lane.
+    landform((13.0, -12.0), (13.0, -8.0), 1.0, 2.8),
+    // Berms along the outer side of the sand lanes.
+    landform((-25.2, -15.0), (-25.2, 16.0), 0.5, 2.0),
+    landform((25.2, -15.0), (25.2, 16.0), 0.5, 2.0),
+];
 
 impl Author {
-    /// The terrain under the open grass, `Arena Terrain`: a heightmap of
-    /// gentle mounds, written to `game/textures/arena_heightmap.png`, drawn
-    /// in the ground's grass material. It replaces the grass tiles inside
-    /// the pen; where other tiles lie it sinks below them. It stays level
-    /// under and around every solid and actor, so cover, walls, ramps,
-    /// spawns, targets and the sentry stand on level ground as before, and
-    /// the grass tufts are lifted onto it. `actors` names the objects that
-    /// keep level ground around them. Run after everything else is placed.
+    /// The terrain under the open grass, `Arena Terrain`: hills, ridges and
+    /// berms written to `game/textures/arena_heightmap.png`, coloured by the
+    /// baked `game/textures/arena_terrain_color.png` through the
+    /// `game/materials/arena_terrain` material. It replaces the grass tiles
+    /// inside the pen; where other tiles lie it sinks below them.
+    ///
+    /// Walls, the platform, the ramps and their feet, the tiles and the
+    /// `actors` keep level ground at the floor round them. Every prop with
+    /// solids stands on a level pad at the height of the ground under it,
+    /// so its solids still rise to the shell-blocking top above its own
+    /// ground; grass tufts stand on the slopes. No triangle is steeper than
+    /// [`RELIEF_MAX_SLOPE_DEGREES`]. Run after everything else is placed.
     fn terrain(&mut self, actors: &[&str]) {
         let arena = self.scene.world_transform(self.arena).position;
         let actors: Vec<_> = actors
@@ -1028,42 +1087,86 @@ impl Author {
                 vec2(position.x, position.z)
             })
             .collect();
-        let heights = self.relief_heights(&actors);
-        let path = self.assets.join("game/textures/arena_heightmap.png");
-        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-        let range = RELIEF_HEIGHT + RELIEF_BASE;
+        let relief = self.relief(&actors);
+
+        // The props stand on their pads.
+        for (prop, height) in &relief.pads {
+            let mut pose = self.scene.transform(*prop);
+            pose.position.y = *height;
+            self.scene.set_transform(*prop, &pose.matrix());
+        }
+
+        let range = RELIEF_RANGE;
+        let level = |height: f32| ((height + RELIEF_BASE) / range).clamp(0.0, 1.0);
+        let textures = self.assets.join("game/textures");
+        std::fs::create_dir_all(&textures).unwrap();
+        let heightmap_path = textures.join("arena_heightmap.png");
         image::ImageBuffer::<image::Luma<u16>, _>::from_fn(
             RELIEF_COLUMNS as u32,
             RELIEF_ROWS as u32,
             |column, row| {
-                let height = heights[row as usize * RELIEF_COLUMNS + column as usize];
-                let level = ((height + RELIEF_BASE) / range).clamp(0.0, 1.0);
-                image::Luma([(level * 65535.0).round() as u16])
+                let height = relief.heights[row as usize * RELIEF_COLUMNS + column as usize];
+                image::Luma([(level(height) * 65535.0).round() as u16])
             },
         )
-        .save(&path)
+        .save(&heightmap_path)
         .unwrap();
         let heightmap = stable("Arena Terrain heightmap");
-        // Laid out as the asset registry writes a texture's meta.
-        std::fs::write(
-            path.with_extension("meta"),
-            format!(
-                "{{
-  \"main\": {{
-    \"id\": \"{heightmap}\",
-    \"name\": \"game/textures/arena_heightmap\",
-    \"display_name\": \"arena_heightmap\",
-    \"type_uuid\": \"{}\"
-  }},
-  \"inner\": []
-}}",
-                calyx_engine::assets::texture::Texture::type_uuid()
-            ),
+        let texture_type = calyx_engine::assets::texture::Texture::type_uuid();
+        write_meta(&heightmap_path, heightmap, "game/textures", texture_type);
+
+        // The drawn surface, sampled as the game does.
+        let field = calyx_engine::math::Heightfield::new(
+            RELIEF_COLUMNS,
+            RELIEF_ROWS,
+            relief.heights.iter().map(|&height| level(height)).collect(),
         )
         .unwrap();
+        let extent = calyx_engine::math::HeightfieldExtent {
+            size: RELIEF_SIZE,
+            height_scale: range,
+        };
+        let ground = |point: Vec2| {
+            let half = RELIEF_SIZE * 0.5;
+            let point = point.sup(&-half).inf(&half);
+            field.sample(&extent, point).unwrap()
+        };
+
+        let color_path = textures.join("arena_terrain_color.png");
+        relief_colors(|point| ground(point).height - RELIEF_BASE)
+            .save(&color_path)
+            .unwrap();
+        let color = stable("Arena Terrain colour");
+        write_meta(&color_path, color, "game/textures", texture_type);
+
+        // The Sunny ground material, coloured by the map instead of the
+        // flat grass.
+        let materials = self.assets.join("game/materials");
+        let material_path = materials.join("arena_terrain.cxmat");
+        let mut material = read(&self.assets.join("generated/materials/sunny/ground.cxmat"));
+        for variable in material["variables"].as_array_mut().unwrap() {
+            match variable["name"].as_str().unwrap() {
+                "base_color_texture" => {
+                    variable["value"] = json!({ "Texture2D": { "Asset": color } })
+                }
+                "base_color_factor" => variable["value"] = json!({ "Color": [1.0, 1.0, 1.0, 1.0] }),
+                _ => {}
+            }
+        }
+        std::fs::write(
+            &material_path,
+            serde_json::to_string_pretty(&material).unwrap(),
+        )
+        .unwrap();
+        let material = stable("Arena Terrain material");
+        write_meta(
+            &material_path,
+            material,
+            "game/materials",
+            calyx_engine::assets::material::Material::type_uuid(),
+        );
 
         let terrain = self.object("Arena Terrain", self.arena, vec3(0.0, -RELIEF_BASE, 0.0));
-        let material = asset_id(&self.assets.join("generated/materials/sunny/ground.cxmat"));
         self.scene.add_component(
             terrain,
             calyx_engine::component::ComponentTerrain {
@@ -1075,20 +1178,7 @@ impl Author {
             },
         );
 
-        // Tufts stand on the drawn surface: sample it as the game does.
-        let field = calyx_engine::math::Heightfield::new(
-            RELIEF_COLUMNS,
-            RELIEF_ROWS,
-            heights
-                .iter()
-                .map(|height| (height + RELIEF_BASE) / range)
-                .collect(),
-        )
-        .unwrap();
-        let extent = calyx_engine::math::HeightfieldExtent {
-            size: RELIEF_SIZE,
-            height_scale: range,
-        };
+        // Tufts stand on the drawn surface.
         let tufts: Vec<_> = self
             .scene
             .children(self.arena)
@@ -1097,36 +1187,27 @@ impl Author {
         for tuft in tufts {
             let mut pose = self.scene.transform(tuft);
             let point = vec2(pose.position.x, pose.position.z);
-            pose.position.y = field.sample(&extent, point).unwrap().height - RELIEF_BASE;
+            pose.position.y = ground(point).height - RELIEF_BASE;
             self.scene.set_transform(tuft, &pose.matrix());
         }
     }
 
-    /// The relief's height above the floor at every sample, row by row from
-    /// the +Z edge: level (0) within [`RELIEF_FLAT_MARGIN`] of a solid, a
-    /// tile or an actor, sunk to [`RELIEF_BASE`] below the floor under
-    /// tiles, and rising to [`RELIEF_HEIGHT`] in mounds over the open grass.
-    fn relief_heights(&self, actors: &[Vec2]) -> Vec<f32> {
-        // The arena-frame XZ footprints of every solid but the floor.
-        let arena = self.scene.world_transform(self.arena).inverse_matrix();
-        let mut flat: Vec<(Vec2, Vec2)> = Vec::new();
-        for object in self.scene.descendants(self.arena) {
-            if self.scene.name(object) == "Arena Floor" {
-                continue;
-            }
-            let Some(half) =
+    /// Shapes the relief: see [`Self::terrain`].
+    fn relief(&self, actors: &[Vec2]) -> Relief {
+        let to_arena = self.scene.world_transform(self.arena).inverse_matrix();
+        // The arena-frame XZ bounds of an object's box collider.
+        let bounds = |object: GameObject| {
+            let half =
                 self.scene
-                    .read_component::<ComponentCollider, _, _>(object, |collider| {
-                        match collider.shape {
-                            ColliderShape::Cuboid { half_extents } => half_extents,
-                            _ => panic!("arena solids are boxes"),
-                        }
-                    })
-            else {
-                continue;
-            };
-            let world = arena * self.scene.world_transform(object).matrix();
-            let (mut min, mut max) = (Vec2::repeat(f32::INFINITY), Vec2::repeat(f32::NEG_INFINITY));
+                    .read_component::<ComponentCollider, _, _>(object, |collider| match collider
+                        .shape
+                    {
+                        ColliderShape::Cuboid { half_extents } => half_extents,
+                        _ => panic!("arena solids are boxes"),
+                    })?;
+            let world = to_arena * self.scene.world_transform(object).matrix();
+            let mut min = Vec2::repeat(f32::INFINITY);
+            let mut max = Vec2::repeat(f32::NEG_INFINITY);
             for corner in 0..8 {
                 let sign = |bit: usize| if corner & bit == 0 { -1.0 } else { 1.0 };
                 let point = world
@@ -1134,7 +1215,63 @@ impl Author {
                 min = min.inf(&vec2(point.x, point.z));
                 max = max.sup(&vec2(point.x, point.z));
             }
-            flat.push((min, max));
+            Some((min, max))
+        };
+
+        // Level ground at the floor: walls, the platform and ramps, the
+        // ramps' feet, tiles and actors.
+        let mut floor: Vec<(Vec2, Vec2, f32)> = Vec::new();
+        // Props standing on the ground, with the bounds of their solids.
+        let mut props: Vec<(GameObject, Vec2, Vec2)> = Vec::new();
+        for child in self.scene.children(self.arena).collect::<Vec<_>>() {
+            let name = self.scene.name(child);
+            if name == "Arena Floor" || name.starts_with("Arena Grass ") {
+                continue;
+            }
+            let solids: Vec<_> = std::iter::once(child)
+                .chain(self.scene.descendants(child))
+                .filter_map(bounds)
+                .collect();
+            if solids.is_empty() {
+                continue;
+            }
+            let is_prop = name.starts_with("Arena Cover ") || name.starts_with("Arena Prop ");
+            if is_prop && self.scene.transform(child).position.y == 0.0 {
+                let min = solids
+                    .iter()
+                    .fold(Vec2::repeat(f32::INFINITY), |a, b| a.inf(&b.0));
+                let max = solids
+                    .iter()
+                    .fold(Vec2::repeat(f32::NEG_INFINITY), |a, b| a.sup(&b.1));
+                props.push((child, min, max));
+            } else {
+                let raised = name.starts_with("Arena Platform") || name.starts_with("Arena Ramp");
+                let margin = if raised {
+                    RELIEF_RAISED_AREA_MARGIN
+                } else {
+                    RELIEF_WALL_MARGIN
+                };
+                floor.extend(solids.into_iter().map(|(min, max)| (min, max, margin)));
+            }
+        }
+        // Each ramp's foot: level ground three metres out from its low end.
+        for name in ["Arena Ramp South", "Arena Ramp West"] {
+            let ramp = self
+                .scene
+                .children(self.arena)
+                .find(|&o| self.scene.name(o) == name)
+                .unwrap();
+            let pose = to_arena * self.scene.world_transform(ramp).matrix();
+            let corners = [(-2.5, -4.0), (2.5, -4.0), (-2.5, -7.0), (2.5, -7.0)]
+                .map(|(x, z)| pose * nalgebra_glm::vec4(x, 0.0, z, 1.0))
+                .map(|p| vec2(p.x, p.z));
+            let min = corners
+                .iter()
+                .fold(Vec2::repeat(f32::INFINITY), |a, b| a.inf(b));
+            let max = corners
+                .iter()
+                .fold(Vec2::repeat(f32::NEG_INFINITY), |a, b| a.sup(b));
+            floor.push((min, max, RELIEF_WALL_MARGIN));
         }
         // The one-metre cells kit tiles cover; the rest is open grass.
         let mut tiled = vec![false; 60 * 64];
@@ -1150,49 +1287,433 @@ impl Author {
                     tiled[((x + 30) * 64 + z + 32) as usize] = true;
                 }
             }
-            flat.push((min.cast(), max.cast()));
+            floor.push((min.cast(), max.cast(), RELIEF_TILE_MARGIN));
+        }
+        for actor in actors {
+            let reach = Vec2::repeat(RELIEF_ACTOR_PAD);
+            floor.push((actor - reach, actor + reach, 0.0));
         }
         let is_tiled = |x: i32, z: i32| {
             !(-30..30).contains(&x)
                 || !(-32..32).contains(&z)
                 || tiled[((x + 30) * 64 + z + 32) as usize]
         };
-        let mut heights = Vec::with_capacity(RELIEF_COLUMNS * RELIEF_ROWS);
-        for row in 0..RELIEF_ROWS {
-            for column in 0..RELIEF_COLUMNS {
-                let x = column as f32 * 0.5 - 30.0;
-                let z = 32.0 - row as f32 * 0.5;
-                // Under tiles on every side, the terrain sinks out of sight;
-                // a sample on any open cell's edge stays at the floor.
-                let cells = |v: f32| {
-                    let low = (v - 0.25).floor() as i32;
-                    let high = (v + 0.25).floor() as i32;
-                    low..=high
-                };
-                if cells(x).all(|cx| cells(z).all(|cz| is_tiled(cx, cz))) {
-                    heights.push(-RELIEF_BASE);
-                    continue;
-                }
-                let point = vec2(x, z);
-                let clearance = flat
+
+        let point = |index: usize| {
+            let (column, row) = (index % RELIEF_COLUMNS, index / RELIEF_COLUMNS);
+            vec2(
+                column as f32 * RELIEF_SPACING - RELIEF_SIZE.x * 0.5,
+                RELIEF_SIZE.y * 0.5 - row as f32 * RELIEF_SPACING,
+            )
+        };
+        let inside = |p: Vec2, (min, max, margin): (Vec2, Vec2, f32)| {
+            p.x >= min.x - margin
+                && p.x <= max.x + margin
+                && p.y >= min.y - margin
+                && p.y <= max.y + margin
+        };
+        let count = RELIEF_COLUMNS * RELIEF_ROWS;
+        // Samples under tiles on every side sink out of sight; a sample on
+        // any open cell's edge stays at the floor.
+        let sunk: Vec<bool> = (0..count)
+            .map(|index| {
+                let p = point(index);
+                let cells = |v: f32| (v - 0.25).floor() as i32..=(v + 0.25).floor() as i32;
+                cells(p.x).all(|cx| cells(p.y).all(|cz| is_tiled(cx, cz)))
+            })
+            .collect();
+        let mut fixed: Vec<Option<f32>> = (0..count)
+            .map(|index| {
+                let p = point(index);
+                (sunk[index] || floor.iter().any(|&area| inside(p, area))).then_some(0.0)
+            })
+            .collect();
+        // The landforms, with a little rolling noise over them.
+        let mut heights: Vec<f32> = (0..count)
+            .map(|index| {
+                let p = point(index);
+                let height = LANDFORMS
                     .iter()
-                    .map(|&(min, max)| {
-                        let outside = (min - point).sup(&(point - max)).sup(&Vec2::zeros());
-                        outside.magnitude()
+                    .map(|form| {
+                        let along = form.to - form.from;
+                        let t =
+                            ((p - form.from).dot(&along) / along.norm_squared()).clamp(0.0, 1.0);
+                        let distance = (p - (form.from + along * t)).norm();
+                        let run = form.height / RELIEF_GRADE * 1.6;
+                        form.height * smoothstep(form.top + run, form.top, distance)
                     })
-                    .chain(actors.iter().map(|actor| (actor - point).magnitude() - 2.0))
-                    .fold(f32::INFINITY, f32::min);
-                let open = smoothstep(
-                    RELIEF_FLAT_MARGIN,
-                    RELIEF_FLAT_MARGIN + RELIEF_FALLOFF,
-                    clearance,
-                );
-                let mounds = smoothstep(0.45, 0.85, rolling_noise(point));
-                heights.push(RELIEF_HEIGHT * open * mounds);
+                    .fold(0.0, f32::max)
+                    * (0.85 + 0.3 * rolling_noise(p));
+                height.min(RELIEF_RANGE - RELIEF_BASE - 0.1)
+            })
+            .collect();
+        let neighbours = |index: usize| {
+            let (column, row) = (
+                (index % RELIEF_COLUMNS) as i32,
+                (index / RELIEF_COLUMNS) as i32,
+            );
+            [
+                (-1, 0),
+                (1, 0),
+                (0, -1),
+                (0, 1),
+                (-1, -1),
+                (1, 1),
+                (-1, 1),
+                (1, -1),
+            ]
+            .into_iter()
+            .filter_map(move |(dc, dr)| {
+                let (c, r) = (column + dc, row + dr);
+                ((0..RELIEF_COLUMNS as i32).contains(&c) && (0..RELIEF_ROWS as i32).contains(&r))
+                    .then(|| {
+                        let run = if dc != 0 && dr != 0 {
+                            RELIEF_SPACING * std::f32::consts::SQRT_2
+                        } else {
+                            RELIEF_SPACING
+                        };
+                        (r as usize * RELIEF_COLUMNS + c as usize, run)
+                    })
+            })
+        };
+        // Grades the ground: lowers every free sample to within `grade` of
+        // its neighbours or, with `raise`, lifts it to within `grade` below
+        // them, until nothing moves.
+        let grade = |heights: &mut Vec<f32>, fixed: &[Option<f32>], grade: f32, raise: bool| {
+            for (index, value) in fixed.iter().enumerate() {
+                if let Some(value) = value {
+                    heights[index] = *value;
+                }
+            }
+            for _ in 0..2000 {
+                let mut moved = false;
+                for pass in [false, true] {
+                    let order: Box<dyn Iterator<Item = usize>> = if pass {
+                        Box::new((0..count).rev())
+                    } else {
+                        Box::new(0..count)
+                    };
+                    for index in order {
+                        if fixed[index].is_some() {
+                            continue;
+                        }
+                        let mut value = heights[index];
+                        for (next, run) in neighbours(index) {
+                            value = if raise {
+                                value.max(heights[next] - grade * run)
+                            } else {
+                                value.min(heights[next] + grade * run)
+                            };
+                        }
+                        if (value - heights[index]).abs() > 1e-5 {
+                            heights[index] = value;
+                            moved = true;
+                        }
+                    }
+                }
+                if !moved {
+                    return;
+                }
+            }
+            panic!("the relief does not settle");
+        };
+        let smooth = |heights: &mut Vec<f32>, fixed: &[Option<f32>]| {
+            let previous = heights.clone();
+            for index in 0..count {
+                if fixed[index].is_none() {
+                    let (sum, n) = neighbours(index)
+                        .fold((previous[index], 1.0), |(sum, n), (next, _)| {
+                            (sum + previous[next], n + 1.0)
+                        });
+                    heights[index] = sum / n;
+                }
+            }
+        };
+        grade(&mut heights, &fixed, RELIEF_GRADE, false);
+        for _ in 0..3 {
+            smooth(&mut heights, &fixed);
+        }
+
+        // Pads: props whose solids lie close together share one, at the
+        // lowest ground under any of their origins.
+        let mut groups: Vec<(Vec<usize>, Vec2, Vec2)> = Vec::new();
+        for (i, &(_, min, max)) in props.iter().enumerate() {
+            let reach = Vec2::repeat(RELIEF_PAD_MARGIN * 2.0);
+            let joined: Vec<usize> = (0..groups.len())
+                .filter(|&g| {
+                    let (_, gmin, gmax) = groups[g];
+                    min.x - reach.x <= gmax.x
+                        && gmin.x <= max.x + reach.x
+                        && min.y - reach.y <= gmax.y
+                        && gmin.y <= max.y + reach.y
+                })
+                .collect();
+            let mut group = (vec![i], min, max);
+            for &g in joined.iter().rev() {
+                let (members, gmin, gmax) = groups.remove(g);
+                group.0.extend(members);
+                group.1 = group.1.inf(&gmin);
+                group.2 = group.2.sup(&gmax);
+            }
+            groups.push(group);
+        }
+        // How high a pad may stand at each sample and still leave room for
+        // a drivable slope down to the level ground at the floor.
+        let mut room = vec![f32::INFINITY; count];
+        grade(&mut room, &fixed, PAD_GRADE, false);
+        let cells: Vec<Vec<usize>> = groups
+            .iter()
+            .map(|(members, ..)| {
+                (0..count)
+                    .filter(|&index| {
+                        !sunk[index]
+                            && members.iter().any(|&i| {
+                                let (_, min, max) = props[i];
+                                inside(point(index), (min, max, RELIEF_PAD_MARGIN))
+                            })
+                    })
+                    .collect()
+            })
+            .collect();
+        // Each pad lies at the mean ground under it, cut into the slope on
+        // one side and built up on the other, within its room.
+        let mut levels: Vec<f32> = cells
+            .iter()
+            .map(|cells| {
+                let mean =
+                    cells.iter().map(|&index| heights[index]).sum::<f32>() / cells.len() as f32;
+                cells.iter().map(|&index| room[index]).fold(mean, f32::min)
+            })
+            .collect();
+        // Neighbouring pads also leave room for a slope between them.
+        let margin = Vec2::repeat(RELIEF_PAD_MARGIN);
+        for _ in 0..groups.len() {
+            for i in 0..groups.len() {
+                for j in 0..groups.len() {
+                    let (_, imin, imax) = groups[i];
+                    let (_, jmin, jmax) = groups[j];
+                    let gap = ((imin - margin) - (jmax + margin))
+                        .sup(&((jmin - margin) - (imax + margin)))
+                        .sup(&Vec2::zeros())
+                        .norm();
+                    levels[i] = levels[i].min(levels[j] + PAD_GRADE * gap);
+                }
             }
         }
-        heights
+        let mut pads = Vec::new();
+        for (g, (members, ..)) in groups.iter().enumerate() {
+            // Down to the centimetre, so the authored height reads cleanly.
+            let height = ((levels[g] * 100.0).floor() / 100.0).max(0.0);
+            for &index in &cells[g] {
+                fixed[index] = Some(height);
+            }
+            pads.extend(members.iter().map(|&i| (props[i].0, height)));
+        }
+        // Settle the ground round the pads, then keep every triangle within
+        // the steepest slope a tank drives. The ground falls from each pad
+        // no steeper than the pad grade, which keeps even the triangles of
+        // that fall within the limit; elsewhere it is lowered, triangle by
+        // triangle, until none is too steep.
+        let limit = RELIEF_MAX_SLOPE_DEGREES.to_radians().tan() + 1e-4;
+        let mut floor_under = vec![f32::NEG_INFINITY; count];
+        grade(&mut floor_under, &fixed, PAD_GRADE, true);
+        // Nor higher than the lower pads and level ground leave room for.
+        let mut ceiling = vec![f32::INFINITY; count];
+        grade(&mut ceiling, &fixed, PAD_GRADE, false);
+        for index in 0..count {
+            floor_under[index] = floor_under[index].min(ceiling[index]);
+        }
+        grade(&mut heights, &fixed, RELIEF_GRADE, false);
+        // Round off the creases grading leaves, and roughen the slopes a
+        // little so the contours wander as a hillside's do.
+        for index in 0..count {
+            if fixed[index].is_none() {
+                let rise = smoothstep(0.0, 0.6, heights[index]);
+                heights[index] +=
+                    0.3 * (rolling_noise(point(index) * 1.7 + vec2(40.0, 40.0)) - 0.5) * rise;
+            }
+        }
+        for _ in 0..2 {
+            smooth(&mut heights, &fixed);
+        }
+        for index in 0..count {
+            heights[index] = heights[index].max(floor_under[index]);
+        }
+        for _ in 0..5000 {
+            let mut changed = false;
+            for pairs in relief_triangles() {
+                if pairs.iter().flatten().any(|&c| sunk[c]) {
+                    continue;
+                }
+                for (i, corner) in pairs.into_iter().flatten().enumerate() {
+                    // Each corner once: the pairs share one.
+                    let shared = pairs.into_iter().flatten().take(i).any(|c| c == corner);
+                    if shared || fixed[corner].is_some() {
+                        continue;
+                    }
+                    let Some((_, high)) = corner_range(&heights, pairs, corner, limit * 0.999)
+                    else {
+                        continue;
+                    };
+                    let value = heights[corner].min(high).max(floor_under[corner]);
+                    if value < heights[corner] - 1e-6 {
+                        heights[corner] = value;
+                        changed = true;
+                    }
+                }
+            }
+            if !changed {
+                break;
+            }
+        }
+        for (index, value) in fixed.iter().enumerate() {
+            if let Some(value) = value {
+                assert!(
+                    (heights[index] - value).abs() < 1e-4,
+                    "level ground at {:?} could not be kept",
+                    point(index)
+                );
+            }
+        }
+        let steepest = relief_triangles()
+            .filter(|pairs| !pairs.iter().flatten().any(|&c| sunk[c]))
+            .map(|pairs| triangle_slope(&heights, pairs))
+            .fold(0.0, f32::max);
+        assert!(
+            steepest <= limit,
+            "the relief is {:.1} degrees steep",
+            steepest.atan().to_degrees()
+        );
+        for (index, height) in heights.iter_mut().enumerate() {
+            if sunk[index] {
+                *height = -RELIEF_BASE;
+            }
+        }
+        Relief { heights, pads }
     }
+}
+
+/// The relief's heights above the floor, row by row from the +Z edge, and
+/// each prop with the height of the level pad it stands on.
+struct Relief {
+    heights: Vec<f32>,
+    pads: Vec<(GameObject, f32)>,
+}
+
+/// Every triangle of the relief's surface, split as
+/// [`calyx_engine::math::Heightfield`] splits its cells, as the sample
+/// pairs along a row (+X) and down a column (-Z) that set its slope.
+fn relief_triangles() -> impl Iterator<Item = [[usize; 2]; 2]> {
+    (0..RELIEF_ROWS - 1).flat_map(|row| {
+        (0..RELIEF_COLUMNS - 1).flat_map(move |column| {
+            let a = row * RELIEF_COLUMNS + column;
+            let (b, c, d) = (a + 1, a + RELIEF_COLUMNS, a + RELIEF_COLUMNS + 1);
+            // Triangles a, c, b and b, c, d.
+            [[[a, b], [a, c]], [[c, d], [b, d]]]
+        })
+    })
+}
+
+/// The heights `corner` of a triangle from [`relief_triangles`] may take,
+/// the others staying put, for the triangle to be no steeper than `limit`,
+/// or the gentlest height when the others alone are steeper; `None` when
+/// the corner is not the triangle's.
+fn corner_range(
+    heights: &[f32],
+    [[x0, x1], [z0, z1]]: [[usize; 2]; 2],
+    corner: usize,
+    limit: f32,
+) -> Option<(f32, f32)> {
+    let s = RELIEF_SPACING;
+    let h = |i: usize| if i == corner { 0.0 } else { heights[i] };
+    let role = |a: usize, b: usize| ((corner == b) as i32 - (corner == a) as i32) as f32 / s;
+    // The slope is g + e * height.
+    let g = vec2((h(x1) - h(x0)) / s, (h(z1) - h(z0)) / s);
+    let e = vec2(role(x0, x1), role(z0, z1));
+    let (a, b, c) = (
+        e.norm_squared(),
+        2.0 * g.dot(&e),
+        g.norm_squared() - limit * limit,
+    );
+    let discriminant = b * b - 4.0 * a * c;
+    (a > 0.0).then(|| {
+        // Where no height is gentle enough, the gentlest one.
+        let root = discriminant.max(0.0).sqrt();
+        ((-b - root) / (2.0 * a), (-b + root) / (2.0 * a))
+    })
+}
+
+/// Rise over run of a triangle from [`relief_triangles`].
+fn triangle_slope(heights: &[f32], [[x0, x1], [z0, z1]]: [[usize; 2]; 2]) -> f32 {
+    let dx = (heights[x1] - heights[x0]) / RELIEF_SPACING;
+    let dz = (heights[z1] - heights[z0]) / RELIEF_SPACING;
+    dx.hypot(dz)
+}
+
+/// The terrain's colour, [`RELIEF_COLOR_DENSITY`] texels per metre, read
+/// like a clay relief map: the Sunny grass on the floor, turning to a
+/// lighter, sunnier grass as the ground rises, with a thin dark-leaf line
+/// on every half-metre contour, so each hill shows its height and shape
+/// from the high camera. `ground` is the drawn surface's height above the
+/// floor.
+fn relief_colors(ground: impl Fn(Vec2) -> f32) -> image::RgbImage {
+    // Sunny Battlefield roles: ground grass, light leaf, dark leaf.
+    let linear = |hex: u32| {
+        Vec3::from_fn(|i, _| {
+            let c = ((hex >> (16 - 8 * i)) & 0xff) as f32 / 255.0;
+            if c <= 0.04045 {
+                c / 12.92
+            } else {
+                ((c + 0.055) / 1.055).powf(2.4)
+            }
+        })
+    };
+    let (grass, crest, line) = (linear(0x87BC6C), linear(0xAACF58), linear(0x5F8E2C));
+    let width = (RELIEF_SIZE.x as usize) * RELIEF_COLOR_DENSITY;
+    let depth = (RELIEF_SIZE.y as usize) * RELIEF_COLOR_DENSITY;
+    let texel = 1.0 / RELIEF_COLOR_DENSITY as f32;
+    image::RgbImage::from_fn(width as u32, depth as u32, |x, y| {
+        let p = vec2(
+            (x as f32 + 0.5) * texel - RELIEF_SIZE.x * 0.5,
+            RELIEF_SIZE.y * 0.5 - (y as f32 + 0.5) * texel,
+        );
+        let h = ground(p).max(0.0);
+        let step = 0.25;
+        let (east, west) = (ground(p + vec2(step, 0.0)), ground(p - vec2(step, 0.0)));
+        let (north, south) = (ground(p + vec2(0.0, step)), ground(p - vec2(0.0, step)));
+        let slope = vec2(east - west, north - south).norm() / (2.0 * step);
+        let mut color = grass.lerp(&crest, 0.8 * smoothstep(0.05, 1.8, h));
+        // The nearest contour, as a distance across the ground.
+        let level = (h / RELIEF_CONTOUR).round() * RELIEF_CONTOUR;
+        if level > 0.0 && slope > 0.02 {
+            let across = (h - level).abs() / slope;
+            let ink = 1.0 - smoothstep(RELIEF_CONTOUR_WIDTH * 0.5, RELIEF_CONTOUR_WIDTH, across);
+            color = color.lerp(&line, 0.5 * ink);
+        }
+        let srgb = color.map(|c| {
+            let c = c.clamp(0.0, 1.0);
+            let s = if c <= 0.0031308 {
+                c * 12.92
+            } else {
+                1.055 * c.powf(1.0 / 2.4) - 0.055
+            };
+            (s * 255.0).round() as u8
+        });
+        image::Rgb([srgb.x, srgb.y, srgb.z])
+    })
+}
+
+/// Writes the `.meta` beside the asset at `path`, laid out as the asset
+/// registry writes one, under the stable `id`.
+fn write_meta(path: &Path, id: Uuid, folder: &str, type_uuid: Uuid) {
+    let stem = path.file_stem().unwrap().to_str().unwrap();
+    std::fs::write(
+        path.with_extension("meta"),
+        format!(
+            "{{\n  \"main\": {{\n    \"id\": \"{id}\",\n    \"name\": \"{folder}/{stem}\",\n    \"display_name\": \"{stem}\",\n    \"type_uuid\": \"{type_uuid}\"\n  }},\n  \"inner\": []\n}}"
+        ),
+    )
+    .unwrap();
 }
 
 fn smoothstep(edge0: f32, edge1: f32, value: f32) -> f32 {

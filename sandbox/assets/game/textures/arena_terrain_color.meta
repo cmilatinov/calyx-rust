@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "dd0c3a22-68fa-90ae-840c-77e660ebe3d1",
+    "name": "game/textures/arena_terrain_color",
+    "display_name": "arena_terrain_color",
+    "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
+  },
+  "inner": []
+}
