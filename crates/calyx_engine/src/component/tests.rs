@@ -200,6 +200,7 @@ mod tests {
                 shape: ColliderShape::Sphere { radius: 2.0 },
                 friction: 0.3,
                 density: 50.0,
+                groups: CollisionGroups::new(0b1, 0b110),
             },
         );
         scene.add_component(
@@ -305,8 +306,10 @@ mod tests {
             Some("spine_01".to_string())
         );
         assert_eq!(
-            restored.read_component::<ComponentCollider, _, _>(rgo, |c| (c.friction, c.density)),
-            Some((0.3, 50.0))
+            restored.read_component::<ComponentCollider, _, _>(rgo, |c| (
+                c.friction, c.density, c.groups
+            )),
+            Some((0.3, 50.0, CollisionGroups::new(0b1, 0b110)))
         );
         assert_eq!(
             restored.read_component::<ComponentRigidBody, _, _>(rgo, |c| (c.mass, c.gravity_scale)),

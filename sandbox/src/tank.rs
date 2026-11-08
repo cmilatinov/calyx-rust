@@ -20,7 +20,7 @@ pub use health_trail::HealthDamageTrail;
 use legion::Entity;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, Vec3};
-use rapier3d::prelude::{Collider, ColliderHandle, QueryFilter, RigidBodyType};
+use rapier3d::prelude::{Collider, ColliderHandle, RigidBodyType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
@@ -634,7 +634,9 @@ fn turn_hull(scene: &Scene, transform: &mut Transform, yaw: f32) -> bool {
                 },
                 transform.position + TANK_COLLIDER_OFFSET,
                 rotation,
-                QueryFilter::default().predicate(&is_obstacle),
+                crate::collision::HULL
+                    .query_filter()
+                    .predicate(&is_obstacle),
             )
             .is_some()
     };
@@ -646,7 +648,8 @@ fn turn_hull(scene: &Scene, transform: &mut Transform, yaw: f32) -> bool {
 }
 
 /// Static obstacles the hull collides with: all but the drive surfaces it
-/// rides on, so a ramp's slope never catches the front of the hull.
+/// rides on, so a ramp's slope never catches the front of the hull. Its
+/// queries also skip colliders outside [`crate::collision::HULL_GROUP`].
 fn hull_obstacles(scene: &Scene) -> HashSet<Entity> {
     let mut obstacles = static_obstacles(scene);
     for surface in drive_surfaces(scene) {
@@ -658,7 +661,9 @@ fn hull_obstacles(scene: &Scene) -> HashSet<Entity> {
 /// Entities whose colliders stop the hull and rounds: colliders on a fixed
 /// rigid body (on the object itself or an ancestor) or on no rigid body at
 /// all. Colliders of dynamic or kinematic bodies, such as projectiles, never
-/// stop the hull.
+/// stop the hull. Each query also asks with its own collision groups, so a
+/// collider stops only the checks whose groups it is a member of; see
+/// [`crate::collision`].
 fn static_obstacles(scene: &Scene) -> HashSet<Entity> {
     scene
         .objects()
@@ -720,7 +725,9 @@ fn sweep_hull(scene: &Scene, transform: &Transform, movement: Vec3) -> (Vec3, Op
             transform.rotation,
             remaining,
             1.0,
-            QueryFilter::default().predicate(&is_obstacle),
+            crate::collision::HULL
+                .query_filter()
+                .predicate(&is_obstacle),
         ) else {
             resolved += remaining;
             break;
@@ -1092,7 +1099,8 @@ pub(crate) fn update_projectile(
 }
 
 /// Fraction of the `start`..`end` segment a round of `radius` travels before
-/// it touches a static obstacle, if it touches one.
+/// it touches a static obstacle in [`crate::collision::ROUNDS_GROUP`], if it
+/// touches one.
 fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Option<f32> {
     let obstacles = static_obstacles(scene);
     let is_obstacle = |collider: ColliderHandle, _: &Collider| {
@@ -1109,7 +1117,9 @@ fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Op
             UnitQuaternion::identity(),
             end - start,
             1.0,
-            QueryFilter::default().predicate(&is_obstacle),
+            crate::collision::ROUNDS
+                .query_filter()
+                .predicate(&is_obstacle),
         )
         .map(|hit| hit.hit.time_of_impact.clamp(0.0, 1.0))
 }
@@ -1267,11 +1277,12 @@ mod tests {
         yaw_rotation, ComponentHealth, ComponentProjectile, ComponentProjectileTarget,
         ComponentTankController,
     };
+    use crate::collision::TANK_BLOCKER;
     use crate::combat::{ComponentCombatStats, ComponentKillFeed};
     use crate::spawn::{update_respawn_state, ComponentRespawnState, ComponentSpawnPoint};
     use crate::tank_camera::ground_intersection;
     use calyx_engine::component::{
-        ColliderShape, ComponentCollider, ComponentID, ComponentRigidBody,
+        ColliderShape, CollisionGroups, ComponentCollider, ComponentID, ComponentRigidBody,
     };
     use calyx_engine::math::Transform;
     use calyx_engine::render::Camera;
@@ -1602,6 +1613,34 @@ mod tests {
     }
 
     #[test]
+    fn hull_cannot_drive_into_a_tank_blocker() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        add_fixed_box(
+            &mut scene,
+            vec3(0.0, 1.0, 3.0),
+            vec3(4.0, 1.0, 1.0),
+            TANK_BLOCKER,
+        );
+        scene.prepare();
+
+        let movement = resolve_hull_movement(
+            &scene,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 4.0),
+        );
+        assert!(movement.z > 0.9, "movement: {movement:?}");
+        assert!(movement.z < 1.0, "the blocker stops the hull: {movement:?}");
+
+        // Nor can the hull turn its corners into it.
+        let mut transform = Transform::from_xyz(0.0, 0.0, 0.95);
+        assert!(!turn_hull(
+            &scene,
+            &mut transform,
+            std::f32::consts::FRAC_PI_4
+        ));
+    }
+
+    #[test]
     fn diagonal_hull_movement_slides_along_wall() {
         let mut scene = calyx_engine::test_support::test_scene();
         add_fixed_cube(&mut scene, vec3(2.0, 1.0, 0.0), vec3(0.5, 1.0, 10.0));
@@ -1762,6 +1801,16 @@ mod tests {
         position: nalgebra_glm::Vec3,
         half_extents: nalgebra_glm::Vec3,
     ) {
+        add_fixed_box(scene, position, half_extents, CollisionGroups::ALL);
+    }
+
+    /// A fixed box collider in `groups`.
+    fn add_fixed_box(
+        scene: &mut calyx_engine::scene::Scene,
+        position: nalgebra_glm::Vec3,
+        half_extents: nalgebra_glm::Vec3,
+        groups: CollisionGroups,
+    ) -> calyx_engine::scene::GameObject {
         let object = scene.create(None, None);
         scene.set_transform(
             object,
@@ -1778,9 +1827,11 @@ mod tests {
             object,
             ComponentCollider {
                 shape: ColliderShape::Cuboid { half_extents },
+                groups,
                 ..Default::default()
             },
         );
+        object
     }
 
     #[test]
@@ -2049,6 +2100,56 @@ mod tests {
             !scene.objects().any(|object| object == projectile),
             "the round should be destroyed on the wall"
         );
+    }
+
+    #[test]
+    fn round_crosses_a_tank_blocker_and_hits_the_target_behind_it() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        add_fixed_box(
+            &mut scene,
+            vec3(0.0, 0.0, 2.5),
+            vec3(5.0, 1.0, 0.5),
+            TANK_BLOCKER,
+        );
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+                ..Default::default()
+            },
+        );
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 60.0,
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        // Through the blocker in one step, then on to the target.
+        update_projectile(&mut scene, projectile, 0.35);
+        scene.flush_deletes();
+        assert!(
+            scene.objects().any(|object| object == projectile),
+            "the blocker lets the round through"
+        );
+        update_projectile(&mut scene, projectile, 0.5);
+        scene.flush_deletes();
+
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(target, |health| health.current_health)
+            .unwrap();
+        assert_eq!(health, 35.0, "the round hits the target behind the blocker");
     }
 
     #[test]

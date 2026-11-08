@@ -259,6 +259,35 @@ mod tests {
     }
 
     #[test]
+    fn sentry_fires_across_a_tank_blocker_and_damages_the_tank() {
+        let (mut scene, _, tank) = sentry_and_tank(8.0);
+        let water = scene.create(None, None);
+        scene.set_world_transform(water, Transform::from_xyz(0.0, 0.5, 4.0).matrix());
+        scene.add_component(
+            water,
+            ComponentRigidBody {
+                ty: RigidBodyType::Fixed,
+                ..Default::default()
+            },
+        );
+        scene.add_component(
+            water,
+            ComponentCollider {
+                shape: ColliderShape::Cuboid {
+                    half_extents: vec3(2.0, 1.0, 0.5),
+                },
+                groups: crate::collision::TANK_BLOCKER,
+                ..Default::default()
+            },
+        );
+        let mut runner = HeadlessSceneRunner::from_scene(scene);
+
+        runner.step_many(60);
+
+        assert!(health(runner.scene(), tank) < 100.0);
+    }
+
+    #[test]
     fn sentry_rounds_climb_to_a_tank_on_higher_ground() {
         let (mut scene, _, tank) = sentry_and_tank(8.0);
         // The floor under the sentry is a drive surface; the tank stands on

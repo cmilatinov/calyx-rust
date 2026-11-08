@@ -227,6 +227,36 @@ fn only_walls_and_boxes_block_sight() {
 }
 
 #[test]
+fn a_tank_behind_a_tank_blocker_stays_in_sight() {
+    let (mut scene, player, sentry, _) = sentry_behind_cover();
+    let enemy = tank(&mut scene, "Enemy", 7.0, 1.0, 2);
+    let mut fog = FogState::default();
+    apply_fog(&mut scene, player, &mut fog);
+    assert!(!scene.is_visible(enemy), "the crate hides the tank");
+
+    // Water stops tanks but not sight: as a tank-only blocker the same
+    // collider hides neither the tank nor the sentry.
+    let cover = scene
+        .objects()
+        .find(|object| scene.name(*object) == "Arena Cover Stack Crate")
+        .unwrap();
+    let _ = scene.write_component::<ComponentCollider, _>(cover, |collider| {
+        collider.groups = crate::collision::TANK_BLOCKER;
+    });
+    apply_fog(&mut scene, player, &mut fog);
+    assert!(scene.is_visible(enemy));
+    assert!(scene.is_visible(sentry));
+    assert!(!fog.hides(scene.uuid(enemy)));
+    let geometry = arena_geometry(&scene).unwrap();
+    assert!(geometry.sight_blockers.is_empty());
+    assert_eq!(
+        geometry.cover.len(),
+        1,
+        "it is still cover tanks drive round"
+    );
+}
+
+#[test]
 fn fog_hides_a_sentry_behind_cover_and_shows_it_once_in_sight() {
     let (mut scene, player, sentry, lamp) = sentry_behind_cover();
     let mut fog = FogState::default();

@@ -3,6 +3,7 @@
 #![recursion_limit = "256"]
 
 pub mod arena;
+pub mod collision;
 pub mod combat;
 pub mod combat_vfx;
 pub mod game_state;

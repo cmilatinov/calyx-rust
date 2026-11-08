@@ -737,4 +737,32 @@ mod tests {
         );
         assert!(minimap_state(&scene, player).vision.visible(vec2(6.0, 0.0)));
     }
+
+    #[test]
+    fn a_tank_blocker_leaves_the_minimap_seeing_across_it() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let player = scene.create(None, None);
+        scene.add_component(player, ComponentTankController::default());
+        let arena = scene.create(None, None);
+        scene.add_component(arena, ComponentArena::default());
+        let cover = scene.create(None, Some(arena));
+        scene.add_component(cover, ComponentCollider::default());
+        scene.set_transform(
+            cover,
+            &Transform::from_components(
+                vec3(3.0, 1.0, 0.0),
+                Default::default(),
+                vec3(2.0, 2.0, 2.0),
+            )
+            .matrix(),
+        );
+        assert!(!minimap_state(&scene, player).vision.visible(vec2(6.0, 0.0)));
+
+        let _ = scene.write_component::<ComponentCollider, _>(cover, |collider| {
+            collider.groups = crate::collision::TANK_BLOCKER;
+        });
+        let state = minimap_state(&scene, player);
+        assert!(state.vision.visible(vec2(6.0, 0.0)));
+        assert_eq!(state.cover.len(), 1, "the map still outlines the blocker");
+    }
 }

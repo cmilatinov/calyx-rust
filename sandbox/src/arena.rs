@@ -301,6 +301,15 @@ mod tests {
         let count = scene.objects().count();
         let colliders = scene.descendants_with::<ComponentCollider>(arena).count();
         assert!(colliders > 50, "the authored pen and cover have collision");
+        // Saved before colliders had groups, every collider keeps the default
+        // groups, stopping hulls, rounds and sight alike, and saves unchanged.
+        for object in scene.descendants_with::<ComponentCollider>(arena) {
+            scene.read_component::<ComponentCollider, _, _>(object, |collider| {
+                assert!(collider.groups.is_all(), "{}", scene.name(object));
+                let saved = serde_json::to_value(collider).unwrap();
+                assert!(saved.get("groups").is_none(), "{saved}");
+            });
+        }
         let registries = assets.registries.lock_read();
         let mut checked = HashSet::new();
         for object in scene.descendants_with::<ComponentMesh>(arena) {

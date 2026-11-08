@@ -1,4 +1,5 @@
 use nalgebra_glm::Vec3;
+use rapier3d::prelude::{Group, InteractionGroups, QueryFilter};
 use serde::{Deserialize, Serialize};
 
 use crate as calyx_engine;
@@ -50,6 +51,70 @@ pub enum ColliderShape {
     },
 }
 
+/// The collision groups of a collider: the groups it belongs to and the
+/// groups it interacts with, as bit masks of up to 32 groups (bit `n` is
+/// group `n + 1`). Two colliders interact, and a query that carries groups
+/// sees a collider, only when each one's memberships share a bit with the
+/// other's filter, as Rapier's [`InteractionGroups`] decide.
+///
+/// The default, every group in both masks, interacts with everything, as
+/// colliders did before they carried groups.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Reflect)]
+#[uuid = "0f4c2b8e-6d1a-4e57-9a3c-b7e25d81f694"]
+#[reflect(Default)]
+#[serde(default)]
+pub struct CollisionGroups {
+    /// The groups the collider belongs to.
+    pub memberships: u32,
+    /// The groups the collider interacts with.
+    pub filter: u32,
+}
+
+impl CollisionGroups {
+    /// Every group: belongs to and interacts with all of them.
+    pub const ALL: Self = Self::new(u32::MAX, u32::MAX);
+
+    /// Groups from a membership mask and a filter mask.
+    pub const fn new(memberships: u32, filter: u32) -> Self {
+        Self {
+            memberships,
+            filter,
+        }
+    }
+
+    /// Whether these are the default groups, which serialization leaves out
+    /// so a collider saved before groups existed saves unchanged.
+    pub fn is_all(&self) -> bool {
+        *self == Self::ALL
+    }
+
+    /// Whether a collider with these groups and one with `other` interact.
+    pub const fn interacts_with(&self, other: &Self) -> bool {
+        self.memberships & other.filter != 0 && other.memberships & self.filter != 0
+    }
+
+    /// A query filter that sees only the colliders these groups interact
+    /// with.
+    pub fn query_filter(self) -> QueryFilter<'static> {
+        QueryFilter::default().groups(self.into())
+    }
+}
+
+impl Default for CollisionGroups {
+    fn default() -> Self {
+        Self::ALL
+    }
+}
+
+impl From<CollisionGroups> for InteractionGroups {
+    fn from(groups: CollisionGroups) -> Self {
+        InteractionGroups::new(
+            Group::from_bits_retain(groups.memberships),
+            Group::from_bits_retain(groups.filter),
+        )
+    }
+}
+
 /// Physics collider component for a game object.
 #[derive(TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "53a682cb-a207-4c4c-8795-63f38351c7ef"]
@@ -63,6 +128,10 @@ pub struct ComponentCollider {
     pub friction: f32,
     /// Density used to derive collider mass properties.
     pub density: f32,
+    /// The groups the collider belongs to and interacts with, for contacts
+    /// and for queries that filter by groups.
+    #[serde(skip_serializing_if = "CollisionGroups::is_all")]
+    pub groups: CollisionGroups,
 }
 
 impl Default for ComponentCollider {
@@ -71,6 +140,7 @@ impl Default for ComponentCollider {
             shape: ColliderShape::Sphere { radius: 1.0 },
             friction: 0.5,
             density: 100.0,
+            groups: CollisionGroups::ALL,
         }
     }
 }
@@ -84,7 +154,7 @@ impl Component for ComponentCollider {
 
 #[cfg(test)]
 mod tests {
-    use super::ColliderShape;
+    use super::{ColliderShape, CollisionGroups, ComponentCollider};
     use crate::reflect::{ReflectedType, TypeInfo};
     use crate::utils::TypeUuid;
 
@@ -107,5 +177,32 @@ mod tests {
             info.variant("Sphere").unwrap().fields[0].type_uuid,
             f32::type_uuid()
         );
+    }
+
+    #[test]
+    fn default_groups_serialize_as_before_groups_existed() {
+        let saved = serde_json::to_value(ComponentCollider::default()).unwrap();
+        assert!(saved.get("groups").is_none(), "{saved}");
+
+        // A collider saved before groups existed loads with every group.
+        let legacy: ComponentCollider =
+            serde_json::from_str(r#"{"density": 100.0, "friction": 0.8}"#).unwrap();
+        assert_eq!(legacy.groups, CollisionGroups::ALL);
+    }
+
+    #[test]
+    fn custom_groups_round_trip() {
+        let collider = ComponentCollider {
+            groups: CollisionGroups::new(0b1, 0b110),
+            ..Default::default()
+        };
+        let saved = serde_json::to_string(&collider).unwrap();
+        let loaded: ComponentCollider = serde_json::from_str(&saved).unwrap();
+        assert_eq!(loaded.groups, collider.groups);
+
+        // A partly written mask keeps the default for the other.
+        let partial: ComponentCollider =
+            serde_json::from_str(r#"{"groups": {"memberships": 1}}"#).unwrap();
+        assert_eq!(partial.groups, CollisionGroups::new(1, u32::MAX));
     }
 }
