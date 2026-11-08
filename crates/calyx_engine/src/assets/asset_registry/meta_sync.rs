@@ -189,7 +189,7 @@ impl AssetRegistry {
             return;
         };
         let mut moves = vec![(old.id, new.id)];
-        let mut data = self.asset_data_mut();
+        let mut data = self.asset_meta_mut();
         for mut old_child in old_children {
             let new_child = new.children.iter().copied().find(|child| {
                 data.meta
