@@ -926,7 +926,11 @@ fn spawn_projectile(
             * level_rotation(&tank_transform.rotation).inverse()
     });
     let muzzle = barrel_transform.position + tilt * heading * controller.muzzle_offset;
-    let gun_height = muzzle.y - tank_transform.position.y;
+    // The gun's height as the hull carries it, along the hull's up: the
+    // same on a slope as on the flat, so a round arrives at the height a
+    // target's hit sphere expects whichever way the hull leans.
+    let up = tank_transform.rotation * Vec3::y();
+    let gun_height = (muzzle - tank_transform.position).dot(&up);
     let direction = shot_direction(muzzle, heading, gun_height, aim_point);
 
     spawn_round(
