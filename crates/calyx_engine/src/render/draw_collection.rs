@@ -5,13 +5,16 @@ use crate::assets::material::Material;
 use crate::assets::mesh::Mesh;
 use crate::assets::texture::Texture;
 use crate::assets::{AssetAccess, AssetId, ResolvedRefs};
-use crate::component::{ComponentFoliage, ComponentMesh, ComponentSkinnedMesh, ComponentTerrain};
+use crate::component::{
+    ComponentFoliage, ComponentMesh, ComponentSkinnedMesh, ComponentTerrain, ComponentWater,
+};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::foliage::FoliageCache;
 use crate::render::terrain::TerrainCache;
+use crate::render::water::{WaterCache, WaterLight};
 use crate::render::{SceneRendererError, Shader};
 use crate::scene::{GameObject, HierarchyVisibility, Scene, SceneId};
 use legion::{Entity, IntoQuery};
@@ -30,7 +33,7 @@ pub(crate) struct DrawListElement {
     pub cast_shadows: bool,
 }
 
-/// The meshes, foliage, terrain and skinned meshes one scene draws, with the
+/// The meshes, foliage, terrain, water and skinned meshes one scene draws, with the
 /// assets they draw with, collected for one frame.
 ///
 /// What a scene draws does not depend on the camera, so the views that render
@@ -42,7 +45,7 @@ pub(crate) struct DrawListElement {
 /// batching of these draws into its instance lists.
 ///
 /// The collection keeps its caches (resolved asset references, foliage
-/// scatter and terrain meshes) from one frame to the next, as a renderer
+/// scatter, terrain and water meshes) from one frame to the next, as a renderer
 /// does.
 pub struct DrawCollection {
     asset_context: ReadOnlyAssetContext,
@@ -58,6 +61,7 @@ pub struct DrawCollection {
     visibility: HierarchyVisibility,
     pub(super) foliage: FoliageCache,
     terrain: TerrainCache,
+    water: WaterCache,
     /// This frame's draws, sorted by shader, material, mesh and whether they
     /// cast shadows.
     pub(crate) draw_list: Vec<DrawListElement>,
@@ -91,6 +95,7 @@ impl DrawCollection {
             visibility: Default::default(),
             foliage: Default::default(),
             terrain: Default::default(),
+            water: Default::default(),
             draw_list: Default::default(),
             object_ids: Default::default(),
             object_id_lookup: Default::default(),
@@ -146,6 +151,7 @@ impl DrawCollection {
         }
         self.collect_foliage(scene);
         self.collect_terrain(scene);
+        self.collect_water(scene);
         self.collect_skinned_meshes(scene);
         {
             crate::profile_scope!("Material buffers");
@@ -182,7 +188,7 @@ impl DrawCollection {
     }
 
     /// Drops every asset the collection holds, and the meshes and prefab
-    /// parts of its terrain and foliage caches. The next collection resolves
+    /// parts of its terrain, water and foliage caches. The next collection resolves
     /// them again.
     pub fn release_assets(&mut self) {
         self.scene = None;
@@ -194,6 +200,7 @@ impl DrawCollection {
         self.resolved = ResolvedRefs::default();
         self.foliage = FoliageCache::default();
         self.terrain = TerrainCache::default();
+        self.water = WaterCache::default();
     }
 
     fn collect_foliage(&mut self, scene: &Scene) {
@@ -296,6 +303,43 @@ impl DrawCollection {
             );
         }
         self.terrain.end_frame();
+    }
+
+    /// Adds every visible, enabled water, through the ordinary mesh
+    /// batches, with the material its cache fills from the component, and
+    /// its banks with their material. Water casts no shadows; banks do.
+    fn collect_water(&mut self, scene: &Scene) {
+        self.water.begin_frame(scene.id());
+        let mut light = None;
+        let mut query = <(Entity, &ComponentWater)>::query();
+        for (entity, water) in query.iter(scene.world()) {
+            let Some(owner) = scene.game_object_from_entity(*entity) else {
+                continue;
+            };
+            if !self.visibility.is_visible(scene, owner)
+                || !scene.is_component_enabled::<ComponentWater>(owner)
+            {
+                continue;
+            }
+            let light = light.get_or_insert_with(|| WaterLight::of_scene(scene));
+            let uuid = scene.uuid(owner);
+            let Some(draw) = self
+                .water
+                .draw(&self.asset_context, uuid, water, light.as_ref())
+            else {
+                continue;
+            };
+            let transform: [[f32; 4]; 4] = scene.world_transform(owner).matrix().into();
+            self.insert(&draw.mesh, &draw.material, uuid, None, transform, false);
+            let registries = &self.asset_context.registries;
+            if let (Some(banks), Some(material)) = (
+                draw.banks,
+                self.resolved.resolve(registries, &water.bank_material),
+            ) {
+                self.insert(&banks, &material, uuid, None, transform, true);
+            }
+        }
+        self.water.end_frame();
     }
 
     /// Adds every visible, enabled skinned mesh, filling each mesh's bone

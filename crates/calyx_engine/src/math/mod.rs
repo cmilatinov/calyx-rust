@@ -14,12 +14,15 @@ pub use gradient::*;
 pub use heightfield::*;
 /// Transform type and helpers for local and world-space math.
 pub use transform::*;
+/// Faceted water surfaces, meshed for their vertex waves.
+pub use water::*;
 
 mod curve;
 mod dist;
 mod gradient;
 mod heightfield;
 mod transform;
+mod water;
 
 /// Composes a transform matrix from translation, rotation, and scale.
 pub fn compose_transform(translation: &Vec3, rotation: &UnitQuaternion<f32>, scale: &Vec3) -> Mat4 {

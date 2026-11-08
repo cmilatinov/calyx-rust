@@ -8,6 +8,7 @@ use crate::assets::AssetId;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::asset_render_state::LockedAssetRenderState;
+use crate::render::water::WATER_SHADER;
 use crate::render::{
     CachedBindGroup, DrawBatch, MaterialBindGroups, PipelineOptions, RenderContext, RenderUtils,
     SceneRendererError, Shader, FIRST_MATERIAL_GROUP,
@@ -152,18 +153,28 @@ struct GBufferViewUniform {
     _padding: [u32; 3],
 }
 
-/// Draws the scene's PBR meshes into the G-buffer and shows a target in the
-/// debug view. It owns the targets, created on the first frame.
-pub(crate) struct GBufferRenderer {
-    /// `shaders/mesh/gbuffer.wgsl`, the geometry pass.
+/// One kind of surface the geometry pass draws: the draws whose material
+/// shader is `material_shader`, drawn with `shader`, which binds the
+/// material's group 3 bind group as its group 2.
+struct GeometryShader {
     shader: Ref<Shader>,
+    material_shader: AssetId,
+}
+
+/// Draws the scene's PBR meshes and water into the G-buffer and shows a
+/// target in the debug view. It owns the targets, created on the first
+/// frame.
+pub(crate) struct GBufferRenderer {
+    /// The PBR surfaces, `shaders/mesh/gbuffer.wgsl` over the PBR shader's
+    /// draws, then the water, `shaders/mesh/water_gbuffer.wgsl` over the
+    /// water shader's. Only these draws enter the geometry pass.
+    geometry: [GeometryShader; 2],
     /// `shaders/deferred/gbuffer_view.wgsl`, the debug view.
     view_shader: Ref<Shader>,
-    /// The PBR shader: only its draws enter the geometry pass, and their
-    /// material bind groups, built for its group 3, bind as group 2.
-    pbr_shader_id: AssetId,
     targets: Option<GBufferTargets>,
-    camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
+    /// The camera's bind group for each of [`Self::geometry`]'s shaders,
+    /// built for its own group 0.
+    camera_bind_groups: [CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>; 2],
     view_uniform_buffer: wgpu::Buffer,
     view_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, [wgpu::TextureView; 4])>,
     /// Instances the last [`Self::render`] drew.
@@ -173,15 +184,23 @@ pub(crate) struct GBufferRenderer {
 impl GBufferRenderer {
     pub fn new(context: &ReadOnlyAssetContext) -> Result<Self, SceneRendererError> {
         let device = context.render_context.device();
+        let geometry = |shader: &str, material_shader: &str| {
+            Ok::<_, SceneRendererError>(GeometryShader {
+                shader: SceneRendererError::load::<Shader>(context, shader)?,
+                material_shader: SceneRendererError::load::<Shader>(context, material_shader)?.id(),
+            })
+        };
         Ok(Self {
-            shader: SceneRendererError::load::<Shader>(context, "shaders/mesh/gbuffer")?,
+            geometry: [
+                geometry("shaders/mesh/gbuffer", "shaders/mesh/pbr")?,
+                geometry("shaders/mesh/water_gbuffer", WATER_SHADER)?,
+            ],
             view_shader: SceneRendererError::load::<Shader>(
                 context,
                 "shaders/deferred/gbuffer_view",
             )?,
-            pbr_shader_id: SceneRendererError::load::<Shader>(context, "shaders/mesh/pbr")?.id(),
             targets: None,
-            camera_bind_group: Default::default(),
+            camera_bind_groups: Default::default(),
             view_uniform_buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gbuffer_view_uniform"),
                 size: size_of::<GBufferViewUniform>() as u64,
@@ -198,9 +217,17 @@ impl GBufferRenderer {
         self.targets.as_ref()
     }
 
-    /// The PBR shader, whose draws are the ones the geometry pass draws.
+    /// The PBR shader, whose draws the geometry pass draws as PBR surfaces.
     pub(crate) fn pbr_shader_id(&self) -> AssetId {
-        self.pbr_shader_id
+        self.geometry[0].material_shader
+    }
+
+    /// The material shaders whose draws the geometry pass draws: the PBR and
+    /// the water shader. The forward pass draws the others.
+    pub(crate) fn deferred_shaders(&self) -> [AssetId; 2] {
+        self.geometry
+            .each_ref()
+            .map(|geometry| geometry.material_shader)
     }
 
     /// Instances the last frame's geometry pass drew.
@@ -219,8 +246,8 @@ impl GBufferRenderer {
         }
     }
 
-    /// Draws every batch of `draw_list` that uses the PBR shader into the
-    /// G-buffer, first in the frame, and draws the depth itself: it clears
+    /// Draws every batch of `draw_list` that uses the PBR or the water shader
+    /// into the G-buffer, first in the frame, and draws the depth itself: it clears
     /// it and tests `Less` in the draw order, so of fragments that tie in
     /// depth the first drawn is kept, as the forward-only draws that follow
     /// keep it. The depth is `scene_depth` at one sample and the targets'
@@ -270,29 +297,38 @@ impl GBufferRenderer {
             )
             .depth_stencil(Some(depth_stencil))
             .build();
-        let shader = self.shader.read();
-        let pipeline = shader.pipeline(&options);
-        let layout = shader.bind_group_layouts[0].clone();
-        // A hot reload of this shader or the PBR one can leave group 2 apart
-        // from the materials' group until the other follows; the materials
-        // are skipped meanwhile.
-        let binds_materials = assets
-            .shader(self.pbr_shader_id)
-            .is_some_and(|pbr| shader.shares_material_group(2, pbr, FIRST_MATERIAL_GROUP));
-        drop(shader);
-        let camera_bind_group = self
-            .camera_bind_group
-            .get_or_create((layout.clone(), camera_uniform_buffer.clone()), || {
-                device.create_bind_group(&wgpu::BindGroupDescriptor {
-                    label: Some("gbuffer_camera_bind_group"),
-                    layout: &layout,
-                    entries: &[wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: camera_uniform_buffer.as_entire_binding(),
-                    }],
-                })
+        // A hot reload of a geometry shader or its material shader can leave
+        // group 2 apart from the materials' group until the other follows;
+        // its materials are skipped meanwhile.
+        let passes: Vec<_> = self
+            .geometry
+            .iter()
+            .zip(&mut self.camera_bind_groups)
+            .map(|(geometry, camera_bind_group)| {
+                let shader = geometry.shader.read();
+                let binds_materials =
+                    assets
+                        .shader(geometry.material_shader)
+                        .is_some_and(|material_shader| {
+                            shader.shares_material_group(2, material_shader, FIRST_MATERIAL_GROUP)
+                        });
+                let pipeline = shader.pipeline(&options).filter(|_| binds_materials);
+                let layout = shader.bind_group_layouts[0].clone();
+                let camera = camera_bind_group
+                    .get_or_create((layout.clone(), camera_uniform_buffer.clone()), || {
+                        device.create_bind_group(&wgpu::BindGroupDescriptor {
+                            label: Some("gbuffer_camera_bind_group"),
+                            layout: &layout,
+                            entries: &[wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: camera_uniform_buffer.as_entire_binding(),
+                            }],
+                        })
+                    })
+                    .clone();
+                (geometry.material_shader, pipeline, camera)
             })
-            .clone();
+            .collect();
 
         let color_attachments = targets.color_targets().map(|target| {
             Some(wgpu::RenderPassColorAttachment {
@@ -323,42 +359,44 @@ impl GBufferRenderer {
             occlusion_query_set: None,
         });
         self.drawn_instances = 0;
-        let Some(pipeline) = pipeline else {
-            return;
-        };
-        pass.set_pipeline(&pipeline);
-        pass.set_bind_group(0, &camera_bind_group, &[]);
-        // The draw list is sorted by material, then mesh: bind each only when
-        // it changes.
-        let mut bound_material = None;
-        let mut bound_mesh = None;
-        for batch in draw_list
-            .iter()
-            .filter(|batch| binds_materials && batch.shader_id == self.pbr_shader_id)
-        {
-            let Some(material_group) = material_bind_groups
-                .get(&batch.mat_id)
-                .and_then(|groups| groups.get(&3))
-            else {
+        for (material_shader, pipeline, camera_bind_group) in &passes {
+            let Some(pipeline) = pipeline else {
                 continue;
             };
-            let Some(mesh) = assets.mesh(batch.mesh_id) else {
-                continue;
-            };
-            let Some(instance_group) = mesh.instance_bind_group() else {
-                continue;
-            };
-            if bound_mesh != Some(batch.mesh_id) {
-                pass.set_bind_group(1, instance_group, &[]);
-                RenderUtils::bind_mesh_buffers(&mut pass, mesh);
-                bound_mesh = Some(batch.mesh_id);
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, camera_bind_group, &[]);
+            // The draw list is sorted by shader, material, then mesh: bind
+            // each only when it changes.
+            let mut bound_material = None;
+            let mut bound_mesh = None;
+            for batch in draw_list
+                .iter()
+                .filter(|batch| batch.shader_id == *material_shader)
+            {
+                let Some(material_group) = material_bind_groups
+                    .get(&batch.mat_id)
+                    .and_then(|groups| groups.get(&3))
+                else {
+                    continue;
+                };
+                let Some(mesh) = assets.mesh(batch.mesh_id) else {
+                    continue;
+                };
+                let Some(instance_group) = mesh.instance_bind_group() else {
+                    continue;
+                };
+                if bound_mesh != Some(batch.mesh_id) {
+                    pass.set_bind_group(1, instance_group, &[]);
+                    RenderUtils::bind_mesh_buffers(&mut pass, mesh);
+                    bound_mesh = Some(batch.mesh_id);
+                }
+                if bound_material != Some(batch.mat_id) {
+                    pass.set_bind_group(2, material_group, &[]);
+                    bound_material = Some(batch.mat_id);
+                }
+                RenderUtils::draw_mesh_instanced(&mut pass, mesh, batch.instances.clone());
+                self.drawn_instances += batch.instances.len() as u32;
             }
-            if bound_material != Some(batch.mat_id) {
-                pass.set_bind_group(2, material_group, &[]);
-                bound_material = Some(batch.mat_id);
-            }
-            RenderUtils::draw_mesh_instanced(&mut pass, mesh, batch.instances.clone());
-            self.drawn_instances += batch.instances.len() as u32;
         }
     }
 

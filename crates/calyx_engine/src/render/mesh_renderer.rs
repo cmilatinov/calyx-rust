@@ -173,10 +173,11 @@ impl MeshRenderer {
         LightingBindGroups { scene, lights }
     }
 
-    /// Draws every batch of `draw_list` whose shader is not the PBR shader
-    /// into `targets`, lit through `lighting`, over the image and depth the
-    /// deferred lighting pass left: the forward-only draws. The PBR batches
-    /// are shaded from the G-buffer.
+    /// Draws every batch of `draw_list` whose shader is not one of
+    /// `deferred_shaders` into `targets`, lit through `lighting`, over the
+    /// image and depth the deferred lighting pass left: the forward-only
+    /// draws. The deferred batches, PBR and water, are shaded from the
+    /// G-buffer.
     #[allow(clippy::too_many_arguments)]
     pub fn render(
         &mut self,
@@ -187,8 +188,8 @@ impl MeshRenderer {
         targets: MeshRenderTargets<'_>,
         pipeline_options: &PipelineOptions,
         draw_list: &[DrawBatch],
+        deferred_shaders: &[AssetId],
     ) {
-        let deferred_shader = self.scene_shader.id();
         let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("Viewport Scene"),
             color_attachments: &[Some(wgpu::RenderPassColorAttachment {
@@ -220,7 +221,7 @@ impl MeshRenderer {
             ..
         } in draw_list
         {
-            if shader_id == deferred_shader {
+            if deferred_shaders.contains(&shader_id) {
                 continue;
             }
             let Some(shader) = assets.shader(shader_id) else {

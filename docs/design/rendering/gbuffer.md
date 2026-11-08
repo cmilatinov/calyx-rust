@@ -81,8 +81,10 @@ after the shadow pass, on the same command encoder and draw list as the
 forward pass.
 
 - It draws every batch of the shared `DrawList` whose shader is
-  `shaders/mesh/pbr`; a draw with any other shader takes the forward pass
-  after lighting. The
+  `shaders/mesh/pbr`, and every water batch, whose shader is
+  `shaders/mesh/water`, with `shaders/mesh/water_gbuffer.wgsl` in place of
+  `gbuffer.wgsl` (see Water in `docs/architecture/overview.md`); a draw with
+  any other shader takes the forward pass after lighting. The
   draw list is built once from the enabled meshes, so both passes skip the
   same disabled meshes, and with the renderer's `mesh_cull_mode`.
 - Its vertex stage is `shaders/mesh/pbr_vertex.wgsl`, the one `pbr.wgsl`
@@ -92,7 +94,10 @@ forward pass.
   depth.
 - Group 0 is the scene camera, group 1 the mesh's instances and bones, and
   group 2 the material's own bind group, built for group 3 of `pbr.wgsl`, as
-  the masked shadow pass binds it. It reads the material through the same
+  the masked shadow pass binds it. The water pass binds a water material's
+  group 3, built for `water.wgsl`, the same way, and writes each facet's
+  flat normal as both normals, its colour, its roughness and outline style,
+  and its glints as emission. It reads the material through the same
   `pbr_surface` that `pbr.wgsl` declares, and discards the fragments below
   the material's `alpha_cutoff`.
 - It owns the depth: it clears it and tests `Less` in the draw order, so of

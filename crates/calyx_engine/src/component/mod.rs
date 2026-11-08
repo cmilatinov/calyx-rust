@@ -20,6 +20,7 @@ pub use sky_light::*;
 pub use spot_light::*;
 pub use terrain::*;
 pub use transform::*;
+pub use water::*;
 
 mod ambient_light;
 mod animator;
@@ -44,6 +45,7 @@ mod spot_light;
 mod terrain;
 mod tps_camera;
 mod transform;
+mod water;
 
 #[cfg(test)]
 mod hook_tests;

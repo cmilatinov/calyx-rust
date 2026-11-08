@@ -99,6 +99,9 @@ convention.
 | Tank tracks and guns | tread dark `#6C6C74` | gunmetal `#66635F` | dark steel `#3D4348` |
 | Road wheels | cream `#D4D2CD` | bone concrete `#C0BCB6` | pale concrete `#9FA7AF` |
 | Emissive signals | ember `#FFB000`, strength 30 | amber `#FFB547`, strength 40 | lamps: sodium `#FF9330`, strength 4; shells and muzzle flashes: amber `#FFA640`, strength 2 |
+| Water, deep | teal `#2F7CA0` | oasis teal `#2E747A` | night water `#1B354E` |
+| Water, shallow | lagoon `#5DB4BF` | jade `#6AA89C` | moonlit shallows `#2C5A73` |
+| Water foam | sea foam `#E6F4EE` | cream foam `#ECE6D6` | pale foam `#9CBDCC` |
 | Ink (outlines) | `#121212` | `#121212` | `#121212` |
 
 Roads must stay clearly lighter or darker than the ground; Sunbaked's road is
@@ -110,6 +113,9 @@ Moonlit is blue and slate, never purple: every neutral leans slightly cyan
 render under the cool moon. Its night comes from the dark, cool palette and
 the light; the signals are the only warm light in the scene, so they read at
 a glance at a low strength (see Materials).
+
+Water is a body of the Water component (see Water below), not a material:
+its colours are the component's sRGB fields, entered as the hexes above.
 
 ## Tank colours
 
@@ -268,6 +274,54 @@ from above. Their extra details are substantial forms, not tiny surface noise.
 The `explosive_red`, `sentry_armor` and `sentry_optic` roles are matte clay
 (roughness 0.95, metalness 0) with no emission; the optic is a colored lens,
 not an additional gameplay signal.
+
+## Water
+
+Water is uncrossable terrain, opaque (the renderer has no transparent pass)
+and read from the Far framing by shape, colour and motion: a river that
+meanders between carved banks, its surface rolling with waves that run
+downstream, shallow colour at the banks running to deep in the
+middle, and hard-edged foam along the shores, around rocks and drifting with
+the flow. Never a straight channel: a river bends, and its width changes. The
+creek in `sandbox/assets/lookdev/water_test.cxscene` (built by `cargo run -p
+sandbox --example water_test`) shows it in each palette.
+
+- Colours: the Water rows of the palette table, as the component's
+  `deep_color`, `shallow_color` and `foam_color`. Deep is clearly darker than
+  the ground and shallow differs from it by hue, so the river reads at a
+  glance; foam is the lightest value on the map after the light player.
+- Every palette's water leans to its own neutrals: Sunny's teal sits beside
+  the grass, Sunbaked's is a muted oasis green-teal against the sand, and
+  Moonlit's is a deep navy-slate, cool like every Moonlit neutral (CIELAB
+  b\* below 0, a\* between −8 and −1), never purple.
+- Shading: smooth, the developer's choice, is the default: normals from the
+  waves' slope, interpolated, so the waves read round and calm under the
+  flat-coloured foam. The component's `shading` can switch a river to
+  faceted (each facet flat with one colour, a low-poly look) instead.
+- Shape: 6–10 m wide, bends about 20 m apart, mesh cells about 0.8 m. Waves
+  0.22 m high, 5 m long, flowing at 1.2 m/s, with a shorter crossing train,
+  a ripple and drifting noise, so the surface visibly rolls and catches the
+  light from the Far camera. Roughness 0.3: the only glossy ground.
+- Foam: flat foam colour in hard-edged shapes, never a gradient: a broken
+  band about 0.45 m wide along both shores whose inner edge swells and
+  breaks, loose flecks past it, patches stretched along the flow, and a
+  thin, broken ring around each rock standing in the water. All of it
+  drifts downstream.
+- Glints: where the waves turn most of the way towards mirroring the sun or
+  moon into the camera, the light sparkles as small round points of HDR
+  emission in the light's colour, twinkling as they drift (faceted: whole
+  facets flash). Strength 1.5 by day, a light sparkle under the sun; Moonlit
+  5.0, above its 2.5 bloom threshold, so the moon's sparkle halos under its
+  bloom at Far. A glint is a stylised flash, not a reflection: from the high
+  camera a flat surface almost never mirrors a light that is not behind the
+  camera.
+- Banks: the river sits 0.6 m below the ground. Its banks follow the same
+  curve: an earth wall (`ground_dirt`) rising from under the water, 0.4 m of
+  run, then a 0.5 m earth lip, inked on the terrain's outline layer (style
+  1). The ink line falls where the bank meets the water on both shores,
+  since the bank is the nearer surface there; the water itself uses style 0.
+  The look-dev ground around the creek is inked on the same layer so the lip
+  meets it without a line.
 
 ## Silhouette and scale
 

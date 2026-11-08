@@ -772,6 +772,7 @@ impl SceneRenderer {
                 mesh_targets,
                 &options,
                 &draw_list,
+                &self.gbuffer_renderer.deferred_shaders(),
             );
         }
         {
@@ -1825,7 +1826,10 @@ mod tests {
         ParticleForces, ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape,
         ParticleVelocity, TonemappingPreset,
     };
-    use crate::component::{ComponentFoliage, ComponentSkinnedMesh, ComponentTerrain};
+    use crate::component::{
+        ComponentFoliage, ComponentSkinnedMesh, ComponentTerrain, ComponentWater, WaterPoint,
+        WaterShading,
+    };
     use crate::math::Transform;
     use crate::render::postprocess::{
         NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessStage,
@@ -3849,6 +3853,103 @@ mod tests {
         assert_eq!(renderer.pick_game_object(32, 32), None);
 
         scene.set_component_enabled::<ComponentTerrain>(owner, false);
+        renderer.build_asset_data(&scene);
+        assert!(renderer.draws().draw_list.is_empty());
+    }
+
+    #[test]
+    fn water_draws_into_the_gbuffer_through_the_mesh_batches_and_casts_no_shadow() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let render_context = context.render_context.clone();
+        let mut builder = SceneBuilder::new(context.registries.clone());
+        let owner = builder.spawn("water");
+        let deep = egui::Color32::from_rgb(0x20, 0x60, 0xA0);
+        builder.add_component(
+            owner,
+            ComponentWater {
+                points: vec![
+                    WaterPoint {
+                        position: glm::vec2(0.0, -4.0),
+                        width: 8.0,
+                    },
+                    WaterPoint {
+                        position: glm::vec2(0.0, 4.0),
+                        width: 8.0,
+                    },
+                ],
+                cell_size: 2.0,
+                wave_amplitude: 0.0,
+                deep_color: deep,
+                shore_distance: 0.0,
+                foam_width: 0.0,
+                foam_patches: 0.0,
+                obstacle_foam: 0.0,
+                facet_variation: 0.0,
+                roughness: 0.5,
+                glint_strength: 0.0,
+                outline_style: 3,
+                ..Default::default()
+            },
+        );
+        // Turned so its upper side faces the camera, which looks along +Z.
+        let facing = |angle: f32| {
+            Transform::from_components(
+                Vec3::zeros(),
+                UnitQuaternion::from_axis_angle(&Vec3::x_axis(), angle),
+                Vec3::repeat(1.0),
+            )
+            .matrix()
+        };
+        builder.set_transform(owner, facing(-std::f32::consts::FRAC_PI_2));
+        let mut scene = builder.finish();
+        let uuid = scene.uuid(owner);
+        let mut renderer = renderer(&context, 1, SIZE);
+        let view = front_camera(1.0, 5.0);
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        assert_eq!(renderer.draws().draw_list.len(), 1);
+        assert!(!renderer.draws().draw_list[0].cast_shadows);
+        assert_eq!(renderer.gbuffer_drawn_instances(), 1);
+
+        let center = (SIZE.0 / 2, SIZE.1 / 2);
+        let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_bytes_near(
+            &albedo[..3],
+            &[0x20, 0x60, 0xA0],
+            "the deep colour, as its hex",
+        );
+        assert_eq!(albedo[3], 255);
+        let [sx, sy, gx, gy] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+        for normal in [octahedral_decode(sx, sy), octahedral_decode(gx, gy)] {
+            assert!(normal.z < -0.99, "the facet faces the camera: {normal}");
+        }
+        let surface = read_texel(&render_context, &gbuffer.material, center);
+        assert_bytes_near(
+            &surface,
+            &[0, 128, 255, 3],
+            "metallic, roughness, occlusion, style",
+        );
+        assert_eq!(renderer.pick_game_object(center.0, center.1), Some(uuid));
+
+        // Shaded smooth, the still water writes the same colour and normal.
+        scene.write_component::<ComponentWater, _>(owner, |water| {
+            water.shading = WaterShading::Smooth;
+        });
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_bytes_near(&albedo[..3], &[0x20, 0x60, 0xA0], "the smooth deep colour");
+        let [sx, sy, _, _] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+        let normal = octahedral_decode(sx, sy);
+        assert!(
+            normal.z < -0.99,
+            "the smooth surface faces the camera: {normal}"
+        );
+
+        scene.set_component_enabled::<ComponentWater>(owner, false);
         renderer.build_asset_data(&scene);
         assert!(renderer.draws().draw_list.is_empty());
     }

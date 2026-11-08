@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "fb1dc024-4584-05bb-9ce6-b7b1792b388d",
+    "name": "shaders/mesh/water_surface",
+    "display_name": "water_surface",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
