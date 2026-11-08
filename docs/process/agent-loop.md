@@ -91,13 +91,24 @@ name (`sandbox::tank::ComponentHealth`), or the bare type name
 | `viewport-camera [--position X Y Z] [--look-at X Y Z]` | `viewport_camera` | places the editor's viewport camera at a world position, facing a world point, upright (pitch within ±89°, as when flying); flying it with the mouse and keys then carries on from there. Prints its `position` and `forward` direction, and without options only prints them. Use it to put the scene view where a camera-dependent effect, such as a local post-process volume, can be checked |
 | `focus-game [--release-grab]` | `focus_game` | activates the Game tab and grabs gameplay input focus |
 | `input key/click/move/text/raw` | `inject_input` | see below |
-| `screenshot --target window|game|viewport --out F` | `screenshot` | PNG; `window` includes the whole UI, `game`/`viewport` are the render textures. `game` works without the Game tab active: once the tab has been shown it is rendered every frame at the tab's size, and before that a game capture renders it on demand at the Scene viewport's size (or the window's). It fails with `bad_request` when the scene has no enabled camera, or when nothing has a size yet, naming `focus-game` |
+| `screenshot --target window|game|viewport --out F [--size WxH]` | `screenshot` | PNG; `window` includes the whole UI, `game`/`viewport` are the render textures. `game` works without the Game tab active: once the tab has been shown it is rendered every frame at the tab's size, and before that a game capture renders it on demand at the Scene viewport's size (or the window's). It fails with `bad_request` when the scene has no enabled camera, or when nothing has a size yet, naming `focus-game`. `--size 1920x1080` (protocol `size: [w, h]`, `game` only) renders the game view offscreen at that size, in edit or in play, and paints the scene's HUD over it as the Game tab would at that size, so the capture is what a player sees in a window that size; the Game tab, its HUD and its input are left as they were. Each side must be 2 to 8192 pixels (or the GPU's texture limit), else `bad_request` |
 | `profiler read [--frames N]`, `profiler start`, `profiler stop` | `read_profile`/`set_profiler_capture` | the frame profiler (see below). `read` profiles the next N frames (default 120), turning capture on for them when it is off and back off afterwards, and prints their profile once the GPU has reported their timings; `start`/`stop` turn capture on and off, as the Profiler panel's Capture checkbox does |
 | `raw '<json>'` | any | escape hatch for the full protocol |
 
 Edits to the authoring scene (`object create/delete/parent`,
 `component set/add/enable/disable`, `transform`, `prefab instantiate`) are recorded in the editor's undo history like panel edits; edits
 made while a simulation scene exists are discarded by `stop` and not recorded.
+
+## PR screenshots
+
+Take PR screenshots in play at 1920x1080, so they show the in-game camera and
+HUD at one size whatever the display or the Game tab's size:
+
+```
+calyx_ctl play --scene sandbox/assets/game/scenes/arena.cxscene
+calyx_ctl wait --frames 30
+calyx_ctl screenshot --target game --size 1920x1080 --out logs/shot.png
+```
 
 ## Profiling
 
