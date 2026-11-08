@@ -27,3 +27,4 @@ nalgebra-glm.workspace = true
 
 [dev-dependencies]
 calyx_model_gen = { path = "../crates/calyx_model_gen" }
+image.workspace = true

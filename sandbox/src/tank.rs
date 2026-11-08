@@ -2,7 +2,7 @@ mod health_trail;
 use crate::combat::{record_damage, record_kill, ComponentCombatStats, KillEvent};
 use crate::spawn::ComponentRespawnState;
 use crate::tank_camera::{cursor_ray, ground_intersection, update_tank_camera};
-use crate::terrain::{aimed_surface_point, drive_surfaces, surface_height_below};
+use crate::terrain::{aimed_surface_point, drive_surfaces, surface_height_below, terrain_hit_time};
 use calyx_engine::component::{
     ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentRef,
     ComponentRigidBody, ComponentStart, ComponentTransform, ComponentUpdate, ReflectComponent,
@@ -528,13 +528,11 @@ fn hull_tilt(rotation: &UnitQuaternion<f32>) -> Option<UnitQuaternion<f32>> {
 /// frame) rests: the height of its origin and its nose-up pitch in radians.
 /// It rests on the drive surfaces under its nose and tail, or on the one
 /// under its centre where that is higher, as on the crest of a ramp. None
-/// when no drive surface lies within reach below it, as in a scene without
-/// any: the hull then keeps its height.
+/// when no ground lies within reach below it, as in a scene without drive
+/// surfaces or terrain: the hull then keeps its height. The terrain's relief
+/// counts as ground like any drive surface.
 fn ground_under_hull(scene: &Scene, transform: &Transform, driven: f32) -> Option<(f32, f32)> {
     let surfaces = drive_surfaces(scene);
-    if surfaces.is_empty() {
-        return None;
-    }
     let step = GROUND_STEP + GROUND_STEP_PER_METRE * driven.abs();
     let forward = flatten_xz(transform.rotation * Vec3::z());
     let height_at = |offset: f32| {
@@ -1092,7 +1090,7 @@ pub(crate) fn update_projectile(
 }
 
 /// Fraction of the `start`..`end` segment a round of `radius` travels before
-/// it touches a static obstacle, if it touches one.
+/// it touches a static obstacle or the terrain, if it touches one.
 fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Option<f32> {
     let obstacles = static_obstacles(scene);
     let is_obstacle = |collider: ColliderHandle, _: &Collider| {
@@ -1101,7 +1099,8 @@ fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Op
             .collider_entity(collider)
             .is_some_and(|entity| obstacles.contains(&entity))
     };
-    scene
+    let terrain = terrain_hit_time(scene, start, end, radius);
+    let collider = scene
         .physics
         .cast_shape(
             ColliderShape::Sphere { radius },
@@ -1111,7 +1110,11 @@ fn first_obstacle_time(scene: &Scene, start: Vec3, end: Vec3, radius: f32) -> Op
             1.0,
             QueryFilter::default().predicate(&is_obstacle),
         )
-        .map(|hit| hit.hit.time_of_impact.clamp(0.0, 1.0))
+        .map(|hit| hit.hit.time_of_impact.clamp(0.0, 1.0));
+    match (collider, terrain) {
+        (Some(a), Some(b)) => Some(a.min(b)),
+        (a, b) => a.or(b),
+    }
 }
 
 /// Damages `target` by `damage` and, when the hit kills it, records the kill
@@ -1231,8 +1234,8 @@ fn follow_camera_xz(
     camera_transform.position.z += tank_delta.z;
 }
 
-/// The point the player aims at: the first drive surface under the cursor,
-/// or, without one, the cursor's point on the level of the tank's ground.
+/// The point the player aims at: the first ground under the cursor, a
+/// drive surface or the terrain's relief, or, without one, the cursor's point on the level of the tank's ground.
 fn cursor_aim_point(
     scene: &calyx_engine::scene::Scene,
     input: &Input,

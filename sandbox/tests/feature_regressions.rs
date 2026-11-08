@@ -1821,3 +1821,191 @@ fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
         assert_eq!(style, &outline.styles[0]);
     }
 }
+
+/// The arena's terrain under world `(x, z)`, as gameplay samples it.
+fn terrain_height(scene: &Scene, x: f32, z: f32) -> Option<f32> {
+    calyx_engine::component::ComponentTerrain::sample_scene(scene, nalgebra_glm::vec2(x, z))
+        .map(|sample| sample.height)
+}
+
+/// The highest point of the arena's terrain, sampled every quarter metre.
+fn terrain_peak(scene: &Scene) -> Vec3 {
+    let mut peak = vec3(0.0, f32::NEG_INFINITY, 0.0);
+    for i in 0..=240 {
+        for j in 0..=256 {
+            let (x, z) = (-30.0 + i as f32 * 0.25, -10.0 + j as f32 * 0.25);
+            if let Some(height) = terrain_height(scene, x, z) {
+                if height > peak.y {
+                    peak = vec3(x, height, z);
+                }
+            }
+        }
+    }
+    peak
+}
+
+/// The terrain's relief is gentle and low, and leaves level ground under
+/// and around every solid, so cover, walls, ramps and the platform stand on
+/// the floor as before, and around the spawn, targets and sentry. Grass
+/// tufts stand on the relief.
+#[test]
+fn arena_terrain_is_low_relief_and_level_under_every_solid_and_actor() {
+    use calyx_engine::component::{ColliderShape, ComponentCollider};
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let peak = terrain_peak(&scene);
+    assert!(
+        peak.y > 0.2 && peak.y <= 0.3 + 1e-3,
+        "the relief peaks at {peak:?}"
+    );
+    let arena = object_named(&scene, "Arena");
+    let level = |x: f32, z: f32| terrain_height(&scene, x, z).map_or(true, |h| h <= 1e-3);
+    // Half a metre round each solid, where its kerb of level ground is.
+    let mut solids = 0;
+    for object in scene.descendants(arena) {
+        if scene.name(object) == "Arena Floor" {
+            continue;
+        }
+        let Some(ColliderShape::Cuboid { half_extents }) =
+            scene.read_component::<ComponentCollider, _, _>(object, |c| c.shape.clone())
+        else {
+            continue;
+        };
+        solids += 1;
+        let transform = scene.world_transform(object);
+        for point in footprint(&transform, half_extents) {
+            for (dx, dz) in [(0.0, 0.0), (0.5, 0.0), (-0.5, 0.0), (0.0, 0.5), (0.0, -0.5)] {
+                assert!(
+                    level(point.x + dx, point.y + dz),
+                    "the terrain rises to {:?} at ({}, {}) beside {}",
+                    terrain_height(&scene, point.x + dx, point.y + dz),
+                    point.x + dx,
+                    point.y + dz,
+                    scene.name(object)
+                );
+            }
+        }
+    }
+    assert!(solids > 100, "{solids} solids");
+    for name in ["Player Spawn", "Target A", "Target B", "Sentry"] {
+        let p = scene.world_transform(object_named(&scene, name)).position;
+        for (dx, dz) in [(0.0, 0.0), (2.0, 0.0), (-2.0, 0.0), (0.0, 2.0), (0.0, -2.0)] {
+            assert!(level(p.x + dx, p.z + dz), "the terrain rises under {name}");
+        }
+    }
+    let mut tufts = 0;
+    for object in scene.children(arena) {
+        if scene.name(object).starts_with("Arena Grass ") {
+            tufts += 1;
+            let p = scene.world_transform(object).position;
+            let ground = terrain_height(&scene, p.x, p.z).unwrap();
+            assert!((p.y - ground).abs() < 1e-3, "a tuft floats at {p:?}");
+        }
+    }
+    assert!(tufts > 0);
+}
+
+/// On the terrain's highest rise, the tank stands on the relief and tilts
+/// with it, aims at the surface, and its rounds still stop at cover on the
+/// level ground: the rise lifts them less than the cover's margin.
+#[test]
+fn tanks_settle_aim_and_shoot_on_the_terrain_and_cover_still_stops_rounds() {
+    // The asset copy stays alive: the terrain reads its heightmap file.
+    let (copy, assets) = sandbox_assets();
+    let mut scene = load_sandbox_scene(&copy, &assets);
+    let sentry = object_named(&scene, "Sentry");
+    scene.delete(sentry);
+    scene.flush_deletes();
+    let peak = terrain_peak(&scene);
+    let tank = object_named(&scene, "Tank");
+    let mut pose = scene.world_transform(tank);
+    pose.position = vec3(peak.x, 0.0, peak.z);
+    scene.set_world_transform(tank, pose.matrix());
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    hold(&mut runner, None, 0.5, 60);
+    let settled = runner.scene().world_transform(tank).position;
+    assert!(
+        (settled.y - peak.y).abs() < 0.05,
+        "the tank rests on the rise: {settled:?} on {peak:?}"
+    );
+
+    // Aimed at a slope of the relief, the crosshair lands on its surface.
+    let scene = runner.scene();
+    let mut slope = None;
+    'search: for r in 1..12 {
+        for k in 0..16 {
+            let angle = k as f32 * std::f32::consts::TAU / 16.0;
+            let (x, z) = (
+                peak.x + angle.cos() * r as f32,
+                peak.z + angle.sin() * r as f32,
+            );
+            if let Some(h) = terrain_height(scene, x, z) {
+                if h > 0.1 && h < peak.y - 0.02 {
+                    slope = Some(vec3(x, h, z));
+                    break 'search;
+                }
+            }
+        }
+    }
+    let slope = slope.expect("the rise has a slope");
+    aim_at(&mut runner, slope);
+    let crosshair = object_named(runner.scene(), "Crosshair");
+    let aimed = runner.scene().world_transform(crosshair).position;
+    assert!(
+        (aimed - slope).magnitude() < 0.3,
+        "the crosshair is on the relief: {aimed:?} for {slope:?}"
+    );
+    let ground = terrain_height(runner.scene(), aimed.x, aimed.z).unwrap();
+    assert!((aimed.y - ground).abs() < 0.02, "{aimed:?} on {ground}");
+
+    // The nearest cover on level ground, with a target behind it.
+    let scene = runner.scene();
+    let from = runner.scene().world_transform(tank).position;
+    let cover = scene
+        .objects()
+        .filter(|&o| {
+            let name = scene.name(o);
+            name.starts_with("Arena Cover ") && name.contains(" collision")
+        })
+        .filter(|&o| {
+            scene
+                .world_transform(scene.parent(o).unwrap())
+                .position
+                .y
+                .abs()
+                < 1e-3
+        })
+        .min_by(|&a, &b| {
+            let d = |o| {
+                let p: Vec3 = scene.world_transform(o).position;
+                (p.x - from.x).hypot(p.z - from.z)
+            };
+            d(a).total_cmp(&d(b))
+        })
+        .unwrap();
+    let centre = scene.world_transform(cover).position;
+    let away = vec3(centre.x - from.x, 0.0, centre.z - from.z).normalize();
+    let behind = vec3(centre.x, 0.0, centre.z) + away * 2.5;
+    let target = object_named(scene, "Target A");
+    let mut pose = scene.world_transform(target);
+    pose.position = vec3(behind.x, pose.position.y, behind.z);
+    runner
+        .scene_mut()
+        .set_world_transform(target, pose.matrix());
+    aim_at(&mut runner, behind);
+    let full_health = current_health(runner.scene(), target);
+    runner.press_key(egui::Key::Space);
+    let mut rounds = 0;
+    for _ in 0..150 {
+        runner.step();
+        rounds += find_named(runner.scene(), "Projectile").is_some() as usize;
+    }
+    runner.release_key(egui::Key::Space);
+    assert!(rounds > 0, "the tank fired");
+    assert_eq!(
+        current_health(runner.scene(), target),
+        full_health,
+        "a round flew over {} from the rise",
+        runner.scene().name(cover)
+    );
+}
