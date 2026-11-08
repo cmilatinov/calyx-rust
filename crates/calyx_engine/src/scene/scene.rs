@@ -26,6 +26,7 @@ use crate::scene::change_set::ChangeSet;
 use crate::scene::disabled_components::DisabledComponents;
 use crate::scene::dropped_components::{log_dropped_components, registered_type_name};
 use crate::scene::game_object_store::GameObjectStore;
+use crate::scene::hook_targets::HookTargets;
 use crate::scene::network_index::NetworkObjectIndex;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
@@ -164,6 +165,9 @@ pub struct Scene {
     camera: Option<GameObject>,
     registries: ReadOnlyRegistryContext,
     started: bool,
+    /// How many times an object moved to another archetype by gaining or
+    /// losing a component; see [`Scene::layout_changes`].
+    layout_changes: u64,
     /// Hands out the entities of the objects this scene spawns: the entity
     /// counter of the engine build that created the scene; see
     /// [`allocate_entity`].
@@ -234,6 +238,7 @@ impl Scene {
             camera: Default::default(),
             registries: assets,
             started: false,
+            layout_changes: 0,
             allocate_entity,
         }
     }
@@ -1031,7 +1036,14 @@ impl Scene {
         component: ComponentTypeId,
         writer: impl FnOnce(&mut Entry) -> Option<R>,
     ) -> Option<R> {
-        let result = writer(&mut self.entry_mut(game_object)?)?;
+        let mut entry = self.entry_mut(game_object)?;
+        let archetype = entry.location().archetype();
+        let result = writer(&mut entry);
+        let moved = entry.location().archetype() != archetype;
+        if moved {
+            self.layout_changes += 1;
+        }
+        let result = result?;
         self.component_written(game_object, component);
         Some(result)
     }
@@ -1071,11 +1083,22 @@ impl Scene {
                     component.id = id;
                 }
             }
-            Err(_) => entry.add_component(ComponentID {
-                id,
-                ..Default::default()
-            }),
+            Err(_) => {
+                entry.add_component(ComponentID {
+                    id,
+                    ..Default::default()
+                });
+                self.layout_changes += 1;
+            }
         }
+    }
+
+    /// How many times an object of the scene moved to another archetype,
+    /// by gaining or losing a component, since the scene was made. A pass
+    /// over the objects grouped by archetype groups them again when it
+    /// changes.
+    pub(crate) fn layout_changes(&self) -> u64 {
+        self.layout_changes
     }
 
     /// Reads component `T` from `game_object` and maps it through `reader`.
@@ -1343,24 +1366,21 @@ impl Scene {
         let registries = self.registries.clone();
         let component_registry_ref = registries.components.clone();
         let component_registry = component_registry_ref.read();
-        let game_objects: Vec<GameObject> = <Entity>::query()
-            .iter(&self.world.0)
-            .filter_map(|entity| self.game_object_from_entity(*entity))
-            .filter(|go| *go != self.root)
-            .collect();
+        let mut targets = HookTargets::new(self);
 
         for (type_uuid, hook) in component_registry.components_with_start() {
             let prototype = component_registry.component(type_uuid);
-            for &game_object in &game_objects {
-                if !self.runs_hooks(game_object, prototype) {
-                    continue;
+            let component = prototype.map(|prototype| prototype.component_type_id());
+            targets.visit_holding(self, component, |scene, game_object| {
+                if !scene.runs_hooks(game_object, prototype) {
+                    return;
                 }
                 hook.start(ComponentEventContext {
                     registries: &registries,
-                    scene: self,
+                    scene,
                     game_object,
                 });
-            }
+            });
         }
     }
 
@@ -1382,31 +1402,28 @@ impl Scene {
         crate::profile_scope!("Component updates");
         let component_registry = registries.components.read();
 
-        // Collect once; each hook runs only on the objects holding its
-        // component. The root carries no behaviour.
-        let game_objects: Vec<GameObject> = <Entity>::query()
-            .iter(&self.world.0)
-            .filter_map(|e| self.game_object_from_entity(*e))
-            .filter(|go| *go != self.root)
-            .collect();
+        // Collect once, grouped by archetype; each hook visits only the
+        // objects holding its component. The root carries no behaviour.
+        let mut targets = HookTargets::new(self);
 
         for (type_uuid, hook) in component_registry.components_with_update() {
             let prototype = component_registry.component(type_uuid);
             crate::profile_scope!("Update hook", hook_label(registries, type_uuid));
-            for &game_object in &game_objects {
-                if !self.runs_hooks(game_object, prototype) {
-                    continue;
+            let component = prototype.map(|prototype| prototype.component_type_id());
+            targets.visit_holding(self, component, |scene, game_object| {
+                if !scene.runs_hooks(game_object, prototype) {
+                    return;
                 }
                 hook.update(
                     ComponentEventContext {
                         registries,
-                        scene: self,
+                        scene,
                         game_object,
                     },
                     resources,
                     input,
                 );
-            }
+            });
         }
     }
 
