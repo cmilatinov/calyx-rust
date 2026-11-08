@@ -536,8 +536,8 @@ impl EditorApp {
                 Ok(None)
             }
 
-            Command::Screenshot { target, path } => {
-                self.remote_screenshot(ctx, runtime, slot, target, path)
+            Command::Screenshot { target, path, size } => {
+                self.remote_screenshot(ctx, runtime, slot, target, path, size)
             }
             Command::WaitFrames { frames } => {
                 runtime.pending.push(PendingOp::WaitFrames {
@@ -1074,7 +1074,14 @@ impl EditorApp {
         slot: &ResponseSlot,
         target: CaptureTarget,
         path: PathBuf,
+        size: Option<[u32; 2]>,
     ) -> CommandResult {
+        if size.is_some() && target != CaptureTarget::Game {
+            return Err((
+                ErrorKind::BadRequest,
+                "a capture size is only for the game target; use `--target game`".to_string(),
+            ));
+        }
         match target {
             CaptureTarget::Window => {
                 runtime
@@ -1090,8 +1097,24 @@ impl EditorApp {
                 Ok(None)
             }
             CaptureTarget::Game | CaptureTarget::Viewport => {
+                let mut hud = None;
                 if target == CaptureTarget::Game {
-                    self.render_game_view_for_capture(ctx)?;
+                    let requested = size.map(|[width, height]| (width, height));
+                    let rendered = self.render_game_view_for_capture(ctx, requested)?;
+                    // A capture at the Game tab's size stays the render
+                    // texture alone; one at a requested size stands in for
+                    // the Game tab, so it gets the HUD too.
+                    if let Some(size) = rendered.filter(|_| requested.is_some()) {
+                        hud = runtime
+                            .hud_capture
+                            .paint(
+                                &self.state.game.assets.render_context,
+                                self.state.game.scenes.simulation_scene(),
+                                size,
+                                ctx.pixels_per_point(),
+                            )
+                            .map_err(|message| (ErrorKind::Internal, message))?;
+                    }
                 }
                 let renderer = match target {
                     CaptureTarget::Game => &self.state.game_renderer,
@@ -1103,7 +1126,7 @@ impl EditorApp {
                         "render target has no size yet".to_string(),
                     )
                 })?;
-                runtime.push_texture_shot(ResponseSlot { ..*slot }, path, readback);
+                runtime.push_texture_shot(ResponseSlot { ..*slot }, path, readback, hud);
                 Ok(None)
             }
         }
@@ -1111,21 +1134,35 @@ impl EditorApp {
 }
 
 impl EditorApp {
-    /// Renders the game view now when the Game tab has not been laid out
-    /// since the editor started, so a game capture works without the tab.
-    /// Once the tab has been shown, the game view is rendered every frame at
-    /// its size, whether the tab is active or not.
+    /// Renders the game view now at the `requested` size, or, without one,
+    /// when the Game tab has not been laid out since the editor started, so
+    /// a game capture works without the tab. Once the tab has been shown, the
+    /// game view is rendered every frame at its size, whether the tab is
+    /// active or not. The views render after remote commands, so the tab
+    /// never shows a view rendered here at a requested size. Returns the size
+    /// rendered at, or `None` when the view rendered for the tab is current.
     fn render_game_view_for_capture(
         &mut self,
         ctx: &egui::Context,
-    ) -> Result<(), (ErrorKind, String)> {
+        requested: Option<(u32, u32)>,
+    ) -> Result<Option<(u32, u32)>, (ErrorKind, String)> {
+        let device_limit = self
+            .state
+            .game
+            .assets
+            .render_context
+            .device()
+            .limits()
+            .max_texture_dimension_2d;
         let Some(size) = game_capture_size(
+            requested,
             Self::game_physical_size(ctx, self.state.game_size),
             Self::get_physical_size(ctx, self.state.viewport_size),
             Self::get_physical_size(ctx, (1.0, 1.0)),
+            MAX_GAME_CAPTURE_DIMENSION.min(device_limit),
         )?
         else {
-            return Ok(());
+            return Ok(None);
         };
         let state = self.state.as_mut();
         let scene = state.game.scenes.simulation_scene();
@@ -1145,20 +1182,39 @@ impl EditorApp {
                 "the scene has no enabled camera to render the game view from".to_string(),
             ));
         }
-        Ok(())
+        Ok(Some(size))
     }
 }
 
-/// The size to render the game view at for a capture, from the physical
-/// sizes of the Game panel, the Scene viewport and the window: `None` when
-/// the Game panel has a size, so the game view is already rendered each
-/// frame, else the Scene viewport's size, which the Game tab shares by
-/// default, or the window's.
+/// The largest width or height a game capture renders at, unless the GPU's
+/// texture limit is lower.
+const MAX_GAME_CAPTURE_DIMENSION: u32 = 8192;
+
+/// The size to render the game view at for a capture: the `requested` size,
+/// which must have 2 to `max_dimension` pixels on each side. Without one,
+/// from the physical sizes of the Game panel, the Scene viewport and the
+/// window: `None` when the Game panel has a size, so the game view is
+/// already rendered each frame, else the Scene viewport's size, which the
+/// Game tab shares by default, or the window's.
 fn game_capture_size(
+    requested: Option<(u32, u32)>,
     game_panel: (u32, u32),
     viewport: (u32, u32),
     window: (u32, u32),
+    max_dimension: u32,
 ) -> Result<Option<(u32, u32)>, (ErrorKind, String)> {
+    if let Some((width, height)) = requested {
+        let in_range = |side: u32| (2..=max_dimension).contains(&side);
+        if !in_range(width) || !in_range(height) {
+            return Err((
+                ErrorKind::BadRequest,
+                format!(
+                    "cannot capture the game view at {width}x{height}: width and height must each be 2 to {max_dimension} pixels"
+                ),
+            ));
+        }
+        return Ok(Some((width, height)));
+    }
     let renderable = |(width, height): (u32, u32)| width > 1 && height > 1;
     if renderable(game_panel) {
         return Ok(None);
@@ -1745,22 +1801,52 @@ mod tests {
     #[test]
     fn a_game_capture_renders_only_while_the_game_panel_has_no_size() {
         assert_eq!(
-            game_capture_size((800, 600), (1200, 700), (1920, 1080)).unwrap(),
+            game_capture_size(None, (800, 600), (1200, 700), (1920, 1080), 8192).unwrap(),
             None
         );
         assert_eq!(
-            game_capture_size((0, 0), (1200, 700), (1920, 1080)).unwrap(),
+            game_capture_size(None, (0, 0), (1200, 700), (1920, 1080), 8192).unwrap(),
             Some((1200, 700))
         );
         assert_eq!(
-            game_capture_size((0, 0), (0, 0), (1920, 1080)).unwrap(),
+            game_capture_size(None, (0, 0), (0, 0), (1920, 1080), 8192).unwrap(),
             Some((1920, 1080))
         );
     }
 
     #[test]
+    fn a_requested_capture_size_wins_over_every_panel_size() {
+        for game_panel in [(800, 600), (0, 0)] {
+            assert_eq!(
+                game_capture_size(Some((1920, 1080)), game_panel, (0, 0), (0, 0), 8192).unwrap(),
+                Some((1920, 1080))
+            );
+        }
+        assert_eq!(
+            game_capture_size(Some((8192, 2)), (0, 0), (0, 0), (0, 0), 8192).unwrap(),
+            Some((8192, 2))
+        );
+    }
+
+    #[test]
+    fn a_requested_capture_size_out_of_range_is_a_bad_request() {
+        for requested in [
+            (0, 1080),
+            (1920, 0),
+            (1, 1080),
+            (8193, 1080),
+            (1920, 100_000),
+        ] {
+            let (kind, message) =
+                game_capture_size(Some(requested), (800, 600), (0, 0), (0, 0), 8192).unwrap_err();
+            assert_eq!(kind, ErrorKind::BadRequest);
+            assert!(message.contains("2 to 8192 pixels"), "{message}");
+        }
+    }
+
+    #[test]
     fn a_game_capture_with_nothing_to_size_it_names_focus_game() {
-        let (kind, message) = game_capture_size((0, 0), (1, 1), (0, 0)).unwrap_err();
+        let (kind, message) = game_capture_size(None, (0, 0), (1, 1), (0, 0), 8192).unwrap_err();
         assert_eq!(kind, ErrorKind::BadRequest);
         assert!(message.contains("focus-game"), "{message}");
     }

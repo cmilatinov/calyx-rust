@@ -69,6 +69,8 @@ Project scaffolding. Generates project.toml, Cargo.toml (from template), and ass
 
 `calyx_engine::runtime::run_player(project_directory, plugin_main)` owns the standalone window, GPU setup, frame loop, input, HUD and scene rendering. It reads the project's startup scene and window settings from `project.toml`, registers the linked project's component types before loading the scene, and runs until the window closes. Player logs use `calyx_player_*.log` in the working directory's `logs/` folder.
 
+Game code asks its host for something through `runtime::HostCommand`, the one channel from game to host (today only `Quit`): a hook pushes a command into the `HostCommands` resource (`ResourceMap::host_commands_mut`), and `GameContext::update_scene` returns the frame's commands, in order and once each. The editor's `update_game` and the player match on every command without a catch-all, so a new variant has to be handled by each host: `Quit` stops play in the editor and closes the player's window.
+
 A project adds a uniquely named Cargo binary and an `eframe` dependency for the return type. Its entry point calls `run_player(env!("CARGO_MANIFEST_DIR"), project_crate::plugin_main)` and returns `eframe::Result<()>`; see `sandbox/src/game.rs` and `demos/src/game.rs`. Run the sandbox with `cargo run --release -p sandbox --bin game`, or the demo collection with `cargo run --release -p demos --bin demos_game`. The project needs its assets locally, including any licensed imports; the player uses the same asset loader as the editor.
 
 ### `sandbox` (cdylib + binary)

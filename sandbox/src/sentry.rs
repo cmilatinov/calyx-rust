@@ -67,7 +67,7 @@ impl ComponentUpdate for ComponentSentry {
 }
 
 fn update_sentry(scene: &mut Scene, game_object: GameObject, dt: f32) {
-    if crate::match_rules::match_over(scene) {
+    if crate::game_state::combat_paused(scene) {
         return;
     }
     let Some(mut sentry) =

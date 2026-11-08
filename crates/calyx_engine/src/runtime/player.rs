@@ -6,7 +6,8 @@ use crate::profiler;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::{SceneRenderer, SceneRendererOptions};
 use crate::runtime::{
-    initial_render_size, wgpu_configuration, FrameCounter, ProjectRuntimeSettings, WindowSettings,
+    initial_render_size, wgpu_configuration, FrameCounter, HostCommand, ProjectRuntimeSettings,
+    WindowSettings,
 };
 use crate::scene::{Scene, SceneHud};
 use crate::ui::{UiInput, UiPoint};
@@ -149,7 +150,14 @@ impl eframe::App for GameApp {
                     true,
                 );
                 self.game.prepare_scene(UpdatedScene::Current);
-                self.game.update_scene(UpdatedScene::Current, &input);
+                for command in self.game.update_scene(UpdatedScene::Current, &input) {
+                    match command {
+                        HostCommand::Quit => {
+                            log::info!("Game requested quit; closing the player");
+                            ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
+                        }
+                    }
+                }
                 self.hud.paint(
                     self.game.scenes.current_scene_mut(),
                     ui.painter(),

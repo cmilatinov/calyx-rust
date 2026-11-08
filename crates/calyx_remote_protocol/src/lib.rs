@@ -401,6 +401,11 @@ pub enum Command {
         /// Destination PNG path, absolute or relative to the editor's working
         /// directory.
         path: PathBuf,
+        /// `[width, height]` in pixels to render the game view at offscreen,
+        /// with the HUD painted over it, instead of the Game tab's size. Only
+        /// for the `game` target.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        size: Option<[u32; 2]>,
     },
     /// Responds after `frames` further editor frames have run.
     WaitFrames {
@@ -800,6 +805,12 @@ mod tests {
             Command::Screenshot {
                 target: CaptureTarget::Game,
                 path: PathBuf::from("shot.png"),
+                size: None,
+            },
+            Command::Screenshot {
+                target: CaptureTarget::Game,
+                path: PathBuf::from("shot.png"),
+                size: Some([1920, 1080]),
             },
             Command::WaitFrames { frames: 3 },
             Command::SetProfilerCapture { enabled: true },
@@ -847,6 +858,38 @@ mod tests {
         let parsed: RequestEnvelope =
             serde_json::from_str(r#"{"id":9,"cmd":"step_frames","frames":4}"#).unwrap();
         assert_eq!(parsed.command, Command::StepFrames { frames: 4 });
+    }
+
+    /// A screenshot without a size stays the same on the wire, so older
+    /// clients still capture at the Game tab's size.
+    #[test]
+    fn screenshot_without_a_size_keeps_its_wire_format() {
+        let unsized_json = r#"{"id":1,"cmd":"screenshot","target":"game","path":"shot.png"}"#;
+        let unsized_shot = Command::Screenshot {
+            target: CaptureTarget::Game,
+            path: PathBuf::from("shot.png"),
+            size: None,
+        };
+        let request = RequestEnvelope {
+            id: 1,
+            command: unsized_shot.clone(),
+        };
+        assert_eq!(serde_json::to_string(&request).unwrap(), unsized_json);
+        let parsed: RequestEnvelope = serde_json::from_str(unsized_json).unwrap();
+        assert_eq!(parsed.command, unsized_shot);
+
+        let parsed: RequestEnvelope = serde_json::from_str(
+            r#"{"id":1,"cmd":"screenshot","target":"game","path":"shot.png","size":[1920,1080]}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            parsed.command,
+            Command::Screenshot {
+                target: CaptureTarget::Game,
+                path: PathBuf::from("shot.png"),
+                size: Some([1920, 1080]),
+            }
+        );
     }
 
     /// A plain `play` stays the same on the wire, so older clients still run

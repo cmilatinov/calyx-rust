@@ -5,6 +5,7 @@ use calyx_engine::profiler::{self, RangeReport};
 use calyx_engine::render::{ReadbackPoll, TextureReadback};
 use calyx_remote_protocol::{ErrorKind, ResponseEnvelope};
 
+use super::hud_capture::{composite_hud, HudCapture};
 use super::server::{ClientId, RemoteServer};
 
 /// How many frames a GPU texture readback may stay pending before the
@@ -52,6 +53,9 @@ pub enum PendingOp {
         slot: ResponseSlot,
         path: PathBuf,
         readback: TextureReadback,
+        /// The HUD to paint over the read-back game view, for a capture at a
+        /// requested size.
+        hud: Option<image::RgbaImage>,
         deadline_frame: u64,
     },
 }
@@ -104,6 +108,8 @@ pub struct RemoteRuntime {
     /// `read_profile` turned capture on. While it is still current, nobody
     /// else has asked for capture since, and the reads may turn it back off.
     read_capture: Option<u64>,
+    /// Paints the HUD of game captures taken at a requested size.
+    pub hud_capture: HudCapture,
 }
 
 impl RemoteRuntime {
@@ -119,6 +125,7 @@ impl RemoteRuntime {
             last_game_rect: None,
             last_viewport_rect: None,
             read_capture: None,
+            hud_capture: HudCapture::default(),
         }
     }
 
@@ -215,12 +222,14 @@ impl RemoteRuntime {
         slot: ResponseSlot,
         path: PathBuf,
         readback: TextureReadback,
+        hud: Option<image::RgbaImage>,
     ) {
         let deadline_frame = self.frame_index + TEXTURE_READBACK_DEADLINE_FRAMES;
         self.pending.push(PendingOp::TextureShot {
             slot,
             path,
             readback,
+            hud,
             deadline_frame,
         });
     }
@@ -290,6 +299,7 @@ impl RemoteRuntime {
                 PendingOp::TextureShot {
                     path,
                     readback,
+                    hud,
                     deadline_frame,
                     ..
                 } => match readback.try_finish(render_context) {
@@ -307,8 +317,17 @@ impl RemoteRuntime {
                     ReadbackPoll::Failed(message) => {
                         finished.push((index, Err((ErrorKind::Internal, message))));
                     }
-                    ReadbackPoll::Ready(image) => {
-                        finished.push((index, save_png(path, image)));
+                    ReadbackPoll::Ready(mut image) => {
+                        let composited = match hud.take() {
+                            Some(hud) => composite_hud(&mut image, &hud),
+                            None => Ok(()),
+                        };
+                        finished.push((
+                            index,
+                            composited
+                                .map_err(|message| (ErrorKind::Internal, message))
+                                .and_then(|()| save_png(path, image)),
+                        ));
                     }
                 },
             }

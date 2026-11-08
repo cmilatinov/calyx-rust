@@ -20,7 +20,8 @@ use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 use rapier3d::dynamics::RigidBodyType;
 use sandbox::{
-    arena::ComponentArena, tank_camera::ComponentTankCamera, terrain::ComponentDriveSurface,
+    arena::ComponentArena, game_state::ComponentGameState, tank_camera::ComponentTankCamera,
+    terrain::ComponentDriveSurface,
 };
 use serde_json::{json, Value};
 
@@ -696,6 +697,20 @@ fn main() {
     });
     edited.insert(scene.uuid(camera));
     edited.extend(light_and_post_process(&mut scene));
+    // The match flow: the arena opens on the main menu, and the Game State
+    // takes it through the lobby, the match and the end screen. Once
+    // authored it is preserved like any other actor.
+    if !scene.objects().any(|o| scene.name(o) == "Game State") {
+        let state = scene.create(
+            Some(ComponentID {
+                id: stable("Game State"),
+                name: "Game State".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(state, ComponentGameState::default());
+    }
     let children: Vec<_> = scene.children(arena).collect();
     for child in children {
         scene.delete(child);

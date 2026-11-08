@@ -144,8 +144,9 @@ impl ComponentUpdate for ComponentRespawnState {
 }
 
 pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32) -> bool {
-    // A tank destroyed as the match ended stays down on the final scoreboard.
-    if crate::match_rules::match_over(scene) {
+    // A tank destroyed as the match ended stays down on the final scoreboard,
+    // and nobody comes back outside play.
+    if crate::game_state::combat_paused(scene) {
         return false;
     }
     let Some(mut state) =
@@ -155,19 +156,10 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
     };
 
     let should_spawn = state.tick(dt) == Some(RespawnAction::Spawn);
-    let spawned = should_spawn
-        && find_spawn_transform(scene, state.team).is_some_and(|transform| {
-            let respawn_target = respawn_transform_target(scene, game_object);
-            let mut target_transform = scene.world_transform(respawn_target);
-            target_transform.position +=
-                transform.position - scene.world_transform(game_object).position;
-            scene.set_world_transform(respawn_target, target_transform.matrix());
-            let mut controlled_transform = scene.world_transform(game_object);
-            controlled_transform.rotation = transform.rotation;
-            scene.set_world_transform(game_object, controlled_transform.matrix());
-            state.mark_spawned();
-            true
-        });
+    let spawned = should_spawn && place_at_spawn(scene, game_object, state.team);
+    if spawned {
+        state.mark_spawned();
+    }
 
     if spawned {
         let _ = scene.write_component::<ComponentHealth, _>(game_object, |health| {
@@ -179,6 +171,42 @@ pub fn update_respawn_state(scene: &mut Scene, game_object: GameObject, dt: f32)
         *component = state;
     });
     spawned
+}
+
+/// Moves `game_object`, with the rig it belongs to, onto `team`'s spawn
+/// point, facing the way the point faces. Returns `false`, leaving it where
+/// it is, when the scene has no spawn point for `team`.
+fn place_at_spawn(scene: &mut Scene, game_object: GameObject, team: u32) -> bool {
+    let Some(transform) = find_spawn_transform(scene, team) else {
+        return false;
+    };
+    let respawn_target = respawn_transform_target(scene, game_object);
+    let mut target_transform = scene.world_transform(respawn_target);
+    target_transform.position += transform.position - scene.world_transform(game_object).position;
+    scene.set_world_transform(respawn_target, target_transform.matrix());
+    let mut controlled_transform = scene.world_transform(game_object);
+    controlled_transform.rotation = transform.rotation;
+    scene.set_world_transform(game_object, controlled_transform.matrix());
+    true
+}
+
+/// Starts `game_object` afresh for a new match: alive at its spawn point, with
+/// no respawn pending and no spawn protection, so it can move as soon as the
+/// match starts. Its health is restored separately.
+pub(crate) fn reset_for_match(scene: &mut Scene, game_object: GameObject) {
+    let Some(team) =
+        scene.read_component::<ComponentRespawnState, _, _>(game_object, |state| state.team)
+    else {
+        return;
+    };
+    place_at_spawn(scene, game_object, team);
+    let _ = scene.write_component::<ComponentRespawnState, _>(game_object, |state| {
+        state.alive = true;
+        state.death_requested = false;
+        state.respawn_requested = false;
+        state.respawn_remaining = 0.0;
+        state.invulnerability_remaining = 0.0;
+    });
 }
 
 fn respawn_transform_target(scene: &Scene, game_object: GameObject) -> GameObject {
