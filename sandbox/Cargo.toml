@@ -25,6 +25,9 @@ nalgebra.workspace = true
 rapier3d.workspace = true
 nalgebra-glm.workspace = true
 
+[build-dependencies]
+embed-resource.workspace = true
+
 [dev-dependencies]
 calyx_model_gen = { path = "../crates/calyx_model_gen" }
 image.workspace = true

@@ -64,6 +64,10 @@ toml.workspace = true
 winit.workspace = true
 puffin.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+# The version winit uses, for setting the window icons before the window shows.
+windows-sys = { version = "0.52", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
+
 [lints.rust]
 # `--cfg calyx_no_profiling` compiles the profiler's CPU scopes out; see `profiler`.
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(calyx_no_profiling)'] }
