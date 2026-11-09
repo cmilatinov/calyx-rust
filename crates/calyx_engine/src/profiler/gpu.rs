@@ -247,6 +247,42 @@ impl Drop for GpuScope<'_> {
     }
 }
 
+/// A timed stretch inside a render pass, for the draws of one kind a pass
+/// records, such as one shader's, so a pass's time can be split between
+/// them. It nests in the innermost scope open on this thread, as
+/// [`GpuScope`] does, and is closed with [`PassScope::end`] on the same
+/// pass.
+///
+/// It records nothing while capture is off or when the device cannot write
+/// timestamps inside a pass (`TIMESTAMP_QUERY_INSIDE_PASSES`); the pass's
+/// own [`GpuScope`] still times it whole. GPUs overlap the draws of a pass,
+/// so the stretches are approximate: their sum can differ from the pass's
+/// time, and a stretch includes the tail of the work before it.
+#[must_use = "a pass scope records nothing until it is ended"]
+pub struct PassScope {
+    id: Option<QueryId>,
+}
+
+impl PassScope {
+    /// Opens a stretch named `label` in `pass`; the name is only built while
+    /// capturing.
+    pub fn begin(pass: &mut wgpu::RenderPass<'_>, label: impl FnOnce() -> String) -> Self {
+        let id = if super::is_capturing() {
+            begin(pass, Cow::Owned(label()), None)
+        } else {
+            None
+        };
+        Self { id }
+    }
+
+    /// Closes the stretch in `pass`, the pass it was opened in.
+    pub fn end(self, pass: &mut wgpu::RenderPass<'_>) {
+        if let Some(id) = self.id {
+            end(pass, id);
+        }
+    }
+}
+
 /// The UI scope opened by the first UI paint callback of a frame, closed by
 /// the last.
 static UI_QUERY: Mutex<Option<QueryId>> = Mutex::new(None);
@@ -677,6 +713,65 @@ mod tests {
         assert_eq!(passes[0].name, "Frame");
         assert_eq!(passes[0].children[0].name, "Clear");
         assert!(passes[0].children[0].ns <= passes[0].ns);
+    }
+
+    /// A stretch timed inside a render pass, as [`PassScope`] times one
+    /// shader's draws, nests in the encoder scope open around the pass.
+    #[test]
+    fn a_stretch_inside_a_pass_reads_back_nested_in_the_scope_around_it() {
+        let context = crate::test_support::test_render_context();
+        let device = context.device();
+        let (_, Some(true)) = timing_status(device.features()) else {
+            eprintln!("skipped: the test device has no timestamps inside passes");
+            return;
+        };
+        let mut timer = GpuTimer::new(device, context.queue(), true);
+        let texture = device.create_texture(&wgpu::TextureDescriptor {
+            label: None,
+            size: wgpu::Extent3d {
+                width: 64,
+                height: 64,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format: wgpu::TextureFormat::Rgba8Unorm,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
+            view_formats: &[],
+        });
+        let view = texture.create_view(&Default::default());
+        let mut encoder = device.create_command_encoder(&Default::default());
+        let pass_scope = timer
+            .begin(&mut encoder, Cow::Borrowed("Forward"), None)
+            .expect("a free slot");
+        {
+            let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: None,
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::RED),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                ..Default::default()
+            });
+            let stretch = timer
+                .begin(&mut pass, Cow::Borrowed("water"), None)
+                .expect("room for a second scope");
+            timer.end(&mut pass, stretch);
+        }
+        timer.end(&mut encoder, pass_scope);
+        context.queue().submit(Some(encoder.finish()));
+        timer.end_frame(7);
+        let _ = device.poll(wgpu::Maintain::Wait);
+
+        let frames = timer.collect();
+        let (_, passes) = &frames[0];
+        assert_eq!(passes[0].name, "Forward");
+        assert_eq!(passes[0].children[0].name, "water");
     }
 
     fn query(label: &'static str, parent: Option<usize>, start: u32, ended: bool) -> GpuQuery {

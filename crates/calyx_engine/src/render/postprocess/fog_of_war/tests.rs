@@ -364,6 +364,47 @@ fn each_pixel_is_fogged_by_the_ground_position_of_the_surface_it_shows() {
 }
 
 #[test]
+fn blockers_all_around_a_viewer_shade_as_the_cpu_rules_say() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    // A ring of turned blocks around a viewer, at every bearing, and a run
+    // of touching blocks sight carries on through, so the pass reads the
+    // blockers sector by sector in every direction.
+    let view = looking(vec3(0.0, 22.0, -6.0), vec3(0.0, 0.0, 0.5));
+    let mut blockers: Vec<FogOfWarBlocker> = (0..10)
+        .map(|step| {
+            let bearing = step as f32 * std::f32::consts::TAU / 10.0;
+            let turn = step as f32 * 0.6;
+            FogOfWarBlocker {
+                center: vec2(bearing.cos(), bearing.sin()) * (3.0 + (step % 3) as f32),
+                half_axes: [
+                    vec2(turn.cos(), turn.sin()) * 0.6,
+                    vec2(-turn.sin(), turn.cos()) * 0.3,
+                ],
+            }
+        })
+        .collect();
+    blockers.extend([
+        block(vec2(-1.0, -6.0), vec2(2.0, 1.0)),
+        block(vec2(1.0, -6.0), vec2(2.0, 1.0)),
+    ]);
+    let fog = fog(Some(FogOfWarSight {
+        viewers: vec![viewer(vec2(0.2, 0.1))],
+        blockers,
+    }));
+    let depth = planes().depth_of(22.0);
+
+    let output = run(&context, fog.clone(), &view, depth).expect("the pass runs");
+
+    let [clear, partial, dark] = check_pixels(&output, &fog, &view, depth);
+    assert!(
+        clear > 20 && dark > 20,
+        "the view shows ground in sight and in the blocks' shadows: {clear}, {partial}, {dark}"
+    );
+}
+
+#[test]
 fn the_same_pixel_is_clear_on_a_surface_in_sight_and_fogged_on_one_in_shadow() {
     let assets = TestAssets::engine();
     let context = assets.asset_context();
@@ -464,24 +505,30 @@ fn packing_turns_blockers_into_the_shaders_local_frames() {
             },
         ],
     };
-    let (mut viewers, mut blockers) = (
-        vec![GpuViewer::default(); 5],
-        vec![GpuBlocker::default(); 5],
-    );
+    let mut tables = SightTables {
+        viewers: vec![GpuViewer::default(); 5],
+        blockers: vec![GpuBlocker::default(); 5],
+        ..Default::default()
+    };
 
-    pack_sight(&sight, &mut viewers, &mut blockers);
+    pack_sight(&sight, &mut tables);
 
     assert_eq!(
-        viewers
+        tables
+            .viewers
             .iter()
-            .map(|viewer| (viewer.position, viewer.weight))
+            .map(|viewer| (viewer.position, viewer.weight, viewer.first_sector))
             .collect::<Vec<_>>(),
-        [([1.0, 2.0], 0.25), ([-1.0, 0.5], 1.0)]
+        [
+            ([1.0, 2.0], 0.25, 0),
+            ([-1.0, 0.5], 1.0, SIGHT_SECTORS as u32)
+        ]
     );
-    assert_eq!(viewers[0].fade_curve, 3.0);
+    assert_eq!(tables.viewers[0].fade_curve, 3.0);
+    assert_eq!(tables.sectors.len(), 2 * SIGHT_SECTORS);
     // The flat second blocker blocks nothing and is left out.
     assert_eq!(
-        blockers,
+        tables.blockers,
         [GpuBlocker {
             center: [3.0, 4.0],
             local_x: [1.0, 0.0],
@@ -489,6 +536,95 @@ fn packing_turns_blockers_into_the_shaders_local_frames() {
             scale: [1.0, 0.5],
         }]
     );
+}
+
+/// The sectors of the viewer `viewer` of `tables` that list blocker
+/// `blocker`.
+fn sectors_listing(tables: &SightTables, viewer: usize, blocker: u32) -> Vec<usize> {
+    let first = tables.viewers[viewer].first_sector as usize;
+    (0..SIGHT_SECTORS)
+        .filter(|&sector| {
+            let [start, count] = tables.sectors[first + sector];
+            tables.sector_blockers[start as usize..(start + count) as usize].contains(&blocker)
+        })
+        .collect()
+}
+
+#[test]
+fn each_viewer_lists_a_blocker_in_the_sectors_its_angular_span_overlaps() {
+    let sight = FogOfWarSight {
+        viewers: vec![viewer(vec2(0.0, 0.0)), viewer(vec2(10.0, 0.0))],
+        // A post 0.2 units across, 10 units east of the first viewer: on the
+        // +x axis, where the first sector starts, so it spans the last
+        // sector too, and narrower than a sector.
+        blockers: vec![block(vec2(10.0, 0.0), vec2(0.2, 0.2))],
+    };
+    let mut tables = SightTables::default();
+
+    pack_sight(&sight, &mut tables);
+
+    assert_eq!(sectors_listing(&tables, 0, 0), [0, SIGHT_SECTORS - 1]);
+    assert_eq!(
+        sectors_listing(&tables, 1, 0),
+        (0..SIGHT_SECTORS).collect::<Vec<_>>(),
+        "a viewer standing in a blocker sees it in every direction"
+    );
+}
+
+#[test]
+fn every_line_of_sight_through_a_blocker_lies_in_a_sector_listing_it() {
+    // Blocks of several sizes and turns, at several distances and bearings
+    // from the viewer; each line from the viewer through points of a block
+    // must point into a sector that lists it.
+    let origin = vec2(0.3, -0.7);
+    let mut blockers = Vec::new();
+    for ring in 1..6 {
+        for step in 0..24 {
+            let bearing = step as f32 * std::f32::consts::TAU / 24.0 + ring as f32 * 0.1;
+            let distance = ring as f32 * 3.0;
+            let turn = step as f32 * 0.37;
+            let (along, across) = (0.4 + 0.3 * ring as f32, 0.2 + 0.1 * (step % 4) as f32);
+            blockers.push(FogOfWarBlocker {
+                center: origin + vec2(bearing.cos(), bearing.sin()) * distance,
+                half_axes: [
+                    vec2(turn.cos(), turn.sin()) * along,
+                    vec2(-turn.sin(), turn.cos()) * across,
+                ],
+            });
+        }
+    }
+    let sight = FogOfWarSight {
+        viewers: vec![viewer(origin)],
+        blockers: blockers.clone(),
+    };
+    let mut tables = SightTables::default();
+
+    pack_sight(&sight, &mut tables);
+
+    let sector_angle = std::f32::consts::TAU / SIGHT_SECTORS as f32;
+    for (index, blocker) in blockers.iter().enumerate() {
+        let listed = sectors_listing(&tables, 0, index as u32);
+        assert!(
+            listed.len() < SIGHT_SECTORS / 2,
+            "a block away from the viewer spans part of the circle: {listed:?}"
+        );
+        for u in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+            for v in [-1.0f32, -0.5, 0.0, 0.5, 1.0] {
+                let point = blocker.center + blocker.half_axes[0] * u + blocker.half_axes[1] * v;
+                let direction = point - origin;
+                let angle = direction
+                    .y
+                    .atan2(direction.x)
+                    .rem_euclid(std::f32::consts::TAU);
+                let sector = ((angle / sector_angle).floor() as usize).min(SIGHT_SECTORS - 1);
+                assert!(
+                    listed.contains(&sector),
+                    "block {index}: the line to {point:?} points into sector {sector}, \
+                     not in {listed:?}"
+                );
+            }
+        }
+    }
 }
 
 #[test]
@@ -502,13 +638,14 @@ fn the_uniform_viewer_and_blocker_match_the_shaders_layout() {
     let (size, members) = crate::render::test_kernel::wgsl_layout(&module, "FogOfWarUniform");
     assert_eq!(size as usize, size_of::<FogOfWarUniform>());
     assert_eq!(
-        members[..5],
+        members[..6],
         [
             ("color", 0),
             ("camera", 16),
             ("view_to_world", 32),
             ("viewer_count", 96),
             ("blocker_count", 100),
+            ("sector_count", 104),
         ]
         .map(|(name, offset)| (name.to_string(), offset))
     );
@@ -522,6 +659,8 @@ fn the_uniform_viewer_and_blocker_match_the_shaders_layout() {
             ("fade_end", 12),
             ("fade_curve", 16),
             ("weight", 20),
+            ("first_sector", 24),
+            ("_pad", 28),
         ]
         .map(|(name, offset)| (name.to_string(), offset))
     );

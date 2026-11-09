@@ -14,8 +14,10 @@ use crate::assets::AssetId;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::math::{self, Transform};
+use crate::profiler::GpuScope;
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::scene_renderer::CameraUniform;
+use crate::render::static_batch::{outside_view, Bounds};
 use crate::render::{
     CachedBindGroup, Camera, DrawBatch, MaterialBindGroups, PipelineOptions, RenderUtils,
     SceneRendererError, Shader, FIRST_MATERIAL_GROUP,
@@ -23,6 +25,7 @@ use crate::render::{
 use egui_wgpu::wgpu;
 use nalgebra_glm as glm;
 use nalgebra_glm::{Mat4, Vec3};
+use std::collections::HashMap;
 
 /// How many cascades the shadowed directional light splits its distance into.
 pub const SHADOW_CASCADE_COUNT: usize = 4;
@@ -690,6 +693,7 @@ impl ShadowRenderer {
         assets: &LockedAssetRenderState,
         material_bind_groups: &MaterialBindGroups,
         draw_list: &[DrawBatch],
+        batch_bounds: &HashMap<AssetId, Bounds>,
     ) {
         self.stats = Default::default();
         queue.write_buffer(
@@ -718,6 +722,7 @@ impl ShadowRenderer {
             pbr_shader_id: self.pbr_shader_id,
             masking,
             draw_list,
+            batch_bounds,
         };
         let pipelines = |settings: &ShadowSettings, clamp_depth: bool| {
             let options = Self::pipeline_options(settings, clamp_depth);
@@ -765,10 +770,12 @@ impl ShadowRenderer {
             let pipelines = pipelines(&cascade_plan.settings, self.clamp_cascade_depth);
             for (i, view) in cascade_plan.views.iter().enumerate() {
                 let bind_group = view_bind_group(i, view.camera_uniform(SHADOW_CASCADE_RESOLUTION));
+                let mut encoder = GpuScope::new_with(encoder, || format!("Cascade {i}"));
                 let mut pass =
-                    Self::begin_pass(encoder, &cascades.layer_views[i], "Shadow Cascade");
+                    Self::begin_pass(&mut encoder, &cascades.layer_views[i], "Shadow Cascade");
                 pass.set_bind_group(0, &bind_group, &[]);
-                self.stats.caster_instances += casters.draw(&mut pass, &pipelines);
+                self.stats.caster_instances +=
+                    casters.draw(&mut pass, &pipelines, &view.view_projection());
                 self.stats.cascades += 1;
             }
         }
@@ -791,15 +798,20 @@ impl ShadowRenderer {
                     )
                 })
                 .collect();
-            let mut pass = Self::begin_pass(encoder, &atlas.layer_views[0], "Spot Shadow Atlas");
+            let mut encoder = GpuScope::new(encoder, "Spot atlas");
+            let mut pass =
+                Self::begin_pass(&mut encoder, &atlas.layer_views[0], "Spot Shadow Atlas");
             for (spot, bind_group) in plan.spots.iter().zip(&bind_groups) {
                 let (x, y) = spot.tile_origin();
                 let tile = SHADOW_ATLAS_TILE;
                 pass.set_viewport(x as f32, y as f32, tile as f32, tile as f32, 0.0, 1.0);
                 pass.set_scissor_rect(x, y, tile, tile);
                 pass.set_bind_group(0, bind_group, &[]);
-                self.stats.caster_instances +=
-                    casters.draw(&mut pass, &pipelines(&spot.settings, false));
+                self.stats.caster_instances += casters.draw(
+                    &mut pass,
+                    &pipelines(&spot.settings, false),
+                    &spot.view.view_projection(),
+                );
                 self.stats.spot_tiles += 1;
             }
         }
@@ -847,7 +859,7 @@ struct CasterPipelines {
 }
 
 /// What every cascade and tile draws: the shadow-casting batches of the
-/// scene pass's draw list.
+/// scene pass's draw list that can fall in its view.
 struct Casters<'a> {
     assets: &'a LockedAssetRenderState<'a>,
     material_bind_groups: &'a MaterialBindGroups,
@@ -857,6 +869,10 @@ struct Casters<'a> {
     /// follows, and masked casters then cast unmasked shadows.
     masking: bool,
     draw_list: &'a [DrawBatch],
+    /// The world bounds of the static batches, by merged mesh. A batch
+    /// whose bounds lie outside a cascade's or tile's view casts nothing
+    /// into it and is skipped there; batches without bounds always draw.
+    batch_bounds: &'a HashMap<AssetId, Bounds>,
 }
 
 impl Casters<'_> {
@@ -875,13 +891,32 @@ impl Casters<'_> {
         self.material_bind_groups.get(&batch.mat_id)?.get(&3)
     }
 
-    /// Draws every shadow-casting batch into `pass`, whose group 0 is bound
-    /// to a light view, and returns how many instances it drew. A batch
-    /// whose pipeline failed to build is skipped.
-    fn draw(&self, pass: &mut wgpu::RenderPass<'_>, pipelines: &CasterPipelines) -> u32 {
+    /// Draws every shadow-casting batch that can fall in the light view
+    /// `clip_from_world` into `pass`, whose group 0 is bound to that view,
+    /// and returns how many instances it drew. A batch whose pipeline failed
+    /// to build is skipped.
+    ///
+    /// Only the view's side planes cull: a caster between the light and
+    /// the view's near plane still casts, its depth clamped onto the plane.
+    fn draw(
+        &self,
+        pass: &mut wgpu::RenderPass<'_>,
+        pipelines: &CasterPipelines,
+        clip_from_world: &Mat4,
+    ) -> u32 {
         let mut drawn = 0;
         let mut masked_bound = None;
-        for batch in self.draw_list.iter().filter(|batch| batch.cast_shadows) {
+        let in_view = |batch: &&DrawBatch| {
+            self.batch_bounds
+                .get(&batch.mesh_id)
+                .is_none_or(|bounds| !outside_view(clip_from_world, bounds))
+        };
+        for batch in self
+            .draw_list
+            .iter()
+            .filter(|batch| batch.cast_shadows)
+            .filter(in_view)
+        {
             let Some(mesh) = self.assets.mesh(batch.mesh_id) else {
                 continue;
             };

@@ -690,6 +690,7 @@ impl SceneRenderer {
                 &assets,
                 &material_bind_groups,
                 &draw_list,
+                &draws.batch_bounds,
             );
         }
         let lighting = {
@@ -887,7 +888,11 @@ impl SceneRenderer {
         }
         let source = match &self.hdr_resolved {
             Some(hdr_resolved) => {
-                Self::resolve_scene_texture(&self.scene_texture_msaa, hdr_resolved, &mut encoder);
+                Self::resolve_scene_texture(
+                    &self.scene_texture_msaa,
+                    hdr_resolved,
+                    &mut encoder.scope("Resolve"),
+                );
                 hdr_resolved
             }
             None => &self.scene_texture_msaa,
@@ -4639,6 +4644,39 @@ mod tests {
         assert!(
             shadowed <= 2,
             "the far box shadows the plane as a near one does: {shadowed}, lit {lit}"
+        );
+    }
+
+    #[test]
+    fn a_static_batch_outside_every_cascade_draws_into_none_of_them() {
+        // The box of `sun_over_box`, which merges with the ground into one
+        // static batch, and a box 300 units off to the side of the sun's
+        // beam, in a chunk, and so a batch, of its own: no cascade's view
+        // reaches it, so no cascade draws it.
+        let off_to_the_side = |builder: &mut SceneBuilder,
+                               context: &ReadOnlyAssetContext,
+                               cube: &Ref<Mesh>,
+                               material: &Ref<Material>| {
+            let mut objects = sun_over_box(builder, context, cube, material);
+            objects.push(spawn_box(
+                builder,
+                "distant box",
+                cube,
+                material,
+                vec3(0.0, 1.5, 300.0),
+                Vec3::repeat(1.0),
+            ));
+            objects
+        };
+        let frames = shadow_frames(true, off_to_the_side, [BOX_SHADOW, BOX_LIT], vec![]);
+        let [shadowed, lit] = frames[0].pixels;
+        assert!(
+            shadowed <= 2 && lit > 40,
+            "the near box still shadows the plane: {shadowed}, lit {lit}"
+        );
+        assert_eq!(
+            frames[0].stats.caster_instances, SHADOW_CASCADE_COUNT as u32,
+            "only the ground and near box's batch draws, once per cascade"
         );
     }
 

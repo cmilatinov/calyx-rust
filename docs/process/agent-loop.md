@@ -135,8 +135,13 @@ hand-placed timers. It prints one JSON object (`calyx_engine::profiler::ProfileR
   as the player's or a thumbnail's, has its own `Draw collection` there).
 - `gpu_passes`: per view (`Scene view`, `Game view`, their `... finalize`),
   the timed passes (`Shadows`, `G-buffer`, `SSAO`, `Lighting`, `Forward`,
-  `Skybox`, `Particles`, `Post-process` with one entry per chain pass,
-  `Overlays`), plus `Particle simulation` and `UI`, the egui pass.
+  `Skybox`, `Particles`, `Resolve` above one sample, `Post-process` with
+  one entry per chain pass, `Overlays`), plus `Particle simulation` and
+  `UI`, the egui pass. `Shadows` splits into `Cascade 0` to `Cascade 3` and
+  `Spot atlas`. `G-buffer` and `Forward` split by shader, named after it
+  (`gbuffer` for the PBR meshes, `water_gbuffer`, ...): these are timed
+  inside the pass, which needs `TIMESTAMP_QUERY_INSIDE_PASSES`, and are
+  approximate, since the GPU overlaps a pass's draws.
 - `gpu_timing`: `available` and, when something is missing, the `reason`:
   GPU timing needs the adapter's `TIMESTAMP_QUERY` and
   `TIMESTAMP_QUERY_INSIDE_ENCODERS`, and the `UI` pass also
@@ -165,6 +170,12 @@ writes. Three environment variables set it up:
   the JSON `profiler read` prints, to `<file>` every 600 frames, one per
   line. `CALYX_PROFILE=1` only logs the reports, and the player's log does
   not receive them today, so give a file.
+- `CALYX_WINDOW=<width>x<height>`: the window's inner size in physical
+  pixels, in place of the project's window size in points, so the player
+  renders `1920x1080` whatever the display's scale. Check it from another
+  process with `GetClientRect` on the player's window, called from a thread
+  made per-monitor DPI aware (`SetThreadDpiAwarenessContext(-4)`); a
+  DPI-unaware caller reads a scaled size.
 
 To measure the arena in a playing match, build the release player with
 `cargo build --release -p sandbox --bin game`, then run this from
@@ -177,8 +188,8 @@ $env:PATH = "$(rustc --print target-libdir);$env:PATH"
 $env:CALYX_SCENE = "assets/game/scenes/arena.cxscene"
 $env:CALYX_VSYNC = "0"
 $env:CALYX_PROFILE = "$PWD\logs\player-profile.jsonl"
-$p = Start-Process "$env:CARGO_TARGET_DIR
-elease\game.exe" -WorkingDirectory $PWD -PassThru
+$env:CALYX_WINDOW = "1920x1080"
+$p = Start-Process "$env:CARGO_TARGET_DIR\release\game.exe" -WorkingDirectory $PWD -PassThru
 Start-Sleep 20                      # load the arena; it opens on its main menu
 Add-Type 'using System; using System.Runtime.InteropServices; public class PW { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); }'
 $p.Refresh(); $h = $p.MainWindowHandle
@@ -195,9 +206,36 @@ Start-Sleep 40                      # play; every 600 frames append a report
 Posting the key to the player's window starts the match without moving
 focus, so no keystroke reaches another window. Use the reports written once
 the match runs: the first ones cover loading and the menus, whose blurred
-backdrop costs the GPU more. Quote `frame`, `cpu` and `gpu`, and the scopes
-under `Player update`. The window opens at the project's `[window]` size and
-must stay unminimized.
+backdrop costs the GPU more: they are the reports with a `depth_of_field`
+chain pass. Quote `frame`, `cpu` and `gpu`, and the scopes under `Player
+update`. Without `CALYX_WINDOW` the window opens at the project's
+`[window]` size, in points. It must stay unminimized.
+
+### Per-pass GPU breakdown
+
+To see where the player's GPU time goes, average each entry of
+`gpu_passes` over the match reports of a run, nested as the report nests
+them: `Game` (shadows, G-buffer, SSAO, lighting, forward, skybox,
+particles), `Game finalize` (resolve and the post-processing chain: bloom,
+tone mapping, colour grading, ink outlines, fog of war, FXAA, ...) and `UI`.
+`gpu` is their sum per frame. Other editors and players on the machine
+share the GPU and inflate every pass, so before comparing two builds:
+
+- run each build from a checkout of its own revision, since the player
+  loads shaders from the repository's `assets` at run time;
+- alternate the builds run by run, for three rounds or more, and report
+  the spread of `gpu` over the rounds, not one run;
+- note which other `game.exe` or `calyx_editor.exe` processes ran during
+  each run, and discard runs that overlapped a busy one.
+
+For a denser map than the arena, measure a copy dressed to four times its
+density: every static mesh leaf of the arena (an object with a mesh, no
+children, and no tank, health or sentry component on it or an ancestor)
+copied three more times in place, under the same parent, with new ids.
+Save it beside the arena in `assets/game/scenes/` with a `.meta` of its own
+id, point `CALYX_SCENE` at it, and keep it out of commits. Its copies
+overlap, so it overstates overdraw and vertex work against a map whose
+dressing is spread out.
 
 ## Input injection
 
