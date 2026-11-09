@@ -13,14 +13,18 @@ use crate::core::Ref;
 use crate::math::Transform;
 use crate::render::asset_render_state::AssetRenderState;
 use crate::render::foliage::FoliageCache;
+use crate::render::static_batch::{BatchContext, Bounds, StaticBatches, BATCHED_OBJECT_ID};
 use crate::render::terrain::TerrainCache;
 use crate::render::water::{WaterCache, WaterLight};
 use crate::render::{SceneRendererError, Shader};
 use crate::scene::{GameObject, HierarchyVisibility, Scene, SceneId};
-use legion::{Entity, IntoQuery};
+use legion::{Entity, EntityStore, IntoQuery};
 use nalgebra_glm::Mat4;
 use std::collections::{HashMap, HashSet};
 use uuid::Uuid;
+
+/// The shader whose materials merge into static batches.
+const PBR_SHADER: &str = "shaders/mesh/pbr";
 
 /// One draw-list entry emitted while collecting scene meshes.
 pub(crate) struct DrawListElement {
@@ -46,7 +50,11 @@ pub(crate) struct DrawListElement {
 ///
 /// The collection keeps its caches (resolved asset references, foliage
 /// scatter, terrain and water meshes) from one frame to the next, as a renderer
-/// does.
+/// does, and keeps the scene's static mesh objects merged into
+/// [`StaticBatches`], which it updates from the scene's changes: a frame
+/// walks the batches and the few mesh objects drawn on their own, not every
+/// mesh object of the scene. Object ids stay the same from frame to frame
+/// while the scene does, since the batches' vertices carry them.
 pub struct DrawCollection {
     asset_context: ReadOnlyAssetContext,
     white_texture: Ref<Texture>,
@@ -59,12 +67,20 @@ pub struct DrawCollection {
     material_shaders: HashMap<AssetId, Option<Ref<Shader>>>,
     /// Which objects of the scene drawn this frame are visible.
     visibility: HierarchyVisibility,
+    /// The scene's static mesh objects, merged, and the mesh objects drawn
+    /// on their own.
+    pub(crate) static_batches: StaticBatches,
+    /// The PBR shader, whose materials batch.
+    batched_shader: Option<AssetId>,
     pub(super) foliage: FoliageCache,
     terrain: TerrainCache,
     water: WaterCache,
     /// This frame's draws, sorted by shader, material, mesh and whether they
     /// cast shadows.
     pub(crate) draw_list: Vec<DrawListElement>,
+    /// The world-space box around each static batch's merged mesh drawn
+    /// this frame, by mesh, which each view culls the batch by.
+    pub(crate) batch_bounds: HashMap<AssetId, Bounds>,
     /// The game object of each object id the draws carry, the first at id 1.
     pub(crate) object_ids: Vec<Uuid>,
     pub(crate) object_id_lookup: HashMap<Uuid, u32>,
@@ -82,10 +98,23 @@ impl DrawCollection {
         Ok(Self::with_white_texture(context.clone(), white_texture))
     }
 
+    /// The PBR shader's id, or `None` when it does not load, in which case
+    /// nothing batches.
+    fn pbr_shader(context: &ReadOnlyAssetContext) -> Option<AssetId> {
+        context
+            .registries
+            .assets
+            .read()
+            .load::<Shader>(PBR_SHADER)
+            .ok()
+            .map(|shader| shader.id())
+    }
+
     pub(crate) fn with_white_texture(
         asset_context: ReadOnlyAssetContext,
         white_texture: Ref<Texture>,
     ) -> Self {
+        let batched_shader = Self::pbr_shader(&asset_context);
         Self {
             asset_context,
             white_texture,
@@ -93,10 +122,13 @@ impl DrawCollection {
             resolved: Default::default(),
             material_shaders: Default::default(),
             visibility: Default::default(),
+            static_batches: Default::default(),
+            batched_shader,
             foliage: Default::default(),
             terrain: Default::default(),
             water: Default::default(),
             draw_list: Default::default(),
+            batch_bounds: Default::default(),
             object_ids: Default::default(),
             object_id_lookup: Default::default(),
             assets: Default::default(),
@@ -110,20 +142,66 @@ impl DrawCollection {
 
     /// Collects what `scene` draws now, replacing the previous collection.
     pub fn collect(&mut self, scene: &Scene) {
-        let world = scene.world();
+        if self.scene != Some(scene.id()) {
+            self.object_ids.clear();
+            self.object_id_lookup.clear();
+        }
         self.scene = Some(scene.id());
         self.assets.clear();
         self.draw_list.clear();
-        self.object_ids.clear();
-        self.object_id_lookup.clear();
+        self.batch_bounds.clear();
         self.material_shaders.clear();
         self.visibility.clear();
         self.resolved.begin(&self.asset_context.registries);
         {
+            crate::profile_scope!("Static batches");
+            self.static_batches.update(
+                scene,
+                &mut BatchContext {
+                    registries: &self.asset_context.registries,
+                    render_context: &self.asset_context.render_context,
+                    resolved: &mut self.resolved,
+                    batched_shader: self.batched_shader,
+                    object_ids: &mut self.object_ids,
+                    object_id_lookup: &mut self.object_id_lookup,
+                },
+            );
+            let batches: Vec<_> = self
+                .static_batches
+                .batches()
+                .filter_map(|(key, batch)| {
+                    Some((
+                        batch.mesh.clone()?,
+                        batch.material.clone(),
+                        key.cast_shadows,
+                        batch.bounds?,
+                    ))
+                })
+                .collect();
+            for (mesh, material, cast_shadows, bounds) in batches {
+                self.batch_bounds.insert(mesh.id(), bounds);
+                self.insert(
+                    &mesh,
+                    &material,
+                    BATCHED_OBJECT_ID,
+                    None,
+                    Mat4::identity().into(),
+                    cast_shadows,
+                );
+            }
+        }
+        {
             crate::profile_scope!("Mesh components");
-            let mut query = <(Entity, &ComponentMesh)>::query();
-            for (entity, c_mesh) in query.iter(world) {
-                let Some(game_object) = scene.game_object_from_entity(*entity) else {
+            let world = scene.world();
+            let individual = self.static_batches.individual().to_vec();
+            for entity in individual {
+                let Some(game_object) = scene.game_object_from_entity(entity) else {
+                    continue;
+                };
+                let Ok(entry) = world.entry_ref(entity) else {
+                    continue;
+                };
+                let Ok(c_mesh) = entry.get_component::<ComponentMesh>() else {
                     continue;
                 };
                 if !self.visibility.is_visible(scene, game_object)
@@ -139,13 +217,15 @@ impl DrawCollection {
                     continue;
                 };
                 let transform = scene.world_transform(game_object);
+                let cast_shadows = c_mesh.cast_shadows;
+                let object_id = self.object_id(scene.uuid(game_object));
                 self.insert(
                     &mesh_ref,
                     &mat_ref,
-                    scene.uuid(game_object),
+                    object_id,
                     None,
                     transform.matrix().into(),
-                    c_mesh.cast_shadows,
+                    cast_shadows,
                 );
             }
         }
@@ -194,10 +274,12 @@ impl DrawCollection {
         self.scene = None;
         self.assets.clear();
         self.draw_list.clear();
+        self.batch_bounds.clear();
         self.object_ids.clear();
         self.object_id_lookup.clear();
         self.material_shaders.clear();
         self.resolved = ResolvedRefs::default();
+        self.static_batches.clear();
         self.foliage = FoliageCache::default();
         self.terrain = TerrainCache::default();
         self.water = WaterCache::default();
@@ -241,13 +323,14 @@ impl DrawCollection {
                 })
                 .collect();
             let world = scene.world_transform(owner).matrix();
+            let object_id = self.object_id(uuid);
             for instance in instances.iter() {
                 let placement = world * instance.transform;
                 for (mesh, material, transform, cast_shadows) in &parts_by_prefab[instance.prefab] {
                     self.insert(
                         mesh,
                         material,
-                        uuid,
+                        object_id,
                         None,
                         (placement * transform).into(),
                         foliage.cast_shadows && *cast_shadows,
@@ -293,10 +376,11 @@ impl DrawCollection {
                 continue;
             };
             let transform = scene.world_transform(owner).matrix().into();
+            let object_id = self.object_id(uuid);
             self.insert(
                 &mesh,
                 &material,
-                uuid,
+                object_id,
                 None,
                 transform,
                 terrain.cast_shadows,
@@ -330,13 +414,21 @@ impl DrawCollection {
                 continue;
             };
             let transform: [[f32; 4]; 4] = scene.world_transform(owner).matrix().into();
-            self.insert(&draw.mesh, &draw.material, uuid, None, transform, false);
+            let object_id = self.object_id(uuid);
+            self.insert(
+                &draw.mesh,
+                &draw.material,
+                object_id,
+                None,
+                transform,
+                false,
+            );
             let registries = &self.asset_context.registries;
             if let (Some(banks), Some(material)) = (
                 draw.banks,
                 self.resolved.resolve(registries, &water.bank_material),
             ) {
-                self.insert(&banks, &material, uuid, None, transform, true);
+                self.insert(&banks, &material, object_id, None, transform, true);
             }
         }
         self.water.end_frame();
@@ -404,10 +496,11 @@ impl DrawCollection {
                     mesh.bone_transforms.extend_from_slice(&rest_palette);
                 }
             }
+            let object_id = self.object_id(scene.uuid(game_object));
             self.insert(
                 &mesh_ref,
                 &mat_ref,
-                scene.uuid(game_object),
+                object_id,
                 Some(bone_transform_index as i32),
                 transform.matrix().into(),
                 c_skinned_mesh.cast_shadows,
@@ -415,11 +508,21 @@ impl DrawCollection {
         }
     }
 
+    /// The object id of the game object `game_object_id`, which it keeps
+    /// while the collection draws the same scene.
+    fn object_id(&mut self, game_object_id: Uuid) -> u32 {
+        register_object_id(
+            &mut self.object_id_lookup,
+            &mut self.object_ids,
+            game_object_id,
+        )
+    }
+
     fn insert(
         &mut self,
         mesh_ref: &Ref<Mesh>,
         mat_ref: &Ref<Material>,
-        game_object_id: Uuid,
+        object_id: u32,
         bone_transform_index: Option<i32>,
         transform: [[f32; 4]; 4],
         cast_shadows: bool,
@@ -437,11 +540,6 @@ impl DrawCollection {
         else {
             return;
         };
-        let object_id = register_object_id(
-            &mut self.object_id_lookup,
-            &mut self.object_ids,
-            game_object_id,
-        );
         self.draw_list.push(DrawListElement {
             shader_id: shader_ref.id(),
             mat_id: mat_ref.id(),

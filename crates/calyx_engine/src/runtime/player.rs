@@ -272,6 +272,8 @@ fn renderer_options() -> SceneRendererOptions {
         // editor's game view.
         shadows: true,
         profile_name: "Game",
+        // Nothing picks objects in the player.
+        object_ids: false,
         ..Default::default()
     }
 }
@@ -387,6 +389,11 @@ mod tests {
         let options = renderer_options();
         assert!(!options.grid);
         assert!(options.gizmos.is_none());
+    }
+
+    #[test]
+    fn player_draws_no_object_ids() {
+        assert!(!renderer_options().object_ids);
     }
 
     #[test]
