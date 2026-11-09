@@ -3940,6 +3940,113 @@ mod tests {
     }
 
     #[test]
+    fn a_ground_material_blends_into_the_gbuffer_and_takes_its_marks() {
+        const SIZE: (u32, u32) = (32, 32);
+        let assets = TestAssets::engine();
+        let heightmap_path = assets.engine_root().join("ground_test.png");
+        image::GrayImage::new(9, 9).save(&heightmap_path).unwrap();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let render_context = context.render_context.clone();
+        let heightmap = context
+            .registries
+            .assets
+            .read()
+            .asset_id_from_path(&heightmap_path)
+            .unwrap();
+        let material = {
+            let registry = context.registries.assets.read();
+            let shader = registry
+                .load::<Shader>("shaders/mesh/ground")
+                .expect("missing ground shader");
+            registry
+                .create_or_update(
+                    "test/ground_material".into(),
+                    Material::from_shader(&context, shader),
+                )
+                .unwrap()
+        };
+        let color = |c: [f32; 4]| ShaderVariableValue::Texture2D(MaterialTexture::Color(c));
+        {
+            let mut material = material.write();
+            // Masks that leave the whole ground to the base grass layer, and
+            // flat detail, so the colour is the grass's exactly.
+            for (variable, value) in [
+                ("mask_a_texture", color([0.0; 4])),
+                ("mask_b_texture", color([0.0; 4])),
+                ("detail_a_texture", color([0.5; 4])),
+                ("detail_b_texture", color([0.5; 4])),
+                (
+                    "grass_color",
+                    ShaderVariableValue::Color([0.2, 0.4, 0.1, 0.3]),
+                ),
+                ("detail", ShaderVariableValue::Vec4([4.0, 1.5, 20.0, 0.0])),
+                ("blend", ShaderVariableValue::Vec4([0.5, 0.06, 0.5, 1.0])),
+                ("mask", ShaderVariableValue::Vec4([4.0, 4.0, 0.0, 0.0])),
+                ("roughness", ShaderVariableValue::Float(1.0)),
+            ] {
+                assert!(material.set_variable(variable, value), "{variable}");
+            }
+        }
+        let mut builder = SceneBuilder::new(context.registries.clone());
+        let owner = builder.spawn("ground");
+        builder.add_component(
+            owner,
+            ComponentTerrain {
+                heightmap: AssetRef::from_id(heightmap),
+                material: AssetRef::from_id(material.id()),
+                size: glm::vec2(4.0, 4.0),
+                cast_shadows: false,
+                ..Default::default()
+            },
+        );
+        // Turned so its upper side faces the camera, which looks along +Z.
+        builder.set_transform(
+            owner,
+            Transform::from_components(
+                Vec3::zeros(),
+                UnitQuaternion::from_axis_angle(&Vec3::x_axis(), -std::f32::consts::FRAC_PI_2),
+                Vec3::repeat(1.0),
+            )
+            .matrix(),
+        );
+        let scene = builder.finish();
+        let mut renderer = renderer(&context, 1, SIZE);
+        let view = front_camera(1.0, 5.0);
+        let center = (SIZE.0 / 2, SIZE.1 / 2);
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        assert_eq!(
+            renderer.gbuffer_drawn_instances(),
+            1,
+            "the ground is deferred"
+        );
+        let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        // Linear 0.2, 0.4, 0.1, stored as sRGB.
+        assert_bytes_near(&albedo[..3], &[124, 170, 89], "the grass colour");
+        let surface = read_texel(&render_context, &gbuffer.material, center);
+        assert_bytes_near(
+            &surface,
+            &[0, 255, 255, 0],
+            "metallic, roughness, occlusion, style",
+        );
+
+        // A marks texture over the ground halves its colour.
+        {
+            let mut material = material.write();
+            assert!(material.set_variable("marks_texture", color([0.5, 0.5, 0.5, 1.0])));
+            assert!(material.set_variable(
+                "marks_rect",
+                ShaderVariableValue::Vec4([-10.0, -10.0, 20.0, 20.0])
+            ));
+        }
+        renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+        let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_bytes_near(&albedo[..3], &[89, 124, 63], "the marked grass colour");
+    }
+
+    #[test]
     fn water_draws_into_the_gbuffer_through_the_mesh_batches_and_casts_no_shadow() {
         const SIZE: (u32, u32) = (32, 32);
         let assets = TestAssets::engine();

@@ -1,5 +1,6 @@
 //! Rebuild the arena kit and explicit gameplay placements, preserving actor ids.
-//! Run from the repository root: cargo run -p sandbox --example remake_arena.
+//! Run from the repository root, in release (a debug build takes minutes to
+//! paint the ground's masks): cargo run --release -p sandbox --example remake_arena.
 //!
 //! `-- --palette sunbaked|moonlit --out <scene>` writes the same arena with
 //! that palette's kit, water and look-dev light rig to another scene, to
@@ -7,16 +8,16 @@
 #![recursion_limit = "256"]
 
 mod farmland;
+mod ground;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
     ColliderShape, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
     ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentID,
-    ComponentMesh, ComponentRigidBody, ComponentSkyLight, ComponentTonemap, ComponentTransform,
-    ComponentVignette, FxaaQuality, TonemappingPreset,
+    ComponentRigidBody, ComponentSkyLight, ComponentTonemap, ComponentTransform, ComponentVignette,
+    FxaaQuality, TonemappingPreset,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
@@ -749,39 +750,14 @@ fn main() {
         names: Default::default(),
     };
 
-    // One uninterrupted collision floor keeps one-metre tile seams from
-    // catching tracks. Every visible tile has its top at the same y = 0.
+    // One uninterrupted collision floor at the ground's level, y = 0: the
+    // ground is drawn by one terrain (`ground.rs`), which tanks never touch.
     author.drive_surface(
         arena,
         "Arena Floor",
         vec3(0.0, -0.5, 0.0),
         vec3(60.0, 1.0, 64.0),
         UnitQuaternion::identity(),
-    );
-    // The foundation lies far under the ground, a backstop the camera
-    // never sees: the ground tiles below cover the whole apron around the
-    // pen, carved where the creek runs beneath them, so it must clear the
-    // water. Collision remains confined to the playfield above.
-    let foundation = author.object("Arena Foundation", arena, vec3(0.0, -1.8, 0.0));
-    author.scene.set_transform(
-        foundation,
-        &Transform::from_components(
-            vec3(0.0, -1.8, 0.0),
-            Default::default(),
-            vec3(200.0, 1.0, 200.0),
-        )
-        .matrix(),
-    );
-    author.scene.add_component(
-        foundation,
-        ComponentMesh {
-            mesh: AssetRef::from_id("4d2d87eb-60b4-4dcc-b3d4-67bc444396c9".parse().unwrap()),
-            material: AssetRef::from_id(asset_id(&author.assets.join(format!(
-                "generated/materials/{}/ground.cxmat",
-                author.palette.folder()
-            )))),
-            ..Default::default()
-        },
     );
     let creek = farmland::Creek::new(&author.assets, palette);
     let pen_kind = |x: i32, z: i32| {
@@ -818,8 +794,10 @@ fn main() {
             }
         }))
     };
-    // Uniform, untextured tile surfaces can share one scaled instance per
-    // rectangle. Keep paving joints and road dashes on individual metre cells.
+    // The spawn's paving and the road stay tiles, raised 3 cm off the ground
+    // so neither lies coplanar with it. A plain road shares one scaled
+    // instance per rectangle; paving joints and road dashes keep one tile
+    // per metre cell.
     const APRON: i32 = 100;
     let side = (2 * APRON) as usize;
     let cell = |x: i32, z: i32| (z + APRON) as usize * side + (x + APRON) as usize;
@@ -832,6 +810,10 @@ fn main() {
             let Some(kind) = kinds[cell(x, z)] else {
                 continue;
             };
+            // The ground terrain draws every other kind.
+            if !matches!(kind, "paving" | "road" | "road_marked") {
+                continue;
+            }
             if covered[cell(x, z)] {
                 continue;
             }
@@ -860,7 +842,7 @@ fn main() {
             }
             let position = vec3(
                 x as f32 + width as f32 * 0.5,
-                -0.1,
+                -0.07,
                 z as f32 + depth as f32 * 0.5,
             );
             let tile = author.kit(
@@ -880,10 +862,7 @@ fn main() {
             );
         }
     }
-    assert!(
-        (-30..30).all(|x| (-32..32).all(|z| covered[cell(x, z)] || creek.carves(x, z))),
-        "the pen's ground has a hole outside the creek"
-    );
+    author.ground(&creek, &ground_kind);
 
     for (name, x, z, yaw) in [
         ("SW", -29.0, -31.0, 0.0),

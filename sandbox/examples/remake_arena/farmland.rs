@@ -9,11 +9,10 @@
 
 use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
-    ComponentCollider, ComponentMesh, ComponentWater, WaterObstacle, WaterPoint, WaterShading,
+    ComponentCollider, ComponentWater, WaterObstacle, WaterPoint, WaterShading,
 };
-use calyx_engine::math::{Transform, WaterSection};
+use calyx_engine::math::WaterSection;
 use calyx_engine::scene::GameObject;
-use calyx_engine::utils::TypeUuid;
 use egui::Color32;
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
@@ -25,22 +24,17 @@ use super::{asset_id, Author};
 
 /// The water's rest surface, below the ground: the creek is sunken.
 pub const WATER_Y: f32 = -0.6;
-/// The banks' lip, just above the ground tiles' tops at y = 0 so the two
-/// never fight.
+/// The banks' lip, just above the ground at y = 0 so the two never fight.
 const BANK_TOP: f32 = 0.02;
 const BANK_DEPTH: f32 = 0.6;
 const BANK_RUN: f32 = 0.4;
 const BANK_LIP: f32 = 0.5;
 /// How far past the shore the trench reaches: the bank wall meets its lip
-/// at `BANK_RUN * height / (depth + height)` past the shore, and ground
-/// tiles stay this far clear so none pokes over the wall.
+/// at `BANK_RUN * height / (depth + height)` past the shore, and no
+/// one-metre ground cell this close to the shore holds paving or road.
 const TRENCH: f32 = 0.45;
 /// Half a one-metre ground cell's diagonal.
 const HALF_DIAGONAL: f32 = 0.71;
-/// Heights of the ground overlays above the tiles' tops: the verge along
-/// the creek and, over it, the crop rows.
-const VERGE_TOP: f32 = 0.006;
-const CROP_TOP: f32 = 0.012;
 /// How far past the shore a creek blocker reaches: tanks stop with their
 /// hull over the bank's lip, short of the water.
 const BLOCKER_MARGIN: f32 = 0.5;
@@ -268,6 +262,15 @@ fn along(sections: &[WaterSection], s: f32, across: f32) -> (Vec2, f32) {
 
 /// The ground kind of the one-metre cell at `x`, `z` in the farmland, or
 /// `None` where the farmland leaves the cell as it was.
+pub fn field_rows_along_x(x: i32, z: i32) -> Option<bool> {
+    FIELDS
+        .iter()
+        .find(|field| field.rect.contains(x, z))
+        .map(|field| field.rows_along_x)
+}
+
+/// The ground kind of the one-metre cell at `x`, `z` in the farmland, or
+/// `None` where the farmland leaves the cell as it was.
 pub fn farm_ground(x: i32, z: i32) -> Option<&'static str> {
     let outside = !(-30..30).contains(&x) || !(-32..32).contains(&z);
     if FIELDS.iter().any(|field| field.rect.contains(x, z)) {
@@ -288,9 +291,10 @@ pub fn farm_ground(x: i32, z: i32) -> Option<&'static str> {
 }
 
 impl Author {
-    /// The farmland's pieces above the ground tiles: the creek and its
-    /// blockers and bridge, the farmhouse and water tower, hedgerows, crop
-    /// rows and the outside's fences and trees.
+    /// The farmland's pieces above the ground: the creek and its blockers
+    /// and bridge, the farmhouse and water tower, hedgerows and the
+    /// outside's fences and trees. The ground draws its fields, crop rows
+    /// and the mud along the banks.
     pub fn farmland(&mut self, creek: &Creek) {
         self.creek(creek);
         self.bridge(creek);
@@ -312,7 +316,6 @@ impl Author {
                 0.0,
             );
         }
-        self.crop_rows(creek);
         self.outside(creek);
     }
 
@@ -436,34 +439,6 @@ impl Author {
                 (i * 53) as f32,
             );
         }
-        // Grass along both banks, from under the lip out past the ground
-        // cells the trench took, so no gap shows beside the lip.
-        let mut verge = 0;
-        for pair in creek.sections.chunks(4) {
-            let (a, b) = (pair[0], pair[pair.len() - 1]);
-            if (b.center - a.center).norm() < 0.1 {
-                continue;
-            }
-            for side in [-1.0, 1.0] {
-                let inner = 0.3;
-                let outer = TRENCH + HALF_DIAGONAL * 2.0 + 0.2;
-                let mid = |section: WaterSection| {
-                    section.center
-                        + section.normal * side * (section.half_width + (inner + outer) * 0.5)
-                };
-                let (pa, pb) = (mid(a), mid(b));
-                let along = pb - pa;
-                self.ground_strip(
-                    "grass",
-                    &format!("Arena Ground Creek Verge {verge}"),
-                    (pa + pb) * 0.5,
-                    vec2(outer - inner, along.norm() + 0.9),
-                    along.x.atan2(along.y).to_degrees(),
-                    VERGE_TOP,
-                );
-                verge += 1;
-            }
-        }
     }
 
     /// The bridge on the west sand lane, and its rails, which stop tanks
@@ -533,57 +508,6 @@ impl Author {
         );
     }
 
-    /// Crop rows: stripes of green half a metre wide, a metre apart, along
-    /// each field.
-    fn crop_rows(&mut self, creek: &Creek) {
-        let mut count = 0;
-        for field in &FIELDS {
-            let r = field.rect;
-            let (across0, across1, along0, along1) = if field.rows_along_x {
-                (r.z0, r.z1, r.x0 as f32, r.x1 as f32)
-            } else {
-                (r.x0, r.x1, r.z0 as f32, r.z1 as f32)
-            };
-            for row in across0..across1 {
-                let across = row as f32 + 0.5;
-                let (center, size, yaw) = if field.rows_along_x {
-                    (
-                        vec2((along0 + along1) * 0.5, across),
-                        vec2(0.5, along1 - along0 - 0.6),
-                        90.0,
-                    )
-                } else {
-                    (
-                        vec2(across, (along0 + along1) * 0.5),
-                        vec2(0.5, along1 - along0 - 0.6),
-                        0.0,
-                    )
-                };
-                let half = vec2(0.0, size.y * 0.5);
-                let half = if field.rows_along_x {
-                    vec2(half.y, 0.0)
-                } else {
-                    half
-                };
-                assert!(
-                    (0..=10).all(|i| {
-                        creek.beyond(center - half + half * (i as f32 * 0.2)) > TRENCH + 1.0
-                    }),
-                    "crop row {count} runs into the creek"
-                );
-                self.ground_strip(
-                    "crop",
-                    &format!("Arena Ground Crop Row {count}"),
-                    center,
-                    size,
-                    yaw,
-                    CROP_TOP,
-                );
-                count += 1;
-            }
-        }
-    }
-
     /// Outside the walls: fences along the fields, and trees in copses
     /// along the creek and at the fields' corners.
     fn outside(&mut self, creek: &Creek) {
@@ -645,57 +569,6 @@ impl Author {
             .write_component::<ComponentCollider, _>(object, |collider| {
                 collider.groups = TANK_BLOCKER;
             });
-    }
-
-    /// A ground tile of `kind`, `size` across (x) and along (z), turned
-    /// `yaw` degrees, with its top `top` above the tiles'.
-    fn ground_strip(
-        &mut self,
-        kind: &str,
-        name: &str,
-        center: Vec2,
-        size: Vec2,
-        yaw: f32,
-        top: f32,
-    ) {
-        self.flat(
-            &format!("ground_{kind}"),
-            name,
-            vec3(center.x, top - 0.1, center.y),
-            yaw,
-            vec3(size.x, 1.0, size.y),
-        );
-    }
-
-    /// One plain object drawing the one-part `model`'s mesh in its
-    /// material, at `position` turned `yaw` degrees and scaled by `scale`:
-    /// the ground's overlays are many, so each is one object, not a prefab
-    /// instance and its part.
-    fn flat(&mut self, model: &str, name: &str, position: Vec3, yaw: f32, scale: Vec3) {
-        let prefab = super::read(&self.assets.join(format!(
-            "generated/prefabs/{}/{model}.cxprefab",
-            self.palette.folder()
-        )));
-        let mesh_type = ComponentMesh::type_uuid().to_string();
-        let mesh = prefab["data"]["components"]
-            .as_object()
-            .unwrap()
-            .values()
-            .find_map(|components| components.get(&mesh_type))
-            .unwrap_or_else(|| panic!("{model} has no mesh"))
-            .clone();
-        let object = self.object(name, self.arena, position);
-        self.scene.set_transform(
-            object,
-            &Transform::from_components(
-                position,
-                UnitQuaternion::from_euler_angles(0.0, yaw.to_radians(), 0.0),
-                scale,
-            )
-            .matrix(),
-        );
-        self.scene
-            .add_component::<ComponentMesh>(object, serde_json::from_value(mesh).unwrap());
     }
 
     fn scale(&mut self, object: GameObject, scale: f32) {

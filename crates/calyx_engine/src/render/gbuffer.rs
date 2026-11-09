@@ -161,20 +161,22 @@ struct GeometryShader {
     material_shader: AssetId,
 }
 
-/// Draws the scene's PBR meshes and water into the G-buffer and shows a
-/// target in the debug view. It owns the targets, created on the first
-/// frame.
+/// Draws the scene's PBR meshes, water and blended ground into the
+/// G-buffer and shows a target in the debug view. It owns the targets,
+/// created on the first frame.
 pub(crate) struct GBufferRenderer {
     /// The PBR surfaces, `shaders/mesh/gbuffer.wgsl` over the PBR shader's
     /// draws, then the water, `shaders/mesh/water_gbuffer.wgsl` over the
-    /// water shader's. Only these draws enter the geometry pass.
-    geometry: [GeometryShader; 2],
+    /// water shader's, then the blended ground,
+    /// `shaders/mesh/ground_gbuffer.wgsl` over the ground shader's. Only
+    /// these draws enter the geometry pass.
+    geometry: [GeometryShader; 3],
     /// `shaders/deferred/gbuffer_view.wgsl`, the debug view.
     view_shader: Ref<Shader>,
     targets: Option<GBufferTargets>,
     /// The camera's bind group for each of [`Self::geometry`]'s shaders,
     /// built for its own group 0.
-    camera_bind_groups: [CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>; 2],
+    camera_bind_groups: [CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>; 3],
     view_uniform_buffer: wgpu::Buffer,
     view_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, [wgpu::TextureView; 4])>,
     /// Instances the last [`Self::render`] drew.
@@ -194,6 +196,7 @@ impl GBufferRenderer {
             geometry: [
                 geometry("shaders/mesh/gbuffer", "shaders/mesh/pbr")?,
                 geometry("shaders/mesh/water_gbuffer", WATER_SHADER)?,
+                geometry("shaders/mesh/ground_gbuffer", "shaders/mesh/ground")?,
             ],
             view_shader: SceneRendererError::load::<Shader>(
                 context,
@@ -222,9 +225,9 @@ impl GBufferRenderer {
         self.geometry[0].material_shader
     }
 
-    /// The material shaders whose draws the geometry pass draws: the PBR and
-    /// the water shader. The forward pass draws the others.
-    pub(crate) fn deferred_shaders(&self) -> [AssetId; 2] {
+    /// The material shaders whose draws the geometry pass draws: the PBR,
+    /// the water and the ground shader. The forward pass draws the others.
+    pub(crate) fn deferred_shaders(&self) -> [AssetId; 3] {
         self.geometry
             .each_ref()
             .map(|geometry| geometry.material_shader)
@@ -246,8 +249,8 @@ impl GBufferRenderer {
         }
     }
 
-    /// Draws every batch of `draw_list` that uses the PBR or the water shader
-    /// into the G-buffer, first in the frame, and draws the depth itself: it clears
+    /// Draws every batch of `draw_list` that uses the PBR, water or ground
+    /// shader into the G-buffer, first in the frame, and draws the depth itself: it clears
     /// it and tests `Less` in the draw order, so of fragments that tie in
     /// depth the first drawn is kept, as the forward-only draws that follow
     /// keep it. The depth is `scene_depth` at one sample and the targets'
