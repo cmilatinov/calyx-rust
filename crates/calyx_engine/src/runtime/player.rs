@@ -14,6 +14,7 @@ use crate::ui::{UiInput, UiPoint};
 use eframe::{Frame, NativeOptions};
 use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
+use egui_wgpu::wgpu;
 use std::path::PathBuf;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
@@ -27,6 +28,9 @@ struct GameApp {
     renderer: SceneRenderer,
     hud: SceneHud,
     frame_counter: FrameCounter,
+    /// The frame after which the player closes itself, from
+    /// [`EXIT_AFTER_FRAMES_ENV`].
+    exit_after_frames: Option<u64>,
     #[allow(unused)]
     log: Log<DefaultLogger>,
 }
@@ -37,8 +41,8 @@ impl GameApp {
         settings: &ProjectRuntimeSettings,
         plugin_main: extern "C" fn(&mut TypeRegistry),
     ) -> Result<Self, Box<DynError>> {
-        let startup_scene = settings
-            .startup_scene_path()
+        let startup_scene = startup_scene_override()
+            .or_else(|| settings.startup_scene_path())
             .ok_or("the project does not configure a startup scene")?;
         if let Some(render_state) = &cc.wgpu_render_state {
             profiler::gpu::install(&render_state.device, &render_state.queue);
@@ -79,6 +83,9 @@ impl GameApp {
             )?,
             hud: SceneHud::default(),
             frame_counter: FrameCounter::default(),
+            exit_after_frames: std::env::var(EXIT_AFTER_FRAMES_ENV)
+                .ok()
+                .and_then(|frames| frames.trim().parse().ok()),
             log: Log::new(
                 DefaultLogger::builder()
                     .app_vendor("Calyx")
@@ -112,6 +119,16 @@ impl eframe::App for GameApp {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         profiler::new_frame();
         log_profile();
+        if self
+            .exit_after_frames
+            .is_some_and(|frames| profiler::current_frame() >= frames)
+        {
+            log::info!(
+                "Closing the player after {} frames",
+                profiler::current_frame()
+            );
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
         crate::profile_scope!("Player update");
         profiler::time_ui_pass(ctx);
         self.game.update();
@@ -207,6 +224,37 @@ fn log_profile() {
     }
 }
 
+/// Environment variable naming a scene file the player starts in place of
+/// the project's startup scene, as a measurement run does.
+const STARTUP_SCENE_ENV: &str = "CALYX_STARTUP_SCENE";
+/// Environment variable that, set to `off`, presents frames without waiting
+/// for vertical sync, so a measurement sees the frame time rather than the
+/// display's refresh interval.
+const VSYNC_ENV: &str = "CALYX_VSYNC";
+/// Environment variable giving a frame count after which the player closes
+/// itself, so a measurement run ends on its own and its log is complete.
+const EXIT_AFTER_FRAMES_ENV: &str = "CALYX_EXIT_AFTER_FRAMES";
+/// Environment variable giving the window's size as `WIDTHxHEIGHT` in
+/// logical points, in place of the project's window size.
+const WINDOW_SIZE_ENV: &str = "CALYX_WINDOW_SIZE";
+
+fn startup_scene_override() -> Option<PathBuf> {
+    std::env::var_os(STARTUP_SCENE_ENV).map(PathBuf::from)
+}
+
+fn vsync_off(value: Option<&str>) -> bool {
+    value.is_some_and(|value| value.eq_ignore_ascii_case("off") || value == "0")
+}
+
+fn parse_window_size(value: &str) -> Option<WindowSettings> {
+    let (width, height) = value.split_once(['x', 'X'])?;
+    let window = WindowSettings {
+        width: width.trim().parse().ok()?,
+        height: height.trim().parse().ok()?,
+    };
+    window.non_zero_size().map(|_| window)
+}
+
 /// How the player renders the scene: like the editor's Game panel, without
 /// the editor grid.
 fn renderer_options() -> SceneRendererOptions {
@@ -216,6 +264,8 @@ fn renderer_options() -> SceneRendererOptions {
         // editor's game view.
         shadows: true,
         profile_name: "Game",
+        // Nothing picks objects in the player.
+        object_ids: false,
         ..Default::default()
     }
 }
@@ -224,6 +274,14 @@ fn renderer_options() -> SceneRendererOptions {
 const PLAYER_APP_ID: &str = "calyx-player";
 
 fn native_options(window: &WindowSettings) -> NativeOptions {
+    let window_override = std::env::var(WINDOW_SIZE_ENV)
+        .ok()
+        .and_then(|value| parse_window_size(&value));
+    let window = window_override.as_ref().unwrap_or(window);
+    let mut wgpu_options = wgpu_configuration();
+    if vsync_off(std::env::var(VSYNC_ENV).ok().as_deref()) {
+        wgpu_options.present_mode = wgpu::PresentMode::AutoNoVsync;
+    }
     NativeOptions {
         viewport: egui::ViewportBuilder {
             // eframe restores a window saved under the app id before applying
@@ -238,7 +296,7 @@ fn native_options(window: &WindowSettings) -> NativeOptions {
         // never saves a size that a later run would restore over it.
         persist_window: false,
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options: wgpu_configuration(),
+        wgpu_options,
         event_loop_builder: Some(Box::new(|builder| {
             builder.with_any_thread(true);
         })),
@@ -266,7 +324,9 @@ pub fn run_player(
 
 #[cfg(test)]
 mod tests {
-    use super::{native_options, renderer_options, ProjectRuntimeSettings};
+    use super::{
+        native_options, parse_window_size, renderer_options, vsync_off, ProjectRuntimeSettings,
+    };
     use std::path::PathBuf;
 
     fn project_directory() -> PathBuf {
@@ -278,6 +338,24 @@ mod tests {
         let options = renderer_options();
         assert!(!options.grid);
         assert!(options.gizmos.is_none());
+    }
+
+    #[test]
+    fn measurement_overrides_parse_vsync_and_window_size() {
+        assert!(vsync_off(Some("off")));
+        assert!(vsync_off(Some("OFF")));
+        assert!(vsync_off(Some("0")));
+        assert!(!vsync_off(Some("on")));
+        assert!(!vsync_off(None));
+        let window = parse_window_size("1536x864").unwrap();
+        assert_eq!((window.width, window.height), (1536, 864));
+        assert!(parse_window_size("0x864").is_none());
+        assert!(parse_window_size("wide").is_none());
+    }
+
+    #[test]
+    fn player_draws_no_object_ids() {
+        assert!(!renderer_options().object_ids);
     }
 
     #[test]

@@ -152,6 +152,30 @@ rebuilds everything). The standalone player profiles itself with the
 `CALYX_PROFILE` environment variable set, logging the same JSON every 600
 frames.
 
+### Measuring the standalone player
+
+The player has no remote control, so a measurement run is set up through
+environment variables and read back from its log:
+
+- `CALYX_STARTUP_SCENE=<path>` starts that scene file instead of the project's
+  `startup_scene`; it must lie under the project's `assets` directory.
+- `CALYX_VSYNC=off` presents without waiting for vertical sync, so the frame
+  time is the frame's, not the display's refresh interval.
+- `CALYX_WINDOW_SIZE=WxH` opens the window at that size in logical points
+  (`1536x864` is 1920x1080 at 125% scaling).
+- `CALYX_EXIT_AFTER_FRAMES=N` closes the player after N frames, so the run
+  ends by itself with its log complete.
+- `CALYX_PROFILE=1` logs a profile every 600 frames. Set `CALYX_LOG=info`
+  too: a `RUST_LOG` in the environment that turns `calyx_engine` off leaves
+  the log empty.
+
+Run the release `game.exe` from the repository root, where the engine's
+assets are, with the toolchain's `std-*.dll` next to it or on `PATH` (the
+workspace links with `-Cprefer-dynamic`); its log lands in `logs/`. Skip the
+first report as warm-up. To measure a match rather than the menu, start from
+a copy of the scene whose Game State is in the lobby with `players_ready` and
+`start_match_requested` set, so the first update starts the match.
+
 ## Input injection
 
 Synthetic input is injected through eframe's `raw_input_hook`, so it flows

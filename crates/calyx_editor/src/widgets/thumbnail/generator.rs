@@ -284,6 +284,8 @@ impl ThumbnailGenerator {
                             // Thumbnails show the lit image.
                             gbuffer_view: None,
                             profile_name: "Thumbnail",
+                            // Nothing picks objects in a thumbnail.
+                            object_ids: false,
                         },
                         (size_px, size_px),
                     )
