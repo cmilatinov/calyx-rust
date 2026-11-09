@@ -27,6 +27,7 @@ use calyx_engine::component::{
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::Uuid;
+use legion::IntoQuery;
 use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 use std::collections::HashMap;
 
@@ -240,6 +241,56 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
     })
 }
 
+/// What vision reads from the scene that holds still through a frame: the
+/// arena's geometry and the tanks that may lend a side their sight.
+///
+/// Reading it walks the whole arena, so the Tank HUD reads it once a frame,
+/// when it updates, and everything that asks what the local player's side
+/// sees until its next update shares it: the HUD and its minimap, world
+/// health bars and damage numbers, fog of war, and the fog [`refresh`] of a
+/// moving tank, a round in flight or a sentry's shot. Each of them still
+/// reads where the tanks are and whether they live when it asks, from the
+/// tanks listed here, since tanks move and die between the HUD's update and
+/// the next.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct VisionFrame {
+    /// The arena's floor, cover and sight blockers, when there is an arena.
+    pub arena: Option<ArenaGeometry>,
+    /// Every tank combatant, in scene order.
+    tanks: Vec<GameObject>,
+}
+
+impl VisionFrame {
+    /// Reads the scene's arena and tanks now.
+    pub fn read(scene: &Scene) -> Self {
+        Self {
+            arena: arena_geometry(scene),
+            tanks: scene
+                .objects()
+                .filter(|&object| is_tank_combatant(scene, object))
+                .collect(),
+        }
+    }
+
+    /// The blocks of the arena that stop sight.
+    pub fn sight_blockers(&self) -> Vec<GroundRect> {
+        self.arena
+            .as_ref()
+            .map(|arena| arena.sight_blockers.clone())
+            .unwrap_or_default()
+    }
+
+    /// What `player`'s side sees now, over the arena read.
+    pub fn vision(&self, scene: &Scene, player: GameObject) -> TeamVision {
+        TeamVision::of_tanks(
+            scene,
+            player,
+            self.tanks.iter().copied(),
+            self.sight_blockers(),
+        )
+    }
+}
+
 /// How long fog takes to close over or clear away from what a side stops or
 /// starts seeing, in seconds: fog over the ground, and enemy units fading
 /// from the HUD and minimap before fog hides them.
@@ -276,8 +327,18 @@ impl TeamVision {
     /// The vision of `player`'s side: every live tank on `player`'s team,
     /// `player` included, sees over `cover`.
     pub fn of_player(scene: &Scene, player: GameObject, cover: Vec<GroundRect>) -> Self {
-        let viewers = scene
-            .objects()
+        Self::of_tanks(scene, player, scene.objects(), cover)
+    }
+
+    /// [`Self::of_player`], looking for the side's tanks only among
+    /// `candidates`, in their order.
+    fn of_tanks(
+        scene: &Scene,
+        player: GameObject,
+        candidates: impl Iterator<Item = GameObject>,
+        cover: Vec<GroundRect>,
+    ) -> Self {
+        let viewers = candidates
             .filter(|&object| is_live_tank(scene, object) && is_friendly(scene, player, object))
             .filter_map(|object| {
                 let range = scene
@@ -296,10 +357,7 @@ impl TeamVision {
 
     /// Reads the scene's arena cover and `player`'s side's vision over it.
     pub fn in_scene(scene: &Scene, player: GameObject) -> Self {
-        let cover = arena_geometry(scene)
-            .map(|arena| arena.sight_blockers)
-            .unwrap_or_default();
-        Self::of_player(scene, player, cover)
+        VisionFrame::read(scene).vision(scene, player)
     }
 
     /// Whether sight reaches `to` from `from`, by the rule the fog of war
@@ -648,10 +706,27 @@ fn apply_fog_to(
 /// whatever fog hid that has since left the scene's managed objects.
 pub(crate) fn apply_fog(scene: &mut Scene, viewer: GameObject, fog: &mut FogState) {
     let vision = TeamVision::in_scene(scene, viewer);
+    apply_fog_seen(scene, viewer, fog, &vision);
+}
+
+/// [`apply_fog`] by the side's `vision`, read beforehand.
+pub(crate) fn apply_fog_seen(
+    scene: &mut Scene,
+    viewer: GameObject,
+    fog: &mut FogState,
+    vision: &TeamVision,
+) {
     let objects = scene.objects().collect::<Vec<_>>();
-    apply_fog_to(scene, viewer, fog, &vision, &objects);
+    apply_fog_to(scene, viewer, fog, vision, &objects);
     fog.hidden.retain(|id, _| scene.find(*id).is_some());
     fog.presence.retain(|id, _| scene.find(*id).is_some());
+}
+
+/// The object showing the tank HUD, the local player.
+fn local_player(scene: &Scene) -> Option<GameObject> {
+    <(&ComponentID, &ComponentTankHud)>::query()
+        .iter(scene.world())
+        .find_map(|(id, _)| scene.find(id.id))
 }
 
 /// Re-applies the local player's fog of war after `objects` spawned or moved
@@ -659,43 +734,49 @@ pub(crate) fn apply_fog(scene: &mut Scene, viewer: GameObject, fog: &mut FogStat
 /// update hooks run in. A move by a tank on the local player's side changes
 /// what the side sees and refreshes the whole scene; any other object only
 /// refreshes itself and the effects that follow it. The local player is the
-/// tank showing the tank HUD.
+/// tank showing the tank HUD; the side's vision is read over the
+/// [`VisionFrame`] the HUD read at its last update.
 pub(crate) fn refresh(scene: &mut Scene, objects: &[GameObject]) {
-    let Some(viewer) = scene.objects().find(|&object| {
-        scene
-            .read_component::<ComponentTankHud, _, _>(object, |_| ())
-            .is_some()
+    let Some(viewer) = local_player(scene) else {
+        return;
+    };
+    let Some((mut fog, shared)) = scene.write_component::<ComponentTankHud, _>(viewer, |hud| {
+        (std::mem::take(&mut hud.fog), hud.vision_frame.take())
     }) else {
         return;
     };
-    let Some(mut fog) =
-        scene.write_component::<ComponentTankHud, _>(viewer, |hud| std::mem::take(&mut hud.fog))
-    else {
-        return;
+    // Before the HUD's first update, or while it does not update, there is
+    // no frame to share.
+    let vision = match &shared {
+        Some(frame) if scene.is_component_enabled::<ComponentTankHud>(viewer) => {
+            frame.vision(scene, viewer)
+        }
+        _ => TeamVision::in_scene(scene, viewer),
     };
     if objects
         .iter()
         .any(|&object| is_live_tank(scene, object) && is_friendly(scene, viewer, object))
     {
-        apply_fog(scene, viewer, &mut fog);
+        apply_fog_seen(scene, viewer, &mut fog, &vision);
     } else {
         let ids = objects
             .iter()
             .map(|&object| scene.uuid(object))
             .collect::<Vec<_>>();
         let mut affected = objects.to_vec();
-        affected.extend(scene.objects().filter(|&object| {
-            scene
-                .read_component::<ComponentCombatEffectLifetime, _, _>(object, |effect| {
-                    ids.contains(&effect.follow.id())
-                })
-                .unwrap_or(false)
-        }));
+        affected.extend(
+            <(&ComponentID, &ComponentCombatEffectLifetime)>::query()
+                .iter(scene.world())
+                .filter(|(_, effect)| ids.contains(&effect.follow.id()))
+                .filter_map(|(id, _)| scene.find(id.id)),
+        );
         affected.dedup();
-        let vision = TeamVision::in_scene(scene, viewer);
         apply_fog_to(scene, viewer, &mut fog, &vision, &affected);
     }
-    let _ = scene.write_component::<ComponentTankHud, _>(viewer, |hud| hud.fog = fog);
+    let _ = scene.write_component::<ComponentTankHud, _>(viewer, |hud| {
+        hud.fog = fog;
+        hud.vision_frame = shared;
+    });
 }
 
 pub(crate) mod sight;
