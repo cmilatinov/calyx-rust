@@ -4,13 +4,14 @@
 // Fog of war on display-linear color, after tone mapping. Each pixel is fogged by the ground
 // position (x, z) of the surface it shows, rebuilt from the scene depth. A viewer sees a ground
 // point when the line from the viewer to it leaves no blocker into open ground before reaching
-// it, so sight carries on through the run of touching blockers it meets first and a blocker in
-// sight is lit while the ground behind it is not; then it sees as much as its distance fade and
-// weight leave, and the side sees the point as well as its best viewer does. Lines of sight are
-// traced per sample, so shadow sides are exact wherever the viewers stand, and each pixel
-// averages a few samples across its own footprint on the ground to antialias them without
-// softening them. What the side does not see mixes towards the fog colour in sRGB-encoded
-// colour, as a translucent overlay drawn over the image would. `FogOfWarSight` in
+// it, a point on a blocker's edge counting as on the blocker, so sight carries on through the run
+// of touching blockers it meets first and a blocker in sight is lit, faces and all, while the
+// ground behind it is not; then it sees as much as its distance fade and weight leave, and the
+// side sees the point as well as its best viewer does. Lines of sight are traced per sample, so
+// shadow sides are exact wherever the viewers stand, and each pixel averages a few samples across
+// its own footprint on the ground to antialias them without softening them. What the side does
+// not see mixes towards the fog colour in sRGB-encoded colour, as a translucent overlay drawn over
+// the image would. `FogOfWarSight` in
 // `crates/calyx_engine/src/component/post_process/fog_of_war.rs` holds the same rules on the CPU.
 // Alpha passes through.
 
@@ -121,6 +122,13 @@ fn window_sector(window: SectorWindow, index: u32) -> vec2u {
 // How far apart two blockers along a line of sight may be and still count as touching, as
 // `FogOfWarSight::TOUCHING`.
 const TOUCHING: f32 = 0.05;
+
+// How far past the side of a blocker a line of sight leaves by a point may lie and still count as
+// on the blocker, as `FogOfWarSight::EDGE`. Every pixel of a wall's face rebuilds to a point on the
+// edge of the wall's footprint, give or take the depth's rounding, so without it the face of a
+// wall in sight turned from the viewer would be lit or fogged row by row, and flicker as the
+// camera or the viewer moves.
+const EDGE: f32 = 0.005;
 
 // Where each pixel samples sight, in pixels from its centre, as `FogOfWarSight::PIXEL_SAMPLES`:
 // across in `SAMPLES_X` and down in `SAMPLES_Y`.
@@ -259,11 +267,11 @@ fn spans(blocker: Blocker, start: vec2f, dir_x: vec4f, dir_y: vec4f, limit: vec4
 }
 
 // Which of the four sample points `(points_x, points_y)` sight reaches from `viewer`, 1 or 0 each:
-// those whose line from `start` leaves no blocker before reaching them into open ground, as
-// `FogOfWarSight::clear_line`. The four lines are traced together, so each blocker is read once
-// for all of them, and one that comes nowhere near the line to the pixel's centre `center`,
-// widened by how far the samples lie from it, `spread`, is skipped for all of them. Only the
-// blockers of the viewer's sectors the four lines lie in are read.
+// those whose line from `start` leaves no blocker into open ground more than `EDGE` before
+// reaching them, as `FogOfWarSight::clear_line`. The four lines are traced together, so each
+// blocker is read once for all of them, and one that comes nowhere near the line to the pixel's
+// centre `center`, widened by how far the samples lie from it, `spread`, is skipped for all of
+// them. Only the blockers of the viewer's sectors the four lines lie in are read.
 fn clear_lines(
     viewer: Viewer,
     points_x: vec4f,
@@ -302,9 +310,9 @@ fn clear_lines(
                 continue;
             }
             let inside = spans(blocker, start, dir_x, dir_y, limit);
-            // Lines that leave this blocker before their sample: into open ground, unless another
-            // blocker carries them on.
-            let leaving = open & inside.hit & inside.far <= distance;
+            // Lines that leave this blocker before their sample, by more than `EDGE`: into open
+            // ground, unless another blocker carries them on.
+            let leaving = open & inside.hit & inside.far < distance - EDGE;
             if !any(leaving) {
                 continue;
             }
