@@ -508,13 +508,9 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
             .unwrap_or_else(|| panic!("missing collider from {origin:?} toward {direction:?}"))
             .toi
     };
-    // Probe every one-metre wall join from immediately inside the pen, but
-    // where the farmland's water tower stands against the south wall.
+    // Probe every one-metre wall join from immediately inside the pen.
     for x in -26..=26 {
         for (z, direction) in [(-8.0, -1.0), (52.0, 1.0)] {
-            if z < 0.0 && x <= -25 {
-                continue;
-            }
             let distance = hit_distance(vec3(x as f32, 0.8, z), vec3(0.0, 0.0, direction), 1.0);
             assert!(
                 (distance - 0.4).abs() < 0.005,
@@ -1871,22 +1867,14 @@ fn the_creek_stops_tanks_but_not_rounds_or_sight() {
     fire_until_hit(&mut runner, target);
 }
 
-/// Tanks cross the creek at the ford, driving through its shallows from one
-/// bank to the other.
+/// The bridge carries the west sand lane over the creek: a tank at the
+/// lane's south end, past the creek, drives north over it to the field.
 #[test]
-fn tanks_cross_the_creek_at_the_ford() {
-    let (copy, assets) = sandbox_assets();
-    let scene = load_sandbox_scene(&copy, &assets);
-    let ford = scene.world_transform(object_named(&scene, "Arena Ford"));
-    let across = ford.forward().normalize();
-    // On the east bank, facing west across the ford.
-    let start = ford.position + across * 6.5;
-    let yaw = (-across.x).atan2(-across.z);
-    let (mut runner, tank) = raised_area_runner(start, yaw, 60);
-    hold(&mut runner, Some(egui::Key::W), 3.0, 60);
-    let end = runner.scene().world_transform(tank).position;
+fn tanks_cross_the_creek_on_the_bridge() {
+    let end = drive_from(vec3(-20.0, 0.0, -5.0), 0.0, 60, 3.0);
     assert!(
-        (end - ford.position).dot(&across) < -4.0,
+        end.z > 8.0,
         "the tank stopped at {end:?}, short of the far bank"
     );
+    assert!((end.x + 20.0).abs() < 0.1, "unexpected deflection: {end:?}");
 }

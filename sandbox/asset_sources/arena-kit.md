@@ -222,27 +222,24 @@ module. It reads by detail rather than height:
   either side of the bridge a block closes the creek up to the rails.
 - **Crossings.** A timber bridge (`bridge`) carries the west sand lane over
   the creek, its deck 5 cm above the floor, its rails `TANK_BLOCKER` boxes.
-  The ford (`Arena Ford`, facing across the creek) is a gap in the
-  blockers 6.4 m along the flow, under a sheet of shallow water level with
-  the ground (`Arena Ford Water`) and stepping stones along its downstream
-  edge.
+  It is the only crossing; the spawn side reaches the rest of the pen north
+  of the creek. There is no ford.
 - **Landmarks.** The ruined farmhouse (`Arena Wall Farmhouse`) is two kit
   wall corners with doorways wider than 2.8 m, a 3.8 m `chimney` and a
-  broken `roof_ruin`, in a dirt yard with hay bales; the 9.7 m
-  `water_tower` stands in the pen's southwest corner, its solid meeting
-  both walls. Two `hedgerow`s are cover that stops rounds and, like crates,
+  broken `roof_ruin`, with hay bales; the 9.7 m `water_tower` stands in the
+  pen's southwest corner, roof and all clear of both walls, its solid
+  leaving a gap too narrow for a tank. Two `hedgerow`s are cover that stops rounds and, like crates,
   sight.
-- **Ground.** Two tilled fields with crop rows, organic patches of darker
-  and lighter grass, gravel by the ford and the tower and the farmhouse's
-  dirt yard (`patch_*`), and worn tracks (`ground_track` ruts) up the lane,
-  from the spawn over the ford, and from the spawn through the farmhouse.
+- **Ground.** Two tilled fields with crop rows. The ground surface, track
+  marks and the creek's route are left to later work; the
+  `ground_grass_dark`, `ground_grass_light`, `ground_gravel` and
+  `ground_track` tiles are in the kit but not placed.
 - **Outside.** Fields with fences and copses of kit trees beyond the west
   and south walls, around the creek's continuation.
 
 New models are generated in all three palettes like the kit: the ground
 tiles `ground_grass_dark`, `ground_grass_light`, `ground_gravel`,
-`ground_field`, `ground_crop`, `ground_track` and `creek_bank`, the
-`patch_*` overlays, `hedgerow`, `water_tower`, `bridge`, `chimney`,
+`ground_field`, `ground_crop`, `ground_track` and `creek_bank`, `hedgerow`, `water_tower`, `bridge`, `chimney`,
 `roof_ruin`, `hay_bale` and `fence`, with the new roles `ground_grass_dark`,
 `ground_grass_light`, `ground_gravel`, `ground_field`, `ground_crop`,
 `ground_track`, `creek_bank` and `roof_tiles`. No third-party assets are
