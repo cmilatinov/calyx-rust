@@ -218,7 +218,7 @@ fn respawn_transform_target(scene: &Scene, game_object: GameObject) -> GameObjec
 
 pub fn find_spawn_transform(scene: &Scene, team: u32) -> Option<Transform> {
     scene
-        .objects()
+        .objects_with::<ComponentSpawnPoint>()
         .filter_map(|game_object| {
             scene
                 .read_component::<ComponentSpawnPoint, _, _>(game_object, |spawn| *spawn)

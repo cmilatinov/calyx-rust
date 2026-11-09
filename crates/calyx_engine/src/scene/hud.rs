@@ -12,7 +12,6 @@ impl Scene {
     pub fn build_hud(&self, ui: &mut UiArena, viewport: UiRect) -> Option<UiNodeHandle> {
         crate::profile_scope!("HUD build");
         let registry = self.registries().components.read();
-        let objects: Vec<_> = self.objects().collect();
         let layers: Vec<UiNodeHandle> = registry
             .components_with_hud()
             .flat_map(|(type_uuid, hook)| {
@@ -21,6 +20,12 @@ impl Scene {
                     "HUD hook",
                     super::scene::hook_label(self.registries(), type_uuid)
                 );
+                // Only the objects holding the component are asked, not
+                // every object of the scene.
+                let objects = match prototype {
+                    Some(prototype) => self.objects_holding(prototype.component_type_id()),
+                    None => self.objects().collect(),
+                };
                 objects
                     .iter()
                     .filter(|&&game_object| self.runs_hooks(game_object, prototype))

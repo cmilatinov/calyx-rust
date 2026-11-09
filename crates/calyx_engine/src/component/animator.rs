@@ -126,6 +126,10 @@ impl Component for ComponentAnimator {
         true
     }
 
+    fn has_gizmos(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         if self.draw_debug_skeleton {
             gizmos.set_color(&Vec4::new(1.0, 1.0, 0.0, 1.0));

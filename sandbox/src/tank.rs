@@ -666,12 +666,7 @@ fn hull_obstacles(scene: &Scene) -> HashSet<Entity> {
 /// [`crate::collision`].
 fn static_obstacles(scene: &Scene) -> HashSet<Entity> {
     scene
-        .objects()
-        .filter(|&object| {
-            scene
-                .read_component::<ComponentCollider, _, _>(object, |_| ())
-                .is_some()
-        })
+        .objects_with::<ComponentCollider>()
         .filter(|&object| {
             let body_type = scene
                 .read_component::<ComponentRigidBody, _, _>(object, |body| body.ty)
@@ -1192,7 +1187,7 @@ fn first_projectile_hit(
     projectile_radius: f32,
 ) -> Option<(calyx_engine::scene::GameObject, Vec3)> {
     scene
-        .objects()
+        .objects_with::<ComponentProjectileTarget>()
         .filter(|&candidate| candidate != projectile_object && Some(candidate) != shooter)
         .find_map(|candidate| {
             scene
