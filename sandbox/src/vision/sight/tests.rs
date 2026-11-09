@@ -11,7 +11,11 @@ fn viewer(id: u128, position: Vec2) -> Viewer {
 }
 
 fn vision(viewers: Vec<Viewer>, cover: Vec<GroundRect>) -> TeamVision {
-    TeamVision { viewers, cover }
+    TeamVision {
+        viewers,
+        cover,
+        concealed: Vec::new(),
+    }
 }
 
 /// A block of cover across +X, 3 to 5 m out and 4 m wide, in front of a

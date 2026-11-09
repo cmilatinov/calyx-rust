@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "30e84509-5bf2-5b6d-ae38-b388dccc3cc3",
+    "name": "shaders/mesh/grass_field",
+    "display_name": "grass_field",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}

@@ -306,7 +306,17 @@ mod tests {
         // only the farmland creek's blockers and the bridge's rails stop
         // tanks alone.
         let mut tank_blockers = 0;
+        // Brush volumes, which stop nothing, have their own.
         for object in scene.descendants_with::<ComponentCollider>(arena) {
+            if scene
+                .ancestor_with::<crate::brush::ComponentBrush>(object)
+                .is_some()
+            {
+                scene.read_component::<ComponentCollider, _, _>(object, |collider| {
+                    assert_eq!(collider.groups, crate::collision::BRUSH);
+                });
+                continue;
+            }
             let name = scene.name(object);
             scene.read_component::<ComponentCollider, _, _>(object, |collider| {
                 if name.starts_with("Arena Creek Blocker") || name.starts_with("Arena Bridge Rail")

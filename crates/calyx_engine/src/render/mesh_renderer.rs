@@ -53,6 +53,7 @@ pub struct MeshRenderer {
     material_bind_group_cache: HashMap<AssetId, CachedMaterialBindGroups>,
     scene_bind_group: CachedBindGroup<SceneBindGroupKey>,
     light_storage_bind_group: CachedBindGroup<LightStorageBindGroupKey>,
+    grass_scene_bind_group: CachedBindGroup<GrassSceneBindGroupKey>,
     object_id_camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
 }
 
@@ -63,6 +64,13 @@ type SceneBindGroupKey = (
     wgpu::Buffer,
     [wgpu::TextureView; 3],
     [wgpu::Sampler; 3],
+);
+
+type GrassSceneBindGroupKey = (
+    wgpu::BindGroupLayout,
+    wgpu::Buffer,
+    wgpu::Buffer,
+    [wgpu::TextureView; 3],
 );
 
 /// Each material's bind groups, by material, then by group index.
@@ -80,6 +88,16 @@ struct CachedMaterialBindGroups {
 pub(crate) struct LightingBindGroups {
     pub scene: wgpu::BindGroup,
     pub lights: wgpu::BindGroup,
+    /// Group 0 of the grass's transparent pass: the scene group's bindings
+    /// and the grass field at binding 8, when the grass shader is loaded.
+    pub grass_scene: Option<wgpu::BindGroup>,
+}
+
+/// What group 0 of the grass's transparent pass binds: the grass shader's
+/// group 0 layout and the grass field's uniform buffer.
+pub(crate) struct GrassSceneInputs<'a> {
+    pub layout: wgpu::BindGroupLayout,
+    pub field: &'a wgpu::Buffer,
 }
 
 pub struct MeshRenderTargets<'a> {
@@ -110,6 +128,7 @@ impl MeshRenderer {
             material_bind_group_cache: Default::default(),
             scene_bind_group: Default::default(),
             light_storage_bind_group: Default::default(),
+            grass_scene_bind_group: Default::default(),
             object_id_camera_bind_group: Default::default(),
         })
     }
@@ -132,6 +151,7 @@ impl MeshRenderer {
         skybox_id: Option<AssetId>,
         sky_light_intensity: f32,
         ambient_light: [f32; 4],
+        grass: Option<GrassSceneInputs<'_>>,
     ) -> LightingBindGroups {
         let (irradiance_map, prefilter_map, brdf_map) = skybox_id
             .and_then(|id| assets.skybox(id)?.environment_maps())
@@ -171,7 +191,162 @@ impl MeshRenderer {
                 .clone()
         };
 
-        LightingBindGroups { scene, lights }
+        let grass_scene = grass.map(|grass| {
+            let key = (
+                grass.layout.clone(),
+                camera_uniform_buffer.clone(),
+                grass.field.clone(),
+                [
+                    irradiance_map.view.clone(),
+                    prefilter_map.view.clone(),
+                    brdf_map.view.clone(),
+                ],
+            );
+            let environment = &self.environment_uniform_buffer;
+            self.grass_scene_bind_group
+                .get_or_create(key, || {
+                    device.create_bind_group(&wgpu::BindGroupDescriptor {
+                        label: Some("grass_scene_bind_group"),
+                        layout: &grass.layout,
+                        entries: &[
+                            wgpu::BindGroupEntry {
+                                binding: 0,
+                                resource: camera_uniform_buffer.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 1,
+                                resource: wgpu::BindingResource::TextureView(&irradiance_map.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 2,
+                                resource: wgpu::BindingResource::Sampler(&irradiance_map.sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 3,
+                                resource: wgpu::BindingResource::TextureView(&prefilter_map.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 4,
+                                resource: wgpu::BindingResource::Sampler(&prefilter_map.sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 5,
+                                resource: wgpu::BindingResource::TextureView(&brdf_map.view),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 6,
+                                resource: wgpu::BindingResource::Sampler(&brdf_map.sampler),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 7,
+                                resource: environment.as_entire_binding(),
+                            },
+                            wgpu::BindGroupEntry {
+                                binding: 8,
+                                resource: grass.field.as_entire_binding(),
+                            },
+                        ],
+                    })
+                })
+                .clone()
+        });
+        LightingBindGroups {
+            scene,
+            lights,
+            grass_scene,
+        }
+    }
+
+    /// Draws the grass that fades around the grass field's revealing
+    /// benders: every batch of `draw_list` whose shader is `grass_shader`,
+    /// with that shader, alpha blended over `targets` after the lighting
+    /// and forward passes, tested against their depth but not writing it.
+    /// The shader discards every fragment that does not fade, which the
+    /// geometry pass drew opaque.
+    #[allow(clippy::too_many_arguments)]
+    pub fn render_grass(
+        &mut self,
+        encoder: &mut wgpu::CommandEncoder,
+        assets: &LockedAssetRenderState,
+        material_bind_groups: &MaterialBindGroups,
+        lighting: &LightingBindGroups,
+        targets: MeshRenderTargets<'_>,
+        samples: u32,
+        cull_mode: Option<wgpu::Face>,
+        draw_list: &[DrawBatch],
+        grass_shader: AssetId,
+    ) {
+        let Some(scene_group) = &lighting.grass_scene else {
+            return;
+        };
+        let Some(shader) = assets.shader(grass_shader) else {
+            return;
+        };
+        let options = PipelineOptions::builder()
+            .samples(samples)
+            .cull_mode(cull_mode)
+            .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                format: targets.color.descriptor.format,
+                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                write_mask: wgpu::ColorWrites::ALL,
+            })])
+            .depth_stencil(Some(wgpu::DepthStencilState {
+                depth_write_enabled: false,
+                ..RenderUtils::depth_default(targets.depth.descriptor.format)
+            }))
+            .build();
+        let Some(pipeline) = shader.pipeline(&options) else {
+            return;
+        };
+        let mut batches = draw_list
+            .iter()
+            .filter(|batch| batch.shader_id == grass_shader)
+            .peekable();
+        if batches.peek().is_none() {
+            return;
+        }
+        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+            label: Some("Transparent Grass"),
+            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                view: &targets.color.view,
+                resolve_target: None,
+                ops: wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
+                view: &targets.depth.view,
+                depth_ops: Some(wgpu::Operations {
+                    load: wgpu::LoadOp::Load,
+                    store: wgpu::StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+        render_pass.set_pipeline(&pipeline);
+        render_pass.set_bind_group(0, scene_group, &[]);
+        render_pass.set_bind_group(2, &lighting.lights, &[]);
+        for batch in batches {
+            let Some(mesh) = assets.mesh(batch.mesh_id) else {
+                continue;
+            };
+            let Some(material_group) = material_bind_groups
+                .get(&batch.mat_id)
+                .and_then(|groups| groups.get(&3))
+            else {
+                continue;
+            };
+            let Some(instance_group) = mesh.instance_bind_group() else {
+                continue;
+            };
+            render_pass.set_bind_group(1, instance_group, &[]);
+            render_pass.set_bind_group(3, material_group, &[]);
+            RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
+            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, batch.instances.clone());
+        }
     }
 
     /// Draws every batch of `draw_list` whose shader is not one of

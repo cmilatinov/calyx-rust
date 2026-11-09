@@ -155,6 +155,8 @@ fn every_new_role_has_three_clay_materials_and_screen_space_ink() {
         "crate_frame",
         "crate_panel",
         "grass",
+        "tall_grass",
+        "tall_grass_light",
     ] {
         let role = palette::find(name).unwrap();
         for map in palette::Map::ALL {

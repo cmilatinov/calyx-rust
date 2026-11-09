@@ -13,11 +13,12 @@ mod ground;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
     ColliderShape, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
-    ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentID,
-    ComponentRigidBody, ComponentSkyLight, ComponentTonemap, ComponentTransform, ComponentVignette,
-    FxaaQuality, TonemappingPreset,
+    ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentFoliage,
+    ComponentGrassField, ComponentID, ComponentRigidBody, ComponentSkyLight, ComponentTonemap,
+    ComponentTransform, ComponentVignette, FxaaQuality, TonemappingPreset,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
@@ -61,6 +62,15 @@ fn component_text<'a>(text: &'a str, id: Uuid) -> &'a str {
     let end = start + text[start..].find("\n    }").unwrap() + "\n    }".len();
     &text[start..end]
 }
+
+/// The test patches of tall-grass brush, `(name, x, z, width, depth)` in
+/// the Arena's frame, until the layout work places brush along the creek
+/// and the landmarks. Each is clear of cover and of the sentry's lane.
+pub const BRUSH_PATCHES: [(&str, f32, f32, f32, f32); 3] = [
+    ("Centre", 3.0, -10.0, 7.0, 5.0),
+    ("East", 13.5, 4.0, 5.0, 6.0),
+    ("North", -4.0, 6.0, 5.0, 5.0),
+];
 
 struct Author {
     scene: Scene,
@@ -127,6 +137,89 @@ impl Author {
             vec3(17.0, PLATFORM_HEIGHT, 21.0),
             0.0,
         );
+    }
+
+    /// Test patches of tall-grass brush (`sandbox::brush`), until the layout
+    /// work places brush along the creek and the landmarks: each a Brush
+    /// with a box volume that stops nothing, 2 m high on the ground, and its
+    /// grass a Foliage of the kit's `tall_grass` clumps packed over it. The
+    /// Arena's Grass Field sways all of them and bends them around tanks.
+    /// The test patches: their volumes, the darker grass the ground paints
+    /// under them, and their clumps; see `BRUSH_PATCHES`.
+    fn brush(&mut self) {
+        // The kit's tall blades arc over by drooping in the grass shader.
+        let grass_field = || ComponentGrassField {
+            droop: 0.32,
+            ..Default::default()
+        };
+        /// The side of the grid cells a patch's clumps stand in, in metres.
+        const GRASS_CELL: f32 = 1.1;
+        let prefab = asset_id(&self.assets.join(format!(
+            "generated/prefabs/{}/tall_grass.cxprefab",
+            self.palette.folder()
+        )));
+        for (i, &(name, x, z, width, depth)) in BRUSH_PATCHES.iter().enumerate() {
+            let name = format!("Arena Brush {name}");
+            let patch = self.object(&name, self.arena, vec3(x, 0.0, z));
+            self.scene
+                .add_component(patch, sandbox::brush::ComponentBrush::default());
+            // One clump to each cell of an even grid over the volume, placed
+            // at random anywhere in its cell and turned at random, so the
+            // blades fill the patch evenly, to its edges, without showing the
+            // grid or a centre.
+            let columns = (width / GRASS_CELL).round().max(1.0) as i32;
+            let rows = (depth / GRASS_CELL).round().max(1.0) as i32;
+            let (cell_width, cell_depth) = (width / columns as f32, depth / rows as f32);
+            for column in 0..columns {
+                for row in 0..rows {
+                    let cell = self.object(
+                        &format!("{name} Grass {column} {row}"),
+                        patch,
+                        vec3(
+                            (column as f32 + 0.5) * cell_width - width * 0.5,
+                            0.0,
+                            (row as f32 + 0.5) * cell_depth - depth * 0.5,
+                        ),
+                    );
+                    let area = vec2(cell_width * 0.95, cell_depth * 0.95);
+                    self.scene.add_component(
+                        cell,
+                        ComponentFoliage {
+                            prefabs: vec![AssetRef::from_id(prefab)],
+                            area,
+                            // Exactly one clump in the cell.
+                            density: 1.05 / (area.x * area.y),
+                            seed: 575 + (i as u32) * 97 + (column * rows + row) as u32,
+                            scale_range: vec2(0.9, 1.1),
+                            rotation_range: vec2(0.0, 360.0),
+                            // Shadow maps would draw every blade again in
+                            // each cascade, for shadows the grass mostly
+                            // falls on itself; SSAO still grounds it.
+                            cast_shadows: false,
+                        },
+                    );
+                }
+            }
+            let volume = self.collider(
+                patch,
+                &format!("{name} Volume"),
+                vec3(0.0, 1.0, 0.0),
+                vec3(width, 2.0, depth),
+            );
+            self.scene
+                .write_component::<ComponentCollider, _>(volume, |collider| {
+                    collider.groups = sandbox::collision::BRUSH;
+                });
+        }
+        if self
+            .scene
+            .write_component::<ComponentGrassField, _>(self.arena, |field| {
+                *field = grass_field();
+            })
+            .is_none()
+        {
+            self.scene.add_component(self.arena, grass_field());
+        }
     }
 
     /// The walls inside the pen. A corner shields the spawn from the east
@@ -945,6 +1038,7 @@ fn main() {
     }
     author.raised_area();
     author.interior_walls();
+    author.brush();
     author.farmland(&creek);
     for (model, name, x, z, yaw) in [
         ("tree_small", "Spawn East Tree", 6.0, -8.0, -20.0),

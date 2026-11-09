@@ -229,6 +229,17 @@ fn paint(p: Vec2, kind: Option<&str>, rows_along_x: Option<bool>, shore: &Shore)
     if kind != Some("paving") {
         w.over(GRAVEL, smoothstep(1.4, 0.4, pad + (noise(p, 1.5, 6) - 0.5)));
     }
+    // Darker grass under each patch of brush, to just inside its edge,
+    // where the blades lean out over it, so no light ground shows between
+    // them.
+    for &(_, x, z, width, depth) in super::BRUSH_PATCHES.iter() {
+        let edge = vec2(
+            (p.x - x).abs() - (width * 0.5 - 0.6),
+            (p.y - z).abs() - (depth * 0.5 - 0.6),
+        );
+        let outside = edge.x.max(edge.y) + (noise(p, 1.5, 11) - 0.5) * 0.5;
+        w.over(DARK, smoothstep(0.5, -0.2, outside));
+    }
     // Mud along the creek's banks, fraying into the ground.
     let beyond = shore.beyond(p);
     let reach = 1.6 + 1.6 * noise(p, 4.0, 7);

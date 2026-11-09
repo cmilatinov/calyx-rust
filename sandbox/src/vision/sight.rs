@@ -67,6 +67,7 @@ pub(crate) fn sight_rays(sight: &FogOfWarSight, count: usize) -> Vec<SightRays> 
                 half_axes: blocker.half_axes,
             })
             .collect(),
+        concealed: Vec::new(),
     }
     .sight_rays(count)
 }

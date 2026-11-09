@@ -27,6 +27,7 @@ fn points_see_what_the_side_sees() {
             GroundRect::axis_aligned(vec2(-9.5, 2.0), vec2(1.0, 1.0)),
             GroundRect::axis_aligned(vec2(40.0, 30.0), vec2(2.0, 2.0)),
         ],
+        ..Default::default()
     };
     let points = vision.points();
     for x in -12..=24 {
@@ -43,6 +44,7 @@ fn visibility_needs_range_and_a_clear_line_from_any_viewer() {
     let vision = TeamVision {
         viewers: vec![viewer(0.0, 0.0, 10.0)],
         cover: vec![wall],
+        ..Default::default()
     };
     assert!(vision.visible(vec2(2.0, 0.0)));
     assert!(!vision.visible(vec2(6.0, 0.0)), "behind cover");
@@ -54,6 +56,7 @@ fn visibility_needs_range_and_a_clear_line_from_any_viewer() {
     let vision = TeamVision {
         viewers: vec![viewer(0.0, 0.0, 10.0), viewer(12.0, 0.0, 10.0)],
         cover: vec![wall],
+        ..Default::default()
     };
     assert!(vision.visible(vec2(6.0, 0.0)));
     assert!(!vision.visible(vec2(6.0, 30.0)));
@@ -73,6 +76,7 @@ fn units_on_touching_cover_are_seen_as_the_fog_lights_them() {
             GroundRect::axis_aligned(vec2(5.0, 0.0), vec2(1.0, 1.0)),
             GroundRect::axis_aligned(vec2(7.5, 0.0), vec2(1.0, 1.0)),
         ],
+        ..Default::default()
     };
     assert!(vision.visible(vec2(3.8, 0.0)), "on the first crate");
     assert!(vision.visible(vec2(5.2, 0.0)), "on the crate touching it");
@@ -88,6 +92,7 @@ fn sight_rays_carry_through_touching_blocks_of_cover() {
             GroundRect::axis_aligned(vec2(4.0, 0.0), vec2(2.0, 2.0)),
             GroundRect::axis_aligned(vec2(6.0, 0.0), vec2(2.0, 2.0)),
         ],
+        ..Default::default()
     };
     let rays = vision.sight_rays(8);
     assert!((rays[0].through[0] - 7.0).abs() < 1e-4);

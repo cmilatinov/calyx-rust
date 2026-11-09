@@ -85,8 +85,15 @@ forward pass.
   `shaders/mesh/water`, with `shaders/mesh/water_gbuffer.wgsl` in place of
   `gbuffer.wgsl` (see Water in `docs/architecture/overview.md`), and every
   blended ground batch, whose shader is `shaders/mesh/ground`, with
-  `shaders/mesh/ground_gbuffer.wgsl` (see Terrain there); a draw with
-  any other shader takes the forward pass after lighting. The
+  `shaders/mesh/ground_gbuffer.wgsl` (see Terrain there), and every grass
+  batch, whose shader is `shaders/mesh/grass`, with
+  `shaders/mesh/grass_gbuffer.wgsl`: the PBR material, its vertices drooped,
+  swayed and bent by the scene's `ComponentGrassField`, which it reads as
+  group 3 (`grass_field.wgsl`), leaving out the grass that fades around
+  revealing benders; `shaders/mesh/grass.wgsl` draws that grass after the
+  lighting and forward passes, alpha blended and lit through `pbr_lighting`,
+  with the field at group 0 binding 8 (see `MeshRenderer::render_grass`). A
+  draw with any other shader takes the forward pass after lighting. The
   draw list is built once from the enabled meshes, so both passes skip the
   same disabled meshes, and with the renderer's `mesh_cull_mode`.
 - Its vertex stage is `shaders/mesh/pbr_vertex.wgsl`, the one `pbr.wgsl`

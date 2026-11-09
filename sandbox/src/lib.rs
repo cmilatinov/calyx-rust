@@ -3,6 +3,7 @@
 #![recursion_limit = "256"]
 
 pub mod arena;
+pub mod brush;
 pub mod collision;
 pub mod combat;
 pub mod combat_vfx;
@@ -49,6 +50,12 @@ mod tests {
             .type_registration::<ComponentTankController>()
             .is_some());
         assert!(registry.type_registration::<ComponentArena>().is_some());
+        assert!(registry
+            .type_registration::<crate::brush::ComponentBrush>()
+            .is_some());
+        assert!(registry
+            .type_registration::<crate::brush::ComponentBrushReveal>()
+            .is_some());
         assert!(registry.type_registration::<ComponentGameState>().is_some());
         assert!(registry
             .type_registration::<crate::match_rules::ComponentMatchRules>()

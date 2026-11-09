@@ -5,6 +5,7 @@
 
 use crate::assets::texture::Texture;
 use crate::assets::AssetId;
+use crate::component::{ComponentGrassField, MAX_GRASS_BENDERS};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::profiler::PassScope;
@@ -14,8 +15,74 @@ use crate::render::{
     CachedBindGroup, DrawBatch, MaterialBindGroups, PipelineOptions, RenderContext, RenderUtils,
     SceneRendererError, Shader, FIRST_MATERIAL_GROUP,
 };
+use crate::scene::Scene;
 use egui_wgpu::wgpu;
+use legion::{Entity, IntoQuery};
 use std::sync::Arc;
+use std::time::Instant;
+
+/// The grass material shader, whose draws the geometry pass draws with
+/// `shaders/mesh/grass_gbuffer.wgsl`.
+pub(crate) const GRASS_SHADER: &str = "shaders/mesh/grass";
+
+/// The grass field as `shaders/mesh/grass_field.wgsl` lays it out.
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+pub(crate) struct GrassFieldUniform {
+    pub time: f32,
+    pub sway: f32,
+    pub sway_speed: f32,
+    pub bend: f32,
+    pub height: f32,
+    pub bender_count: u32,
+    pub droop: f32,
+    pub _padding: f32,
+    /// Each bender's ground position, bend radius and reveal radius.
+    pub benders: [[f32; 4]; MAX_GRASS_BENDERS],
+}
+
+impl GrassFieldUniform {
+    /// The first enabled grass field of `scene`, at `time` seconds on the
+    /// renderer's clock; still grass that bends for nothing without one.
+    pub fn of_scene(scene: &Scene, time: f32) -> Self {
+        let mut query = <(Entity, &ComponentGrassField)>::query();
+        let field = query
+            .iter(scene.world())
+            .filter_map(|(entity, field)| Some((scene.game_object_from_entity(*entity)?, field)))
+            .find(|(object, _)| scene.is_component_enabled::<ComponentGrassField>(*object))
+            .map(|(_, field)| field);
+        let Some(field) = field else {
+            return Self {
+                time,
+                height: 1.0,
+                ..Default::default()
+            };
+        };
+        let mut uniform = Self {
+            time,
+            sway: field.sway.max(0.0),
+            sway_speed: field.sway_speed,
+            bend: field.bend.max(0.0),
+            droop: field.droop.max(0.0),
+            height: field.height.max(0.01),
+            ..Default::default()
+        };
+        for (slot, bender) in uniform.benders.iter_mut().zip(&field.benders) {
+            *slot = [
+                bender.position.x,
+                bender.position.z,
+                bender.bend_radius.max(0.0),
+                bender.reveal_radius.max(0.0),
+            ];
+        }
+        uniform.bender_count = field.benders.len().min(MAX_GRASS_BENDERS) as u32;
+        uniform
+    }
+}
+
+/// The grass clock wraps after this many seconds, so it keeps its precision
+/// as an `f32` in the shader.
+const GRASS_TIME_WRAP: f64 = 3600.0;
 
 /// A G-buffer target the scene view can show in place of the lit image.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -162,22 +229,29 @@ struct GeometryShader {
     material_shader: AssetId,
 }
 
-/// Draws the scene's PBR meshes, water and blended ground into the
+/// Draws the scene's PBR meshes, water, blended ground and grass into the
 /// G-buffer and shows a target in the debug view. It owns the targets,
 /// created on the first frame.
 pub(crate) struct GBufferRenderer {
     /// The PBR surfaces, `shaders/mesh/gbuffer.wgsl` over the PBR shader's
     /// draws, then the water, `shaders/mesh/water_gbuffer.wgsl` over the
     /// water shader's, then the blended ground,
-    /// `shaders/mesh/ground_gbuffer.wgsl` over the ground shader's. Only
-    /// these draws enter the geometry pass.
-    geometry: [GeometryShader; 3],
+    /// `shaders/mesh/ground_gbuffer.wgsl` over the ground shader's, then
+    /// the grass, `shaders/mesh/grass_gbuffer.wgsl` over the grass
+    /// shader's. Only these draws enter the geometry pass.
+    geometry: [GeometryShader; 4],
     /// `shaders/deferred/gbuffer_view.wgsl`, the debug view.
     view_shader: Ref<Shader>,
     targets: Option<GBufferTargets>,
     /// The camera's bind group for each of [`Self::geometry`]'s shaders,
     /// built for its own group 0.
-    camera_bind_groups: [CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>; 3],
+    camera_bind_groups: [CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>; 4],
+    /// The grass field the grass's geometry shader reads as its group 3,
+    /// and its bind group.
+    grass_field_buffer: wgpu::Buffer,
+    grass_field_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
+    /// When the grass clock started.
+    grass_clock: Instant,
     view_uniform_buffer: wgpu::Buffer,
     view_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, [wgpu::TextureView; 4])>,
     /// Instances the last [`Self::render`] drew.
@@ -198,6 +272,7 @@ impl GBufferRenderer {
                 geometry("shaders/mesh/gbuffer", "shaders/mesh/pbr")?,
                 geometry("shaders/mesh/water_gbuffer", WATER_SHADER)?,
                 geometry("shaders/mesh/ground_gbuffer", "shaders/mesh/ground")?,
+                geometry("shaders/mesh/grass_gbuffer", GRASS_SHADER)?,
             ],
             view_shader: SceneRendererError::load::<Shader>(
                 context,
@@ -205,6 +280,14 @@ impl GBufferRenderer {
             )?,
             targets: None,
             camera_bind_groups: Default::default(),
+            grass_field_buffer: device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("grass_field_uniform"),
+                size: size_of::<GrassFieldUniform>() as u64,
+                usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            }),
+            grass_field_bind_group: Default::default(),
+            grass_clock: Instant::now(),
             view_uniform_buffer: device.create_buffer(&wgpu::BufferDescriptor {
                 label: Some("gbuffer_view_uniform"),
                 size: size_of::<GBufferViewUniform>() as u64,
@@ -227,8 +310,9 @@ impl GBufferRenderer {
     }
 
     /// The material shaders whose draws the geometry pass draws: the PBR,
-    /// the water and the ground shader. The forward pass draws the others.
-    pub(crate) fn deferred_shaders(&self) -> [AssetId; 3] {
+    /// the water, the ground and the grass shader. The forward pass draws the
+    /// others.
+    pub(crate) fn deferred_shaders(&self) -> [AssetId; 4] {
         self.geometry
             .each_ref()
             .map(|geometry| geometry.material_shader)
@@ -250,8 +334,26 @@ impl GBufferRenderer {
         }
     }
 
-    /// Draws every batch of `draw_list` that uses the PBR, water or ground
-    /// shader into the G-buffer, first in the frame, and draws the depth itself: it clears
+    /// The grass material shader, whose draws the geometry pass draws where
+    /// the grass does not fade and the transparent grass pass where it does.
+    pub(crate) fn grass_shader_id(&self) -> AssetId {
+        self.geometry[3].material_shader
+    }
+
+    /// The grass field's uniform buffer, which [`Self::render`] fills each
+    /// frame for both grass passes.
+    pub(crate) fn grass_field_buffer(&self) -> &wgpu::Buffer {
+        &self.grass_field_buffer
+    }
+
+    /// Seconds on the grass clock, wrapped.
+    pub fn grass_time(&self) -> f32 {
+        (self.grass_clock.elapsed().as_secs_f64() % GRASS_TIME_WRAP) as f32
+    }
+
+    /// Draws every batch of `draw_list` that uses the PBR, water, ground or
+    /// grass shader into the G-buffer, first in the frame, the grass swayed
+    /// and bent by `grass`, and draws the depth itself: it clears
     /// it and tests `Less` in the draw order, so of fragments that tie in
     /// depth the first drawn is kept, as the forward-only draws that follow
     /// keep it. The depth is `scene_depth` at one sample and the targets'
@@ -269,8 +371,12 @@ impl GBufferRenderer {
         camera_uniform_buffer: &wgpu::Buffer,
         scene_depth: &Texture,
         cull_mode: Option<wgpu::Face>,
+        grass: &GrassFieldUniform,
     ) {
         let device = render_context.device();
+        render_context
+            .queue()
+            .write_buffer(&self.grass_field_buffer, 0, bytemuck::bytes_of(grass));
         let size = (
             scene_depth.descriptor.size.width,
             scene_depth.descriptor.size.height,
@@ -330,11 +436,29 @@ impl GBufferRenderer {
                         })
                     })
                     .clone();
+                // The grass's shader reads the grass field as its group 3.
+                let field = (shader.bind_group_layouts.len() > 3).then(|| {
+                    let layout = shader.bind_group_layouts[3].clone();
+                    let buffer = self.grass_field_buffer.clone();
+                    self.grass_field_bind_group
+                        .get_or_create((layout.clone(), buffer.clone()), || {
+                            device.create_bind_group(&wgpu::BindGroupDescriptor {
+                                label: Some("gbuffer_grass_field_bind_group"),
+                                layout: &layout,
+                                entries: &[wgpu::BindGroupEntry {
+                                    binding: 0,
+                                    resource: buffer.as_entire_binding(),
+                                }],
+                            })
+                        })
+                        .clone()
+                });
                 (
                     geometry.material_shader,
                     pipeline,
                     camera,
                     shader.name.clone(),
+                    field,
                 )
             })
             .collect();
@@ -368,13 +492,16 @@ impl GBufferRenderer {
             occlusion_query_set: None,
         });
         self.drawn_instances = 0;
-        for (material_shader, pipeline, camera_bind_group, name) in &passes {
+        for (material_shader, pipeline, camera_bind_group, name, field_bind_group) in &passes {
             let Some(pipeline) = pipeline else {
                 continue;
             };
             let timed = PassScope::begin(&mut pass, || name.clone());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera_bind_group, &[]);
+            if let Some(field_bind_group) = field_bind_group {
+                pass.set_bind_group(3, field_bind_group, &[]);
+            }
             // The draw list is sorted by shader, material, then mesh: bind
             // each only when it changes.
             let mut bound_material = None;
@@ -470,5 +597,49 @@ impl GBufferRenderer {
         pass.set_bind_group(0, bind_group, &[]);
         RenderUtils::draw_fullscreen(&mut pass);
         true
+    }
+}
+
+#[cfg(test)]
+mod grass_tests {
+    use super::GrassFieldUniform;
+    use crate::component::{ComponentGrassField, GrassBender, MAX_GRASS_BENDERS};
+    use crate::test_support::test_scene;
+    use nalgebra_glm::vec3;
+
+    #[test]
+    fn the_grass_field_reaches_the_shader_from_the_first_enabled_field() {
+        let mut scene = test_scene();
+        let still = GrassFieldUniform::of_scene(&scene, 2.0);
+        assert_eq!((still.time, still.sway, still.bender_count), (2.0, 0.0, 0));
+
+        let disabled = scene.create(None, None);
+        scene.add_component(
+            disabled,
+            ComponentGrassField {
+                sway: 9.0,
+                ..Default::default()
+            },
+        );
+        scene.set_component_enabled::<ComponentGrassField>(disabled, false);
+        let field = scene.create(None, None);
+        let bender = GrassBender {
+            position: vec3(3.0, 1.0, -4.0),
+            bend_radius: 2.0,
+            reveal_radius: 2.5,
+        };
+        scene.add_component(
+            field,
+            ComponentGrassField {
+                benders: vec![bender; MAX_GRASS_BENDERS + 4],
+                ..Default::default()
+            },
+        );
+        let uniform = GrassFieldUniform::of_scene(&scene, 1.5);
+        assert_eq!(uniform.sway, ComponentGrassField::default().sway);
+        assert_eq!(uniform.bender_count, MAX_GRASS_BENDERS as u32);
+        assert_eq!(uniform.benders[0], [3.0, -4.0, 2.0, 2.5]);
+        // The layout `shaders/mesh/grass_field.wgsl` declares.
+        assert_eq!(size_of::<GrassFieldUniform>(), 32 + 16 * MAX_GRASS_BENDERS);
     }
 }

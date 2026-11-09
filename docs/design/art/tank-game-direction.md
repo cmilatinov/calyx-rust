@@ -91,6 +91,8 @@ convention.
 | Sentry armor | pale steel `#B9BBAE` | bone steel `#C4BAA5` | cool steel `#A5B9C5` |
 | Sentry optic | pale cyan `#88DBE3` | turquoise `#79D0D8` | ice cyan `#9CDAE8` |
 | Grass tufts | grass `#83AC38` | scrub green `#9AAB61` | night grass `#507165` |
+| Tall grass (brush) | deep grass `#47802E` | dry olive `#6A7A3A` | night reeds `#2C4C45` |
+| Tall grass, mid blades | grass `#5E8F3A` | sage `#868E50` | moonlit reeds `#3F6156` |
 | Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` | granite `#848C96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` | night bark `#4C4541` |
 | Tree lower foliage | dark leaf `#5F8E2C` | dark sage `#7F8C57` | deep pine `#2E4D4C` |
@@ -447,6 +449,22 @@ the arena before and after, in play in all three palettes, under
   pen with repeated wall joins, cover clusters and the existing player tanks.
   [Arena kit layout and collider handoff](../../../sandbox/asset_sources/arena-kit.md)
   records the one-metre root placement grid and collider choices.
+- Tall-grass brush (`tall_grass`) is generated like the kit, and reads as a
+  field of tall grass, not one plant: seven thin blades to a clump, straps
+  0.28 to 0.38 m wide at the foot tapering gently to a rounded end, 3.2 to
+  3.8 m long so the grass stands well above a tank's turret, each leaning
+  10 to 30 degrees in its own direction with a short sideways arc. The grass
+  shader droops them down and outward, so each bends in a smooth arc and
+  ends in a soft curve, never a spike. Blades are dark (`tall_grass`) or
+  mid (`tall_grass_light`) green, inked as props, with no pale band.
+  Patches stand one clump, turned at random, anywhere in each cell of an
+  even 1.1 m grid, so the blades fill the patch evenly without showing the
+  grid or a centre, over darker grass painted into the ground. Both roles
+  use the engine's grass shader (`shaders/mesh/grass`): the grass sways in
+  the wind, bends away from tanks, and, around the player's tank in brush
+  and the tanks the player sees in the same patch, fades in a soft circle
+  to 35 % opacity, truly alpha blended, with no ink and no dither, so the
+  tank reads clearly through it and anti-aliasing has nothing to flicker.
 - No textures are needed for the style itself. The ground's toon detail
   textures are ours, drawn by `sandbox/asset_sources/ground/ground_detail.py`
   (see Ground); no third-party texture is used.
