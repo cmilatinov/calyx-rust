@@ -115,11 +115,11 @@ patch from a side with no live tank in the same patch, wherever it is in
 sight: no model, HP bar, minimap blip or damage numbers, fading out as fog
 does. Firing from a patch reveals the shooter to everyone for the patch's
 reveal time (1.5 s by default), and sentries obey the same rule. Brush is
-not cover: it blocks no sight, shot or tank. The player's own tank shows
-translucent in brush, a half screen-door pattern without ink, and the grass
-fades out in a soft circle, a fine noise dither, around it, and around the tanks it sees in the same
-patch, so they show through; the grass sways and bends away from the tanks
-the player sees, never from one fog hides. Fog is current vision only and changes
+not cover: it blocks no sight, shot or tank. Around the player's tank in
+brush, and the tanks it sees in the same patch, the grass lies down in a soft
+circle, opening a clearing they show in, with no transparency or dither; the
+grass sways and bends away from the tanks the player sees, never from one
+fog hides. Fog is current vision only and changes
 nothing but what is drawn: hidden enemies still collide, shoot and take
 damage.
 

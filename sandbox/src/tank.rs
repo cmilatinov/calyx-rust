@@ -355,8 +355,6 @@ impl ComponentUpdate for ComponentTankController {
         let Some(mut controller) = this.read(scene, |component| *component) else {
             return;
         };
-        // The local player's tank shows translucent while it is in brush.
-        crate::brush::show_own_tank(scene, game_object);
 
         if crate::game_state::combat_paused(scene)
             || scene

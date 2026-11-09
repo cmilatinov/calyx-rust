@@ -310,99 +310,7 @@ fn brush_volumes_neither_block_sight_nor_count_as_arena_cover() {
 }
 
 #[test]
-fn the_local_players_tank_shows_translucent_in_brush() {
-    let mut scene = test_scene();
-    let player = tank(&mut scene, "Player", 0.0, 0.0, 1);
-    scene.add_component(player, ComponentTankHud::default());
-    let enemy = tank(&mut scene, "Enemy", 8.0, 0.0, 2);
-    let (opaque, ghost) = GHOST_MATERIALS[0];
-    let (opaque, ghost) = (
-        opaque.parse::<Uuid>().unwrap(),
-        ghost.parse::<Uuid>().unwrap(),
-    );
-    let part = |scene: &mut Scene, tank: GameObject| {
-        let part = scene.create(None, Some(tank));
-        scene.add_component(
-            part,
-            ComponentMesh {
-                material: AssetRef::from_id(opaque),
-                ..Default::default()
-            },
-        );
-        part
-    };
-    let body = part(&mut scene, player);
-    let enemy_body = part(&mut scene, enemy);
-    let material = |scene: &Scene, part: GameObject| {
-        scene
-            .read_component::<ComponentMesh, _, _>(part, |mesh| mesh.material.id())
-            .unwrap()
-    };
-    patch(&mut scene, 8.0, 0.0);
-
-    show_own_tank(&mut scene, player);
-    assert_eq!(material(&scene, body), opaque, "out of brush");
-    scene.set_world_transform(player, Transform::from_xyz(8.0, 0.0, 1.0).matrix());
-    show_own_tank(&mut scene, player);
-    show_own_tank(&mut scene, enemy);
-    assert_eq!(material(&scene, body), ghost, "in brush");
-    assert_eq!(
-        material(&scene, enemy_body),
-        opaque,
-        "only the player's own"
-    );
-    scene.set_world_transform(player, Transform::from_xyz(0.0, 0.0, 0.0).matrix());
-    show_own_tank(&mut scene, player);
-    assert_eq!(material(&scene, body), opaque, "back out");
-}
-
-#[test]
-fn ghost_materials_are_the_tank_materials_files() {
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("assets/game/materials/tanks");
-    let id = |path: std::path::PathBuf| {
-        let meta: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(path).unwrap()).unwrap();
-        meta["main"]["id"].as_str().unwrap().to_string()
-    };
-    let mut pairs = Vec::new();
-    for map in ["sunny", "sunbaked"] {
-        for role in [
-            "player_1",
-            "player_2",
-            "player_3",
-            "player_4",
-            "tracks_and_gun",
-            "wheels",
-        ] {
-            let ghost = root.join(map).join(format!("{role}_ghost.cxmat"));
-            let material: serde_json::Value =
-                serde_json::from_str(&std::fs::read_to_string(&ghost).unwrap()).unwrap();
-            let value = |name: &str| {
-                material["variables"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .find(|v| v["name"] == name)
-                    .unwrap()["value"]
-                    .clone()
-            };
-            assert_eq!(value("screen_door")["Float"], 0.5, "{role}");
-            assert_eq!(value("outline_style")["Uint"], 0, "{role}");
-            pairs.push((
-                id(root.join(map).join(format!("{role}.meta"))),
-                id(root.join(map).join(format!("{role}_ghost.meta"))),
-            ));
-        }
-    }
-    let table = GHOST_MATERIALS
-        .iter()
-        .map(|(a, b)| (a.to_string(), b.to_string()))
-        .collect::<Vec<_>>();
-    assert_eq!(table, pairs);
-}
-
-#[test]
-fn grass_bends_for_seen_tanks_and_thins_only_around_the_players_patch() {
+fn grass_bends_for_seen_tanks_and_parts_only_around_the_players_patch() {
     let mut scene = test_scene();
     let player = tank(&mut scene, "Player", 0.0, 0.0, 1);
     scene.add_component(player, ComponentTankHud::default());
@@ -419,7 +327,7 @@ fn grass_bends_for_seen_tanks_and_thins_only_around_the_players_patch() {
             .find(|b| b.position.x == at.0 && b.position.z == at.1)
             .map(|b| b.reveal_radius)
     };
-    // Out of the brush, every seen tank bends the grass and none thins it.
+    // Out of the brush, every seen tank bends the grass and none parts it.
     let benders = grass_benders(&scene);
     assert_eq!(benders.len(), 4);
     assert!(benders
@@ -435,7 +343,7 @@ fn grass_bends_for_seen_tanks_and_thins_only_around_the_players_patch() {
         "a hidden tank gives nothing away"
     );
 
-    // In the patch, the player and the tanks it sees there thin the grass.
+    // In the patch, the player and the tanks it sees there part the grass.
     let _ = scene.write_component::<ComponentID, _>(enemy, |id| id.visible = true);
     scene.set_world_transform(player, Transform::from_xyz(7.0, 0.0, 0.0).matrix());
     let benders = grass_benders(&scene);

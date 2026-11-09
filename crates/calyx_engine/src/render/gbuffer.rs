@@ -34,7 +34,8 @@ pub(crate) struct GrassFieldUniform {
     pub bend: f32,
     pub height: f32,
     pub bender_count: u32,
-    pub _padding: [f32; 2],
+    pub droop: f32,
+    pub _padding: f32,
     /// Each bender's ground position, bend radius and reveal radius.
     pub benders: [[f32; 4]; MAX_GRASS_BENDERS],
 }
@@ -61,6 +62,7 @@ impl GrassFieldUniform {
             sway: field.sway.max(0.0),
             sway_speed: field.sway_speed,
             bend: field.bend.max(0.0),
+            droop: field.droop.max(0.0),
             height: field.height.max(0.01),
             ..Default::default()
         };

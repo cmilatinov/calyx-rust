@@ -86,7 +86,7 @@ forward pass.
   `gbuffer.wgsl` (see Water in `docs/architecture/overview.md`), and every
   grass batch, whose shader is `shaders/mesh/grass`, with
   `shaders/mesh/grass_gbuffer.wgsl`: the PBR material, its vertices swayed
-  and bent and its fragments thinned (a fine noise dither) around benders by the scene's
+  and bent, and laid down in a clearing around revealing benders, by the scene's
   `ComponentGrassField`, which it reads as group 3 (`grass_field.wgsl`). A
   draw with any other shader takes the forward pass after lighting. The
   draw list is built once from the enabled meshes, so both passes skip the

@@ -1,5 +1,5 @@
 //! Tall grass that sways in the wind, bends away from the things moving
-//! through it, and thins out around them so they can be seen inside it.
+//! through it, and lies down around them so they can be seen inside it.
 
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
@@ -39,6 +39,11 @@ pub struct ComponentGrassField {
     /// metre of height.
     #[reflect_attr(min = 0.0, speed = 0.01)]
     pub bend: f32,
+    /// How far the grass droops down and outward from its mesh's origin, in
+    /// metres per metre of height, growing with the square of the height,
+    /// so straight blades bend in a smooth arc. 0 leaves them as modelled.
+    #[reflect_attr(min = 0.0, speed = 0.01)]
+    pub droop: f32,
     /// The height, in metres, a blade reaches full sway and bend at.
     #[reflect_attr(min = 0.01, speed = 0.05)]
     pub height: f32,
@@ -55,6 +60,7 @@ impl Default for ComponentGrassField {
             sway: 0.06,
             sway_speed: 1.7,
             bend: 0.18,
+            droop: 0.0,
             height: 3.4,
             benders: Vec::new(),
         }
@@ -75,9 +81,10 @@ pub struct GrassBender {
     pub position: Vec3,
     /// How far from it, in metres, the grass bends away.
     pub bend_radius: f32,
-    /// How far from it, in metres, the grass thins out so it shows through;
-    /// 0 thins nothing. The grass fades out towards it over the outer half
-    /// of the radius, leaving out more of its pixels the closer they are.
+    /// How far from it, in metres, the grass lies down out of the way, so it
+    /// stands in a clearing; 0 clears nothing. The grass lies down fully
+    /// within half the radius and rises again over the outer half. It stays
+    /// opaque: nothing dithers.
     pub reveal_radius: f32,
 }
 

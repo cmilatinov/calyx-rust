@@ -5,7 +5,7 @@
 // Tall grass's material shader: its materials are PBR materials, declared and shaded as
 // `shaders/mesh/pbr.wgsl` declares and shades them, so their bind group fits both. The geometry
 // pass draws a material with this shader with `shaders/mesh/grass_gbuffer.wgsl`, which sways and
-// bends the grass by the scene's `ComponentGrassField` and thins it around what it reveals; this
+// bends the grass by the scene's `ComponentGrassField` and parts it around what it reveals; this
 // forward entry, a copy of `pbr.wgsl`'s, only shades it still.
 
 // Material textures. Each sampler samples the texture bound just before it. The color
@@ -58,7 +58,7 @@ fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
     texels.emissive = textureSample(emissive_texture, emissive_sampler, in.uv).rgb;
     texels.occlusion = textureSample(occlusion_texture, occlusion_sampler, in.uv).r;
     let surface = pbr_surface(material, texels, in.normal, in.tangent);
-    if pbr_discards(material, surface, in.position.xy) {
+    if pbr_discards(material, surface) {
         discard;
     }
     var point: PbrShadingPoint;

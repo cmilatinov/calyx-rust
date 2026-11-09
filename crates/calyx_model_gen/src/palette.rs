@@ -107,7 +107,6 @@ pub const ROLES: &[Role] = &[
     // lighter blades between. Drawn with the grass shader (`GRASS_SHADER`).
     role("tall_grass", "#4F8C2F", "#6F7F3C", "#2F5049", 0.95),
     role("tall_grass_light", "#76A83A", "#9AA35A", "#4A6E5F", 0.95),
-    role("tall_grass_tip", "#A8CC5C", "#C6C483", "#6E9583", 0.95),
     role("rocks", "#B4B5AA", "#A29F96", "#848C96", 0.95),
     role("tree_trunks", "#A2855E", "#8F7960", "#4C4541", 0.95),
     role("tree_canopies", "#83B942", "#A4B479", "#3E6564", 0.95),
@@ -434,7 +433,7 @@ mod tests {
         .unwrap();
         let meta: Value = serde_json::from_str(&meta).unwrap();
         assert_eq!(meta["main"]["id"], GRASS_SHADER);
-        for name in ["tall_grass", "tall_grass_light", "tall_grass_tip"] {
+        for name in ["tall_grass", "tall_grass_light"] {
             for map in Map::ALL {
                 assert_eq!(find(name).unwrap().material(map)["shader"], GRASS_SHADER);
             }

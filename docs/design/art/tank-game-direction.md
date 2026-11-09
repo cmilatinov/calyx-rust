@@ -93,7 +93,6 @@ convention.
 | Grass tufts | grass `#83AC38` | scrub green `#9AAB61` | night grass `#507165` |
 | Tall grass (brush) | deep grass `#4F8C2F` | dry olive `#6F7F3C` | night reeds `#2F5049` |
 | Tall grass, light blades | grass `#76A83A` | sage `#9AA35A` | moonlit reeds `#4A6E5F` |
-| Tall grass, blade tips | light grass `#A8CC5C` | pale sage `#C6C483` | frosted reeds `#6E9583` |
 | Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` | granite `#848C96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` | night bark `#4C4541` |
 | Tree lower foliage | dark leaf `#5F8E2C` | dark sage `#7F8C57` | deep pine `#2E4D4C` |
@@ -402,22 +401,21 @@ sandbox --example water_test`) shows it in each palette.
   [Arena kit layout and collider handoff](../../../sandbox/asset_sources/arena-kit.md)
   records the one-metre root placement grid and collider choices.
 - Tall-grass brush (`tall_grass`) is generated like the kit: five big,
-  plain blades to a clump, straps 0.6 to 0.75 m wide at the foot narrowing
-  to a point, 3.4 to 3.9 m long, so the grass stands well above a tank's
-  turret. They lean out 18 to 42 degrees in every direction, their tips a
-  little further, so from the near top-down camera each blade shows its
-  length rather than reading as a star seen end-on. Each blade is a dark
-  (`tall_grass`) or mid (`tall_grass_light`) body with a light tip
-  (`tall_grass_tip`), inked as a prop. No round shapes: patches stand one
+  plain blades to a clump, straps 0.6 to 0.75 m wide at the foot tapering
+  gently to a rounded end a third as wide, 3.4 to 3.9 m long, so the grass
+  stands well above a tank's turret. They lean out 18 to 42 degrees in every
+  direction, and each bends in a smooth arc, curving sideways and drooping
+  down and outward in four segments, so from the near top-down camera each
+  blade shows its length and ends in a soft curve, never a spike. Blades are
+  dark (`tall_grass`) or mid (`tall_grass_light`) green, inked as props,
+  with no pale band. Patches stand one
   clump to each cell of an even grid over a darker ground tile, so the
-  blades' lean covers the ground. All three roles use the engine's grass
+  blades' lean covers the ground. Both roles use the engine's grass
   shader (`shaders/mesh/grass`): the grass sways in the wind, bends away
-  from tanks, and fades out in a soft circle, a fine noise dither without
-  ink, around the player's tank in brush and the tanks the player sees in
-  the same patch. The player's own tank in brush also uses the
-  `<role>_ghost` variants of its materials: the same colour with the PBR
-  shader's `screen_door` at 0.5 and outline style 0, since ink would ring
-  every gap in the pattern.
+  from tanks, and, around the player's tank in brush and the tanks the
+  player sees in the same patch, lies down out of the way in a soft circle,
+  opening a clearing the tank shows in. The grass stays opaque: no dither,
+  so anti-aliasing has nothing to flicker.
 - No textures are needed for the style itself.
 - Combat rounds reuse the showcase sphere and signal material: a 0.4 m
   round head and a 0.18 m wide, 1.6 m long ellipsoid tail, centred 0.8 m

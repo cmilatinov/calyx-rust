@@ -6,10 +6,9 @@
 //#include "shaders/mesh/grass_field.wgsl"
 
 // Tall grass's geometry pass: writes it into the G-buffer as `shaders/mesh/gbuffer.wgsl` writes
-// a PBR surface, from the same material, with two differences. The vertex stage sways the grass
-// in the wind and bends it away from the scene's grass benders (`grass_displacement`), and the
-// fragment stage leaves out the grass around the benders that reveal, in an ordered pattern
-// (`grass_reveals`), without ink where it thins, so what stands in the grass shows through.
+// a PBR surface, from the same material, with one difference: the vertex stage sways the grass
+// in the wind, bends it away from the scene's grass benders and lays it down around the benders
+// that reveal (`grass_displacement`), so what stands in the grass shows in a clearing.
 //
 // Group 2 is the material's own bind group, built for group 3 of `shaders/mesh/grass.wgsl`,
 // which declares it as `shaders/mesh/pbr.wgsl` does; group 3 is the grass field.
@@ -104,11 +103,7 @@ fn fs_main(in: PbrVertexOut) -> GBufferOut {
     texels.emissive = textureSample(emissive_texture, emissive_sampler, in.uv).rgb;
     texels.occlusion = textureSample(occlusion_texture, occlusion_sampler, in.uv).r;
     let surface = pbr_surface(material, texels, in.normal, in.tangent);
-    if pbr_discards(material, surface, in.position.xy) {
-        discard;
-    }
-    let reveal = grass_reveal(field, in.world_position);
-    if grass_reveals(reveal, in.position.xy) {
+    if pbr_discards(material, surface) {
         discard;
     }
     var out: GBufferOut;
@@ -121,8 +116,7 @@ fn fs_main(in: PbrVertexOut) -> GBufferOut {
         surface.metallic,
         surface.roughness,
         surface.occlusion,
-        // Where the grass thins, every gap in the pattern would draw ink: it draws none there.
-        select(f32(min(material.outline_style, 255u)) / 255.0, 0.0, reveal > 0.0),
+        f32(min(material.outline_style, 255u)) / 255.0,
     );
     out.emissive = vec4f(surface.emission, 1.0);
     return out;

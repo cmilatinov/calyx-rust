@@ -134,6 +134,11 @@ impl Author {
     /// grass a Foliage of the kit's `tall_grass` clumps packed over it. The
     /// Arena's Grass Field sways all of them and bends them around tanks.
     fn brush(&mut self) {
+        // The kit's tall blades arc over by drooping in the grass shader.
+        let grass_field = || ComponentGrassField {
+            droop: 0.32,
+            ..Default::default()
+        };
         /// The side of the grid cells a patch's clumps stand in, in metres.
         const GRASS_CELL: f32 = 1.6;
         let prefab = asset_id(&self.assets.join(format!(
@@ -220,12 +225,11 @@ impl Author {
         if self
             .scene
             .write_component::<ComponentGrassField, _>(self.arena, |field| {
-                *field = ComponentGrassField::default();
+                *field = grass_field();
             })
             .is_none()
         {
-            self.scene
-                .add_component(self.arena, ComponentGrassField::default());
+            self.scene.add_component(self.arena, grass_field());
         }
     }
 

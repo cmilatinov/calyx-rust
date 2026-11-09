@@ -72,7 +72,7 @@ fn fs_main(in: PbrVertexOut) -> GBufferOut {
     texels.emissive = textureSample(emissive_texture, emissive_sampler, in.uv).rgb;
     texels.occlusion = textureSample(occlusion_texture, occlusion_sampler, in.uv).r;
     let surface = pbr_surface(material, texels, in.normal, in.tangent);
-    if pbr_discards(material, surface, in.position.xy) {
+    if pbr_discards(material, surface) {
         discard;
     }
     var out: GBufferOut;
