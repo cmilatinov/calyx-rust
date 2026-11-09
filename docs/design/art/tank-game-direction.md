@@ -105,6 +105,20 @@ convention.
 | Water foam | sea foam `#E6F4EE` | cream foam `#ECE6D6` | pale foam `#9CBDCC` |
 | Ink (outlines) | `#121212` | `#121212` | `#121212` |
 
+The farmland ground and props add these roles (`calyx_model_gen::palette`);
+ground roles draw no ink, the creek bank draws the terrain's:
+
+| Role | Sunny Battlefield | Sunbaked | Moonlit |
+| --- | --- | --- | --- |
+| Darker grass patch | `#72A85B` | `#A99C83` | `#3B4952` |
+| Lighter grass patch | `#9DCB7D` | `#C8BDA6` | `#505E67` |
+| Gravel | `#B9B3A3` | `#A9A497` | `#5F6A72` |
+| Tilled field | `#987550` | `#A08562` | `#3A4750` |
+| Crop rows | `#6F9E36` | `#A3A766` | `#4F6D63` |
+| Worn tank tracks | `#7D6B50` | `#8E7B62` | `#33414A` |
+| Creek bank | as dirt `#A2855E` | `#968267` | `#4C5D62` |
+| Roof tiles | `#B4553D` | `#AF5E42` | slate `#55687A` |
+
 Roads must stay clearly lighter or darker than the ground; Sunbaked's road is
 one step darker than the sand, Sunny Battlefield's sand road is lighter than
 the grass, and Moonlit's moon dust road is 13 L lighter than the slate.
@@ -283,7 +297,8 @@ and read from the Far framing by shape, colour and motion: a river that
 meanders between carved banks, its surface rolling with waves that run
 downstream, shallow colour at the banks running to deep in the
 middle, and hard-edged foam along the shores, around rocks and drifting with
-the flow. Never a straight channel: a river bends, and its width changes. The
+the flow. Never a straight channel: a river bends, and its width changes. The arena's farmland quadrant has one
+(`sandbox/asset_sources/arena-kit.md`, Farmland front). The
 creek in `sandbox/assets/lookdev/water_test.cxscene` (built by `cargo run -p
 sandbox --example water_test`) shows it in each palette.
 

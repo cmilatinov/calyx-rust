@@ -1,0 +1,113 @@
+# The farmhouse's broken roof: a ridge beam with rafters down to the eaves
+# either side, three of one side's missing, two slabs of red tiles still on
+# them and one fallen inside. Decoration only, over a ruin 6 m square whose
+# walls are 1.6 m high. Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "ridge"
+kind = "box"
+role = "crate_frame"
+size = [6.6, 0.24, 0.24]
+bevel = 0.05
+segments = 2
+offset = [0, 2.55, 0]
+
+[[parts]]
+name = "rafter_0_0"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 0.2, 3.462]
+bevel = 0.04
+segments = 2
+offset = [-2.7, 1.9, -1.5]
+rotation = [-18.435, 0, 0]
+
+[[parts]]
+name = "rafter_0_1"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 0.2, 3.462]
+bevel = 0.04
+segments = 2
+offset = [-2.7, 1.9, 1.5]
+rotation = [18.435, 0, 0]
+
+[[parts]]
+name = "rafter_1_1"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 0.2, 3.462]
+bevel = 0.04
+segments = 2
+offset = [-1.35, 1.9, 1.5]
+rotation = [18.435, 0, 0]
+
+[[parts]]
+name = "rafter_2_1"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 0.2, 3.462]
+bevel = 0.04
+segments = 2
+offset = [0, 1.9, 1.5]
+rotation = [18.435, 0, 0]
+
+[[parts]]
+name = "rafter_3_1"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 0.2, 3.462]
+bevel = 0.04
+segments = 2
+offset = [1.35, 1.9, 1.5]
+rotation = [18.435, 0, 0]
+
+[[parts]]
+name = "rafter_4_0"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 0.2, 3.462]
+bevel = 0.04
+segments = 2
+offset = [2.7, 1.9, -1.5]
+rotation = [-18.435, 0, 0]
+
+[[parts]]
+name = "rafter_4_1"
+kind = "box"
+role = "crate_frame"
+size = [0.2, 0.2, 3.462]
+bevel = 0.04
+segments = 2
+offset = [2.7, 1.9, 1.5]
+rotation = [18.435, 0, 0]
+
+[[parts]]
+name = "tiles_0"
+kind = "box"
+role = "roof_tiles"
+size = [2.9, 0.14, 2.6]
+bevel = 0.04
+segments = 2
+offset = [1.9, 2.05, 1.45]
+rotation = [18.435, 0, 0]
+
+[[parts]]
+name = "tiles_1"
+kind = "box"
+role = "roof_tiles"
+size = [1.6, 0.14, 1.8]
+bevel = 0.04
+segments = 2
+offset = [-2.1, 1.85, 1.9]
+rotation = [18.435, 0, 0]
+
+[[parts]]
+name = "fallen_tiles"
+kind = "box"
+role = "roof_tiles"
+size = [2.2, 0.14, 1.6]
+bevel = 0.04
+segments = 2
+offset = [0.2, 0.25, -1.4]
+rotation = [-8, 25, 10]

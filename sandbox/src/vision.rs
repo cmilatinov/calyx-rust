@@ -116,13 +116,15 @@ pub(crate) fn cover_entry(start: Vec2, end: Vec2, cover: GroundRect) -> Option<f
     cover_span(start, end, cover).map(|(near, _)| near)
 }
 
-/// Whether an authored arena collider named `name` blocks sight: the walls
-/// and the boxes (crates and supply crates). Low cover such as barriers,
-/// sandbags and rocks stops rounds but not sight. A collider outside
-/// [`crate::collision::SIGHT_GROUP`] never blocks sight, whatever its name.
+/// Whether an authored arena collider named `name` blocks sight: the walls,
+/// the boxes (crates and supply crates) and the hedgerows' dense leaves.
+/// Low cover such as barriers, sandbags and rocks stops rounds but not
+/// sight. A collider outside [`crate::collision::SIGHT_GROUP`] never blocks
+/// sight, whatever its name.
 fn blocks_sight(name: &str) -> bool {
     name.starts_with("Arena Wall")
-        || (name.starts_with("Arena Cover") && (name.contains("Crate") || name.contains("Supply")))
+        || (name.starts_with("Arena Cover")
+            && (name.contains("Crate") || name.contains("Supply") || name.contains("Hedgerow")))
 }
 
 /// The arena's floor, perimeter walls included, each wall-height block of

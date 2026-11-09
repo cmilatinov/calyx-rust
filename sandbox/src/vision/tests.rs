@@ -214,15 +214,17 @@ fn sentry_behind(cover_name: &str) -> (Scene, GameObject, GameObject, GameObject
 }
 
 #[test]
-fn only_walls_and_boxes_block_sight() {
+fn only_walls_boxes_and_hedgerows_block_sight() {
     for (cover, blocks) in [
         ("Arena Cover Stack Crate", true),
+        ("Arena Cover Field Hedgerow", true),
         ("Arena Cover Left Supply", true),
         ("Arena Wall North 4", true),
         ("Arena Cover Centre Barrier", false),
         ("Arena Cover Right Sandbags", false),
         ("Arena Cover West Boulder", false),
         ("Arena Cover East Rock", false),
+        ("Arena Cover Farm Hay Bale 0", false),
     ] {
         let (mut scene, player, sentry, _) = sentry_behind(cover);
         apply_fog(&mut scene, player, &mut FogState::default());

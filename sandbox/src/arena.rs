@@ -303,7 +303,10 @@ mod tests {
         assert!(colliders > 50, "the authored pen and cover have collision");
         // Saved before colliders had groups, every collider keeps the default
         // groups, stopping hulls, rounds and sight alike, and saves unchanged;
-        // only brush volumes, which stop nothing, have their own.
+        // only the farmland creek's blockers and the bridge's rails stop
+        // tanks alone.
+        let mut tank_blockers = 0;
+        // Brush volumes, which stop nothing, have their own.
         for object in scene.descendants_with::<ComponentCollider>(arena) {
             if scene
                 .ancestor_with::<crate::brush::ComponentBrush>(object)
@@ -314,12 +317,20 @@ mod tests {
                 });
                 continue;
             }
+            let name = scene.name(object);
             scene.read_component::<ComponentCollider, _, _>(object, |collider| {
-                assert!(collider.groups.is_all(), "{}", scene.name(object));
-                let saved = serde_json::to_value(collider).unwrap();
-                assert!(saved.get("groups").is_none(), "{saved}");
+                if name.starts_with("Arena Creek Blocker") || name.starts_with("Arena Bridge Rail")
+                {
+                    assert_eq!(collider.groups, crate::collision::TANK_BLOCKER, "{name}");
+                    tank_blockers += 1;
+                } else {
+                    assert!(collider.groups.is_all(), "{name}");
+                    let saved = serde_json::to_value(collider).unwrap();
+                    assert!(saved.get("groups").is_none(), "{saved}");
+                }
             });
         }
+        assert!(tank_blockers > 10, "the creek has blockers");
         let registries = assets.registries.lock_read();
         let mut checked = HashSet::new();
         for object in scene.descendants_with::<ComponentMesh>(arena) {

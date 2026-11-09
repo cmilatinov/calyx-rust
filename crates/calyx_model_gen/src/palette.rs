@@ -68,6 +68,18 @@ pub const ROLES: &[Role] = &[
     role("ground_paving", "#BFB9AE", "#C0BCB6", "#9FA7AF", 1.0),
     role("ground_asphalt", "#53565A", "#5C5B55", "#35434D", 1.0),
     role("ground_marking", "#F3C84B", "#E6B84C", "#CDA559", 1.0),
+    // Ground variety for the arena's farmland front: grass patches one step
+    // darker and lighter than the ground, gravel, a tilled field, its crop
+    // rows, and the ruts tanks wear along their routes.
+    role("ground_grass_dark", "#72A85B", "#A99C83", "#3B4952", 1.0),
+    role("ground_grass_light", "#9DCB7D", "#C8BDA6", "#505E67", 1.0),
+    role("ground_gravel", "#B9B3A3", "#A9A497", "#5F6A72", 1.0),
+    role("ground_field", "#987550", "#A08562", "#3A4750", 1.0),
+    role("ground_crop", "#6F9E36", "#A3A766", "#4F6D63", 1.0),
+    role("ground_track", "#7D6B50", "#8E7B62", "#33414A", 1.0),
+    // A creek's carved banks: the dirt's colours, inked on the terrain's
+    // layer like the walls, so the ink line falls along the water's edge.
+    role("creek_bank", "#A2855E", "#968267", "#4C5D62", 1.0),
     role("walls", "#D6B275", "#AAA59D", "#5E6F81", 0.95),
     role("barriers", "#BFB9AE", "#C0BCB6", "#9FA7AF", 0.95),
     // The ramp and platform kerbs: the barriers' colours, drawn with the
@@ -101,6 +113,8 @@ pub const ROLES: &[Role] = &[
     role("explosive_red", "#BE382B", "#C43B27", "#E4513B", 0.95),
     role("sentry_armor", "#B9BBAE", "#C4BAA5", "#A5B9C5", 0.95),
     role("sentry_optic", "#88DBE3", "#79D0D8", "#9CDAE8", 0.95),
+    // The farm's red roof tiles; Moonlit's are cool slate.
+    role("roof_tiles", "#B4553D", "#AF5E42", "#55687A", 0.95),
     role("reticle_light", "#FCF9F3", "#F3F3F3", "#F3F3F3", 1.0),
     role("reticle_dark", "#243647", "#303030", "#3D3630", 1.0),
     Role {
@@ -168,7 +182,7 @@ impl Role {
             )
         {
             0
-        } else if matches!(self.name, "walls" | "kerbs") {
+        } else if matches!(self.name, "walls" | "kerbs" | "creek_bank") {
             TERRAIN_OUTLINE
         } else {
             PROP_OUTLINE
@@ -298,6 +312,12 @@ mod tests {
             "ground_paving",
             "ground_asphalt",
             "ground_marking",
+            "ground_grass_dark",
+            "ground_grass_light",
+            "ground_gravel",
+            "ground_field",
+            "ground_crop",
+            "ground_track",
         ] {
             for map in Map::ALL {
                 let material = find(name).unwrap().material(map);
@@ -318,7 +338,7 @@ mod tests {
     #[test]
     fn terrain_and_props_draw_on_their_own_outline_layers() {
         for (names, style) in [
-            (&["walls", "kerbs"][..], TERRAIN_OUTLINE),
+            (&["walls", "kerbs", "creek_bank"][..], TERRAIN_OUTLINE),
             (
                 &[
                     "barriers",

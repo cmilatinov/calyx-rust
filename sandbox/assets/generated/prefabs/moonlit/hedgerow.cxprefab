@@ -1,0 +1,137 @@
+{
+  "data": {
+    "components": {
+      "184cb2dc-900b-550b-acda-e97b52af9ae8": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "184cb2dc-900b-550b-acda-e97b52af9ae8",
+          "name": "middle",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "86ff88f6-c6a8-5ee7-8eb4-c67f22ab72de",
+          "mesh": "5b2f96ad-cd38-50c6-80fd-3284b99f6f36"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "5abac3b9-640e-5518-9938-8cbed6658858": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "5abac3b9-640e-5518-9938-8cbed6658858",
+          "name": "crown",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "c37c9b08-2047-5a03-9fa5-7d698089968e",
+          "mesh": "f96a816b-a448-5846-9ef2-86065f5e29db"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "64da1e03-1ed6-5f6e-84e1-4bbfa05d7580": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "64da1e03-1ed6-5f6e-84e1-4bbfa05d7580",
+          "name": "hedgerow",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "bcdf6008-d566-595d-b75f-344c7f4d64cd": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "bcdf6008-d566-595d-b75f-344c7f4d64cd",
+          "name": "lower",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "9c387719-19f9-56f4-bb59-93560fc55897",
+          "mesh": "76cc15fe-5ff6-5d1d-affe-e7d8dac3cf45"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "64da1e03-1ed6-5f6e-84e1-4bbfa05d7580": [
+        "bcdf6008-d566-595d-b75f-344c7f4d64cd",
+        "184cb2dc-900b-550b-acda-e97b52af9ae8",
+        "5abac3b9-640e-5518-9938-8cbed6658858"
+      ]
+    },
+    "roots": [
+      "64da1e03-1ed6-5f6e-84e1-4bbfa05d7580"
+    ]
+  },
+  "root": "64da1e03-1ed6-5f6e-84e1-4bbfa05d7580"
+}

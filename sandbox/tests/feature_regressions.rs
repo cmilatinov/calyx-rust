@@ -497,11 +497,14 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
     let scene = load_sandbox_scene(&copy, &assets);
     let mut runner = HeadlessSceneRunner::from_scene(scene);
     runner.step();
+    // What stops rounds: the farmland creek's blockers, which stop only
+    // tanks, are not among it.
+    let rounds = QueryFilter::only_fixed().groups(sandbox::collision::ROUNDS.into());
     let hit_distance = |origin, direction, length| {
         runner
             .scene()
             .physics
-            .cast_ray(origin, direction, length, true, QueryFilter::only_fixed())
+            .cast_ray(origin, direction, length, true, rounds)
             .unwrap_or_else(|| panic!("missing collider from {origin:?} toward {direction:?}"))
             .toi
     };
@@ -1830,4 +1833,48 @@ fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
     for style in &outline.styles {
         assert_eq!(style, &outline.styles[0]);
     }
+}
+
+/// The farmland's creek stops tanks at its bank, but rounds fly over it and
+/// sight crosses it: a tank driving south at it from the field west of the
+/// lane stops short of the water, then sees and hits a target on the far
+/// bank.
+#[test]
+fn the_creek_stops_tanks_but_not_rounds_or_sight() {
+    // North of the creek, facing south across it; its north shore here is
+    // at about z = 4.8.
+    let (mut runner, tank) = raised_area_runner(vec3(-26.0, 0.0, 10.0), std::f32::consts::PI, 60);
+    hold(&mut runner, Some(egui::Key::W), 3.0, 60);
+    let stopped = runner.scene().world_transform(tank).position;
+    assert!(
+        stopped.z < 8.0,
+        "the tank drove towards the creek: {stopped:?}"
+    );
+    assert!(
+        stopped.z > 4.8,
+        "the tank drove into the creek: {stopped:?}"
+    );
+    // On the far bank, south of the water.
+    let target = object_named(runner.scene(), "Target A");
+    let mut pose = runner.scene().world_transform(target);
+    pose.position = vec3(-25.0, pose.position.y, -4.5);
+    runner
+        .scene_mut()
+        .set_world_transform(target, pose.matrix());
+    hold(&mut runner, None, 1.0, 60);
+    assert!(runner.scene().is_visible(target), "sight crosses the creek");
+    aim_at(&mut runner, vec3(-25.0, 0.0, -4.5));
+    fire_until_hit(&mut runner, target);
+}
+
+/// The bridge carries the west sand lane over the creek: a tank at the
+/// lane's south end, past the creek, drives north over it to the field.
+#[test]
+fn tanks_cross_the_creek_on_the_bridge() {
+    let end = drive_from(vec3(-20.0, 0.0, -5.0), 0.0, 60, 3.0);
+    assert!(
+        end.z > 8.0,
+        "the tank stopped at {end:?}, short of the far bank"
+    );
+    assert!((end.x + 20.0).abs() < 0.1, "unexpected deflection: {end:?}");
 }

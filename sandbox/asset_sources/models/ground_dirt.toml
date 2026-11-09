@@ -1,4 +1,5 @@
-# One-metre tile, with a level top at 0.1 m. Place at y=-0.1.
+# One-metre tile, with a level top at 0.1 m. Place at y=-0.1. Flat ground
+# casts no shadow worth drawing, so it casts none.
 [[parts]]
 name = "surface"
 kind = "box"
@@ -6,3 +7,4 @@ role = "ground_dirt"
 size = [1.0, 0.1, 1.0]
 bevel = 0.0
 segments = 1
+cast_shadows = false

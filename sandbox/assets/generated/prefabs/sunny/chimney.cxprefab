@@ -1,0 +1,169 @@
+{
+  "data": {
+    "components": {
+      "2f27197d-ad40-575c-adbd-71af3fe0b929": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "2f27197d-ad40-575c-adbd-71af3fe0b929",
+          "name": "cap",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "557831fe-bbcd-51a6-8841-438628adc698",
+          "mesh": "bc8ce833-8ba8-5723-a5ac-933267fb57f2"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              3.6,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "331448ae-321f-5099-aaae-81b86fe6b700": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "331448ae-321f-5099-aaae-81b86fe6b700",
+          "name": "flue",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "f83d46a7-3bce-5948-8528-baf2bf3dfa12",
+          "mesh": "1e8c8dcb-028e-50ba-b7f0-1f1a14b37d32"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              3.76,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "c22c2a88-caa7-5609-aa01-fd33bd0632af": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "c22c2a88-caa7-5609-aa01-fd33bd0632af",
+          "name": "band",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "557831fe-bbcd-51a6-8841-438628adc698",
+          "mesh": "e793f00c-4440-594a-8744-fa59d57c6245"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              3.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "c5ffcb28-a62e-5128-b3b7-0b16f0936bcd": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "c5ffcb28-a62e-5128-b3b7-0b16f0936bcd",
+          "name": "stack",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "4dfb63e3-33f9-51c3-bc0b-4d6fe83895da",
+          "mesh": "fe5326bd-3bf8-5cfc-a114-7a6b66ae3184"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "f0322777-b14c-5db9-b05e-06c53064a595": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "f0322777-b14c-5db9-b05e-06c53064a595",
+          "name": "chimney",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "f0322777-b14c-5db9-b05e-06c53064a595": [
+        "c5ffcb28-a62e-5128-b3b7-0b16f0936bcd",
+        "c22c2a88-caa7-5609-aa01-fd33bd0632af",
+        "2f27197d-ad40-575c-adbd-71af3fe0b929",
+        "331448ae-321f-5099-aaae-81b86fe6b700"
+      ]
+    },
+    "roots": [
+      "f0322777-b14c-5db9-b05e-06c53064a595"
+    ]
+  },
+  "root": "f0322777-b14c-5db9-b05e-06c53064a595"
+}

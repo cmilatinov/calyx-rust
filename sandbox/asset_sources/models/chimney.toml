@@ -1,0 +1,39 @@
+# Ruined farmhouse chimney: a wall-coloured stack 3.8 m high with a stone band
+# and cap, all on the terrain's ink layer like the walls, standing above the broken walls. Regenerate with calyx_model_gen;
+# dimensions in metres.
+
+[[parts]]
+name = "stack"
+kind = "box"
+role = "walls"
+size = [1.2, 3.6, 1]
+bevel = 0.1
+segments = 2
+offset = [0, 0, 0]
+
+[[parts]]
+name = "band"
+kind = "box"
+role = "kerbs"
+size = [1.36, 0.22, 1.16]
+bevel = 0.06
+segments = 2
+offset = [0, 3, 0]
+
+[[parts]]
+name = "cap"
+kind = "box"
+role = "kerbs"
+size = [1.4, 0.18, 1.2]
+bevel = 0.06
+segments = 2
+offset = [0, 3.6, 0]
+
+[[parts]]
+name = "flue"
+kind = "box"
+role = "ground_asphalt"
+size = [0.5, 0.06, 0.4]
+bevel = 0
+segments = 1
+offset = [0, 3.76, 0]
