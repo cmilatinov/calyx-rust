@@ -91,6 +91,7 @@ convention.
 | Sentry armor | pale steel `#B9BBAE` | bone steel `#C4BAA5` | cool steel `#A5B9C5` |
 | Sentry optic | pale cyan `#88DBE3` | turquoise `#79D0D8` | ice cyan `#9CDAE8` |
 | Grass tufts | grass `#83AC38` | scrub green `#9AAB61` | night grass `#507165` |
+| Tall grass (brush) | deep grass `#5E9A34` | dry olive `#7F8F45` | night reeds `#3B5F56` |
 | Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` | granite `#848C96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` | night bark `#4C4541` |
 | Tree lower foliage | dark leaf `#5F8E2C` | dark sage `#7F8C57` | deep pine `#2E4D4C` |
@@ -383,6 +384,15 @@ sandbox --example water_test`) shows it in each palette.
   pen with repeated wall joins, cover clusters and the existing player tanks.
   [Arena kit layout and collider handoff](../../../sandbox/asset_sources/arena-kit.md)
   records the one-metre root placement grid and collider choices.
+- Tall-grass brush (`tall_grass`) is generated like the kit: six fan cards
+  of three tapered blades, leaning outward about 34 degrees so a clump reads
+  from the Far camera, in the `tall_grass` role with the lighter `grass`
+  tufts' role between. A clump stands about 1.1 m high and 2 m across, as
+  tall as a tank's turret, and patches pack clumps about 1.2 m apart so they
+  read as one dark mass. The player's own tank in brush uses the
+  `<role>_ghost` variants of its materials: the same colour with the PBR
+  shader's `screen_door` at 0.5 and outline style 0, since ink would ring
+  every gap in the pattern.
 - No textures are needed for the style itself.
 - Combat rounds reuse the showcase sphere and signal material: a 0.4 m
   round head and a 0.18 m wide, 1.6 m long ellipsoid tail, centred 0.8 m

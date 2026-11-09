@@ -355,6 +355,8 @@ impl ComponentUpdate for ComponentTankController {
         let Some(mut controller) = this.read(scene, |component| *component) else {
             return;
         };
+        // The local player's tank shows translucent while it is in brush.
+        crate::brush::show_own_tank(scene, game_object);
 
         if crate::game_state::combat_paused(scene)
             || scene
@@ -1017,6 +1019,10 @@ pub(crate) fn spawn_round(
             ..Default::default()
         },
     );
+    // Firing from brush gives the shooter away.
+    if let Some(shooter) = projectile.shooter.game_object(scene) {
+        crate::brush::reveal_shooter(scene, shooter);
+    }
     crate::combat_vfx::spawn_round_visual(scene, projectile_object);
     let [muzzle, smoke] = crate::combat_vfx::spawn_shot(
         scene,
@@ -2101,6 +2107,74 @@ mod tests {
             !scene.objects().any(|object| object == projectile),
             "the round should be destroyed on the wall"
         );
+    }
+
+    #[test]
+    fn round_crosses_brush_and_hits_the_target_in_it() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        add_fixed_box(
+            &mut scene,
+            vec3(0.0, 0.75, 4.0),
+            vec3(3.0, 0.75, 3.0),
+            crate::collision::BRUSH,
+        );
+        let projectile = scene.create(None, None);
+        scene.add_component(
+            projectile,
+            ComponentProjectile {
+                direction: vec3(0.0, 0.0, 1.0),
+                speed: 10.0,
+                damage: 25.0,
+                lifetime_remaining: 1.0,
+                radius: 0.1,
+                ..Default::default()
+            },
+        );
+        let target = scene.create(None, None);
+        scene.set_world_transform(target, Transform::from_xyz(0.0, 0.0, 5.0).matrix());
+        scene.add_component(target, ComponentProjectileTarget::default());
+        scene.add_component(
+            target,
+            ComponentHealth {
+                current_health: 60.0,
+                max_health: 60.0,
+                ..Default::default()
+            },
+        );
+        scene.prepare();
+
+        update_projectile(&mut scene, projectile, 0.2);
+        scene.flush_deletes();
+        assert!(
+            scene.objects().any(|object| object == projectile),
+            "brush lets the round in"
+        );
+        update_projectile(&mut scene, projectile, 0.5);
+        scene.flush_deletes();
+        let health = scene
+            .read_component::<ComponentHealth, _, _>(target, |health| health.current_health)
+            .unwrap();
+        assert_eq!(health, 35.0, "the round hits the tank in the brush");
+    }
+
+    #[test]
+    fn hull_drives_through_brush() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        add_fixed_box(
+            &mut scene,
+            vec3(0.0, 0.75, 3.0),
+            vec3(2.0, 0.75, 1.0),
+            crate::collision::BRUSH,
+        );
+        scene.prepare();
+        let movement = resolve_hull_movement(
+            &scene,
+            &Transform::from_xyz(0.0, 0.0, 0.0),
+            vec3(0.0, 0.0, 4.0),
+        );
+        assert_eq!(movement, vec3(0.0, 0.0, 4.0), "brush is not cover");
+        let mut transform = Transform::from_xyz(0.0, 0.0, 3.0);
+        assert!(turn_hull(&scene, &mut transform, 1.0), "nor stops a turn");
     }
 
     #[test]

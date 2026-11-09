@@ -475,7 +475,7 @@ pub(super) fn paint_map(
         let opacity = if blip.friendly {
             1.0
         } else {
-            let visible = state.vision.visible(blip.position);
+            let visible = state.vision.sees_unit(blip.id, blip.position);
             blip.presence.unwrap_or(if visible { 1.0 } else { 0.0 })
         };
         if opacity <= 0.0 {

@@ -80,8 +80,25 @@ fn pbr_surface(
     return surface;
 }
 
-// Whether `material` discards a fragment of `surface`: its base color alpha is below the
-// `alpha_cutoff`, as glTF's MASK mode.
-fn pbr_discards(material: MaterialProperties, surface: PbrSurface) -> bool {
-    return surface.albedo.a < material.alpha_cutoff;
+// Whether `material` discards the fragment of `surface` at framebuffer position `pixel`: its
+// base color alpha is below the `alpha_cutoff`, as glTF's MASK mode, or the pixel is one the
+// material's `screen_door` leaves out.
+fn pbr_discards(material: MaterialProperties, surface: PbrSurface, pixel: vec2f) -> bool {
+    return surface.albedo.a < material.alpha_cutoff || screen_door_hides(material.screen_door, pixel);
+}
+
+// Whether a surface leaving out `fraction` of its pixels leaves out the one at `pixel`, by a 4x4
+// Bayer matrix: the pixels left out spread evenly, a checkerboard at one half.
+fn screen_door_hides(fraction: f32, pixel: vec2f) -> bool {
+    if fraction <= 0.0 {
+        return false;
+    }
+    var bayer = array<f32, 16>(
+        0.0, 8.0, 2.0, 10.0,
+        12.0, 4.0, 14.0, 6.0,
+        3.0, 11.0, 1.0, 9.0,
+        15.0, 7.0, 13.0, 5.0,
+    );
+    let cell = vec2u(pixel) % vec2u(4u);
+    return (bayer[cell.y * 4u + cell.x] + 0.5) / 16.0 < fraction;
 }

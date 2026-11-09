@@ -87,6 +87,9 @@ pub const ROLES: &[Role] = &[
     role("hazard_yellow", "#F3C84B", "#E6B84C", "#CDA559", 0.95),
     role("hazard_black", "#303038", "#303030", "#30373F", 0.95),
     role("grass", "#83AC38", "#9AAB61", "#507165", 0.95),
+    // Stealth brush: tall grass a step darker than the tufts and the
+    // ground, so a patch reads as one dark mass from the Far camera.
+    role("tall_grass", "#5E9A34", "#7F8F45", "#3B5F56", 0.95),
     role("rocks", "#B4B5AA", "#A29F96", "#848C96", 0.95),
     role("tree_trunks", "#A2855E", "#8F7960", "#4C4541", 0.95),
     role("tree_canopies", "#83B942", "#A4B479", "#3E6564", 0.95),

@@ -110,7 +110,14 @@ over 0.3 s and one that dies fades it out, and an enemy that leaves sight
 stays drawn
 while its HP bar and minimap blip fade out over the same time, then hides.
 An enemy that comes into sight shows at once and its HP bar and blip fade
-in. Fog is current vision only and changes
+in. Tall-grass brush (`sandbox/src/brush.rs`) hides an enemy tank inside a
+patch from a side with no live tank in the same patch, wherever it is in
+sight: no model, HP bar, minimap blip or damage numbers, fading out as fog
+does. Firing from a patch reveals the shooter to everyone for the patch's
+reveal time (1.5 s by default), and sentries obey the same rule. Brush is
+not cover: it blocks no sight, shot or tank. The player's own tank shows
+translucent in brush, a half screen-door pattern without ink, and the grass
+sways and bends away from the tanks the player sees in it. Fog is current vision only and changes
 nothing but what is drawn: hidden enemies still collide, shoot and take
 damage.
 

@@ -99,6 +99,10 @@ fn fire_at_target(scene: &mut Scene, game_object: GameObject, sentry: &mut Compo
     if distance <= f32::EPSILON || distance > sentry.range {
         return;
     }
+    // Brush hides a tank from a sentry outside its patch, as from a tank.
+    if crate::brush::hides_from(scene, transform.position, target) {
+        return;
+    }
 
     let direction = flatten_xz(offset);
     transform.rotation = yaw_rotation(&direction);

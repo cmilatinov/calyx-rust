@@ -16,6 +16,8 @@ pub const HULL_GROUP: u32 = 1 << 0;
 pub const ROUNDS_GROUP: u32 = 1 << 1;
 /// Group 3: colliders that block sight, for fog of war and the minimap.
 pub const SIGHT_GROUP: u32 = 1 << 2;
+/// Group 4: the volumes of brush patches, which stop nothing.
+pub const BRUSH_GROUP: u32 = 1 << 3;
 
 /// What the hull's sweep and turn ask with: only colliders in
 /// [`HULL_GROUP`] stop it.
@@ -29,6 +31,11 @@ pub const SIGHT: CollisionGroups = CollisionGroups::new(SIGHT_GROUP, SIGHT_GROUP
 /// The groups of a collider that stops tanks but not rounds or sight, such
 /// as water.
 pub const TANK_BLOCKER: CollisionGroups = CollisionGroups::new(HULL_GROUP, u32::MAX);
+
+/// The groups of a brush patch's volumes ([`crate::brush`]): a member of
+/// [`BRUSH_GROUP`] only, interacting with nothing, so they stop no tank,
+/// round or sight and take part in no contact.
+pub const BRUSH: CollisionGroups = CollisionGroups::new(BRUSH_GROUP, 0);
 
 #[cfg(test)]
 mod tests {
@@ -46,5 +53,12 @@ mod tests {
         assert!(TANK_BLOCKER.interacts_with(&HULL));
         assert!(!TANK_BLOCKER.interacts_with(&ROUNDS));
         assert!(!TANK_BLOCKER.interacts_with(&SIGHT));
+    }
+
+    #[test]
+    fn brush_stops_nothing() {
+        for check in [HULL, ROUNDS, SIGHT, CollisionGroups::ALL] {
+            assert!(!BRUSH.interacts_with(&check));
+        }
     }
 }

@@ -10,8 +10,14 @@
 //! disables its lights and particle systems, and restores exactly what it
 //! changed once the object is seen again. What the side stops seeing stays
 //! for [`FADE_TIME`] while it fades from the HUD and fog closes over it.
+//!
+//! Brush ([`crate::brush`]) hides an enemy tank on top of that: a side sees
+//! a tank in a patch of tall grass only from inside the same patch, or for a
+//! while after the tank fires from it. [`TeamVision::sees_unit`] applies
+//! both, for fog and the HUD alike.
 
 use crate::arena::ComponentArena;
+use crate::brush::BrushPatches;
 use crate::combat::{is_tank_combatant, same_side};
 use crate::combat_vfx::ComponentCombatEffectLifetime;
 use crate::hud::ComponentTankHud;
@@ -258,6 +264,8 @@ pub(crate) struct VisionFrame {
     pub arena: Option<ArenaGeometry>,
     /// Every tank combatant, in scene order.
     tanks: Vec<GameObject>,
+    /// The scene's patches of brush.
+    brush: BrushPatches,
 }
 
 impl VisionFrame {
@@ -269,6 +277,7 @@ impl VisionFrame {
                 .objects()
                 .filter(|&object| is_tank_combatant(scene, object))
                 .collect(),
+            brush: BrushPatches::read(scene),
         }
     }
 
@@ -287,6 +296,7 @@ impl VisionFrame {
             player,
             self.tanks.iter().copied(),
             self.sight_blockers(),
+            &self.brush,
         )
     }
 }
@@ -321,25 +331,54 @@ pub(crate) struct SightRays {
 pub(crate) struct TeamVision {
     pub viewers: Vec<Viewer>,
     pub cover: Vec<GroundRect>,
+    /// The enemy tanks brush hides from the side wherever they are in its
+    /// sight; see [`crate::brush`].
+    pub concealed: Vec<Uuid>,
 }
 
 impl TeamVision {
     /// The vision of `player`'s side: every live tank on `player`'s team,
     /// `player` included, sees over `cover`.
     pub fn of_player(scene: &Scene, player: GameObject, cover: Vec<GroundRect>) -> Self {
-        Self::of_tanks(scene, player, scene.objects(), cover)
+        Self::of_tanks(
+            scene,
+            player,
+            scene.objects(),
+            cover,
+            &BrushPatches::read(scene),
+        )
     }
 
     /// [`Self::of_player`], looking for the side's tanks only among
-    /// `candidates`, in their order.
+    /// `candidates`, in their order, with `brush` hiding the enemy tanks in
+    /// it.
     fn of_tanks(
         scene: &Scene,
         player: GameObject,
         candidates: impl Iterator<Item = GameObject>,
         cover: Vec<GroundRect>,
+        brush: &BrushPatches,
     ) -> Self {
-        let viewers = candidates
-            .filter(|&object| is_live_tank(scene, object) && is_friendly(scene, player, object))
+        let (friends, enemies): (Vec<_>, Vec<_>) = candidates
+            .filter(|&object| is_live_tank(scene, object))
+            .partition(|&object| is_friendly(scene, player, object));
+        let viewer_patches = friends
+            .iter()
+            .map(|&friend| brush.patch_of(scene, friend))
+            .collect::<Vec<_>>();
+        let concealed = enemies
+            .into_iter()
+            .filter(|&enemy| {
+                crate::brush::conceals(
+                    brush.patch_of(scene, enemy),
+                    crate::brush::is_revealed(scene, enemy),
+                    viewer_patches.iter().copied(),
+                )
+            })
+            .map(|enemy| scene.uuid(enemy))
+            .collect();
+        let viewers = friends
+            .into_iter()
             .filter_map(|object| {
                 let range = scene
                     .read_component::<ComponentTankController, _, _>(object, |controller| {
@@ -352,7 +391,11 @@ impl TeamVision {
                 })
             })
             .collect();
-        Self { viewers, cover }
+        Self {
+            viewers,
+            cover,
+            concealed,
+        }
     }
 
     /// Reads the scene's arena cover and `player`'s side's vision over it.
@@ -384,6 +427,13 @@ impl TeamVision {
             (point - viewer.position).norm() <= viewer.range
                 && self.clear_line(viewer.position, point)
         })
+    }
+
+    /// Whether the side sees the unit with id `id` standing at the ground
+    /// point `position`: brush does not hide it, and the side sees the
+    /// point.
+    pub fn sees_unit(&self, id: Uuid, position: Vec2) -> bool {
+        !self.concealed.contains(&id) && self.visible(position)
     }
 
     /// `count` evenly spaced sight rays of every viewer.
@@ -573,7 +623,7 @@ fn sighting(
     if !is_unit(scene, object) {
         return None;
     }
-    seen(is_friendly(scene, viewer, object) || vision.visible(position))
+    seen(is_friendly(scene, viewer, object) || vision.sees_unit(scene.uuid(object), position))
 }
 
 /// Whether `object` is a unit: a tank, sentry or practice target.

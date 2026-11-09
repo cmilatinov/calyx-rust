@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "b6c11c29-4c6e-50ff-82fa-69f065d62263",
+    "name": "game/materials/tanks/sunbaked/player_4_ghost",
+    "display_name": "player_4_ghost",
+    "type_uuid": "f98a7f41-84d4-482d-b7af-a670b07035ae"
+  },
+  "inner": []
+}

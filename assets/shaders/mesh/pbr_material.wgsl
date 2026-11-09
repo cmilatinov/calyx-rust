@@ -29,4 +29,8 @@ struct MaterialProperties {
     // (the default), N for the effect's style N - 1. The geometry pass stores it in the
     // material target's alpha.
     outline_style: u32,
+    // The fraction of the surface's pixels left out in an ordered 4x4 pattern, so what is behind
+    // shows through: translucency for the opaque, deferred path, as on a tank hidden in brush.
+    // Defaults to 0, which leaves none out; 1 leaves out every pixel.
+    screen_door: f32,
 };

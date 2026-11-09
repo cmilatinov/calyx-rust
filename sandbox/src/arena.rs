@@ -302,8 +302,18 @@ mod tests {
         let colliders = scene.descendants_with::<ComponentCollider>(arena).count();
         assert!(colliders > 50, "the authored pen and cover have collision");
         // Saved before colliders had groups, every collider keeps the default
-        // groups, stopping hulls, rounds and sight alike, and saves unchanged.
+        // groups, stopping hulls, rounds and sight alike, and saves unchanged;
+        // only brush volumes, which stop nothing, have their own.
         for object in scene.descendants_with::<ComponentCollider>(arena) {
+            if scene
+                .ancestor_with::<crate::brush::ComponentBrush>(object)
+                .is_some()
+            {
+                scene.read_component::<ComponentCollider, _, _>(object, |collider| {
+                    assert_eq!(collider.groups, crate::collision::BRUSH);
+                });
+                continue;
+            }
             scene.read_component::<ComponentCollider, _, _>(object, |collider| {
                 assert!(collider.groups.is_all(), "{}", scene.name(object));
                 let saved = serde_json::to_value(collider).unwrap();

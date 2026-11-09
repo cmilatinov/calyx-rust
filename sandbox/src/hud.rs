@@ -585,7 +585,9 @@ fn paint_world(
         let opacity = if friendly {
             1.0
         } else {
-            let visible = map.vision.visible(vec2(position.x, position.z));
+            let visible = map
+                .vision
+                .sees_unit(scene.uuid(object), vec2(position.x, position.z));
             hud.fog
                 .presence(scene.uuid(object))
                 .unwrap_or(if visible { 1.0 } else { 0.0 })
@@ -683,8 +685,9 @@ fn paint_world(
             let at = target.map_or(hit.position, |target| {
                 scene.world_transform(target).position
             });
+            // Brush hides the numbers of a tank it hides.
             if !target.is_some_and(|target| crate::vision::is_friendly(scene, player, target))
-                && !map.vision.visible(vec2(at.x, at.z))
+                && !map.vision.sees_unit(hit.target, vec2(at.x, at.z))
             {
                 continue;
             }
