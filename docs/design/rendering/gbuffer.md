@@ -84,10 +84,15 @@ forward pass.
   `shaders/mesh/pbr`, and every water batch, whose shader is
   `shaders/mesh/water`, with `shaders/mesh/water_gbuffer.wgsl` in place of
   `gbuffer.wgsl` (see Water in `docs/architecture/overview.md`), and every
-  grass batch, whose shader is `shaders/mesh/grass`, with
-  `shaders/mesh/grass_gbuffer.wgsl`: the PBR material, its vertices swayed
-  and bent, and laid down in a clearing around revealing benders, by the scene's
-  `ComponentGrassField`, which it reads as group 3 (`grass_field.wgsl`). A
+  blended ground batch, whose shader is `shaders/mesh/ground`, with
+  `shaders/mesh/ground_gbuffer.wgsl` (see Terrain there), and every grass
+  batch, whose shader is `shaders/mesh/grass`, with
+  `shaders/mesh/grass_gbuffer.wgsl`: the PBR material, its vertices drooped,
+  swayed and bent by the scene's `ComponentGrassField`, which it reads as
+  group 3 (`grass_field.wgsl`), leaving out the grass that fades around
+  revealing benders; `shaders/mesh/grass.wgsl` draws that grass after the
+  lighting and forward passes, alpha blended and lit through `pbr_lighting`,
+  with the field at group 0 binding 8 (see `MeshRenderer::render_grass`). A
   draw with any other shader takes the forward pass after lighting. The
   draw list is built once from the enabled meshes, so both passes skip the
   same disabled meshes, and with the renderer's `mesh_cull_mode`.
@@ -101,7 +106,10 @@ forward pass.
   the masked shadow pass binds it. The water pass binds a water material's
   group 3, built for `water.wgsl`, the same way, and writes each facet's
   flat normal as both normals, its colour, its roughness and outline style,
-  and its glints as emission. It reads the material through the same
+  and its glints as emission. The ground pass binds a ground material's
+  group 3, built for `ground.wgsl`, and writes the blended colour, the
+  interpolated normal as both normals, the roughness and the outline style,
+  with no emission. It reads the material through the same
   `pbr_surface` that `pbr.wgsl` declares, and discards the fragments below
   the material's `alpha_cutoff`.
 - It owns the depth: it clears it and tests `Less` in the draw order, so of

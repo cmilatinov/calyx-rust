@@ -228,21 +228,23 @@ struct GeometryShader {
     material_shader: AssetId,
 }
 
-/// Draws the scene's PBR meshes and water into the G-buffer and shows a
-/// target in the debug view. It owns the targets, created on the first
-/// frame.
+/// Draws the scene's PBR meshes, water, blended ground and grass into the
+/// G-buffer and shows a target in the debug view. It owns the targets,
+/// created on the first frame.
 pub(crate) struct GBufferRenderer {
     /// The PBR surfaces, `shaders/mesh/gbuffer.wgsl` over the PBR shader's
     /// draws, then the water, `shaders/mesh/water_gbuffer.wgsl` over the
-    /// water shader's, then the grass, `shaders/mesh/grass_gbuffer.wgsl`
-    /// over the grass shader's. Only these draws enter the geometry pass.
-    geometry: [GeometryShader; 3],
+    /// water shader's, then the blended ground,
+    /// `shaders/mesh/ground_gbuffer.wgsl` over the ground shader's, then
+    /// the grass, `shaders/mesh/grass_gbuffer.wgsl` over the grass
+    /// shader's. Only these draws enter the geometry pass.
+    geometry: [GeometryShader; 4],
     /// `shaders/deferred/gbuffer_view.wgsl`, the debug view.
     view_shader: Ref<Shader>,
     targets: Option<GBufferTargets>,
     /// The camera's bind group for each of [`Self::geometry`]'s shaders,
     /// built for its own group 0.
-    camera_bind_groups: [CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>; 3],
+    camera_bind_groups: [CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>; 4],
     /// The grass field the grass's geometry shader reads as its group 3,
     /// and its bind group.
     grass_field_buffer: wgpu::Buffer,
@@ -268,6 +270,7 @@ impl GBufferRenderer {
             geometry: [
                 geometry("shaders/mesh/gbuffer", "shaders/mesh/pbr")?,
                 geometry("shaders/mesh/water_gbuffer", WATER_SHADER)?,
+                geometry("shaders/mesh/ground_gbuffer", "shaders/mesh/ground")?,
                 geometry("shaders/mesh/grass_gbuffer", GRASS_SHADER)?,
             ],
             view_shader: SceneRendererError::load::<Shader>(
@@ -306,8 +309,9 @@ impl GBufferRenderer {
     }
 
     /// The material shaders whose draws the geometry pass draws: the PBR,
-    /// the water and the grass shader. The forward pass draws the others.
-    pub(crate) fn deferred_shaders(&self) -> [AssetId; 3] {
+    /// the water, the ground and the grass shader. The forward pass draws the
+    /// others.
+    pub(crate) fn deferred_shaders(&self) -> [AssetId; 4] {
         self.geometry
             .each_ref()
             .map(|geometry| geometry.material_shader)
@@ -329,12 +333,24 @@ impl GBufferRenderer {
         }
     }
 
+    /// The grass material shader, whose draws the geometry pass draws where
+    /// the grass does not fade and the transparent grass pass where it does.
+    pub(crate) fn grass_shader_id(&self) -> AssetId {
+        self.geometry[3].material_shader
+    }
+
+    /// The grass field's uniform buffer, which [`Self::render`] fills each
+    /// frame for both grass passes.
+    pub(crate) fn grass_field_buffer(&self) -> &wgpu::Buffer {
+        &self.grass_field_buffer
+    }
+
     /// Seconds on the grass clock, wrapped.
     pub fn grass_time(&self) -> f32 {
         (self.grass_clock.elapsed().as_secs_f64() % GRASS_TIME_WRAP) as f32
     }
 
-    /// Draws every batch of `draw_list` that uses the PBR, the water or the
+    /// Draws every batch of `draw_list` that uses the PBR, water, ground or
     /// grass shader into the G-buffer, first in the frame, the grass swayed
     /// and bent by `grass`, and draws the depth itself: it clears
     /// it and tests `Less` in the draw order, so of fragments that tie in

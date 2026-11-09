@@ -410,32 +410,24 @@ fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
 
 #[test]
 fn arena_ground_covers_camera_corners_at_zoom_and_aim_limits() {
-    use calyx_engine::component::{ComponentCamera, ComponentCollider, ComponentMesh};
-    use nalgebra_glm::{vec2, vec4};
+    use calyx_engine::component::{ComponentCamera, ComponentCollider, ComponentTerrain};
+    use nalgebra_glm::vec2;
     use sandbox::{arena::ComponentArena, tank_camera::ComponentTankCamera};
 
     let (copy, assets) = sandbox_assets();
     let scene = load_sandbox_scene(&copy, &assets);
-    let foundation = object_named(&scene, "Arena Foundation");
-    let world = scene.world_transform(foundation).matrix();
-    let (min, max) = scene
-        .read_component::<ComponentMesh, _, _>(foundation, |renderer| {
-            let mesh = renderer
-                .mesh
-                .get_ref(&assets.registries.lock_read())
-                .unwrap();
-            let mesh = mesh.read();
-            mesh.vertices.iter().fold(
-                (Vec3::repeat(f32::INFINITY), Vec3::repeat(f32::NEG_INFINITY)),
-                |(min, max), p| {
-                    let p = (world * vec4(p.x, p.y, p.z, 1.0)).xyz();
-                    (min.inf(&p), max.sup(&p))
-                },
-            )
-        })
+    let ground = object_named(&scene, "Arena Ground");
+    let world = scene.world_transform(ground);
+    let (size, height) = scene
+        .read_component::<ComponentTerrain, _, _>(ground, |t| (t.size, t.height_scale))
         .unwrap();
+    // The terrain is upright and unscaled: its rectangle, and its top at the
+    // ground's level.
+    let min = world.position - vec3(size.x, 0.0, size.y) * 0.5;
+    let max = world.position + vec3(size.x * 0.5, height, size.y * 0.5);
+    assert!(max.y.abs() < 1e-4, "the ground's top is at y = 0: {max:?}");
     assert!(scene
-        .read_component::<ComponentCollider, _, _>(foundation, |_| ())
+        .read_component::<ComponentCollider, _, _>(ground, |_| ())
         .is_none());
     let arena = object_named(&scene, "Arena");
     let center = scene.world_transform(arena).position;
@@ -487,6 +479,56 @@ fn arena_ground_covers_camera_corners_at_zoom_and_aim_limits() {
                 }
             }
         }
+    }
+}
+
+#[test]
+fn the_arena_ground_is_one_surface_with_nothing_coplanar() {
+    use calyx_engine::component::ComponentTerrain;
+
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let terrains: Vec<_> = scene
+        .objects()
+        .filter(|&o| {
+            scene
+                .read_component::<ComponentTerrain, _, _>(o, |_| ())
+                .is_some()
+        })
+        .collect();
+    assert_eq!(terrains.len(), 1, "one ground terrain");
+    assert_eq!(scene.name(terrains[0]), "Arena Ground");
+    let arena_y = scene
+        .world_transform(object_named(&scene, "Arena"))
+        .position
+        .y;
+    // The only ground tiles left are the spawn's paving and the road, raised
+    // off the ground: 0.1 m tiles whose tops sit 3 cm above it.
+    let tiles: Vec<_> = scene
+        .objects()
+        .filter(|&o| {
+            let name = scene.name(o);
+            name.starts_with("Arena Ground ")
+        })
+        .collect();
+    assert!(
+        !tiles.is_empty() && tiles.len() < 80,
+        "{} ground tiles",
+        tiles.len()
+    );
+    for tile in tiles {
+        let top = scene.world_transform(tile).position.y - arena_y + 0.1;
+        assert!(
+            (top - 0.03).abs() < 1e-4,
+            "{} lies at {top}, not 3 cm over the ground",
+            scene.name(tile)
+        );
+    }
+    for overlay in ["Crop Row", "Creek Verge", "Arena Foundation"] {
+        assert!(
+            !scene.objects().any(|o| scene.name(o).contains(overlay)),
+            "no {overlay} objects lie on the ground"
+        );
     }
 }
 

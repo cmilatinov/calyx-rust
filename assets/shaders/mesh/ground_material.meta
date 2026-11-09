@@ -1,0 +1,9 @@
+{
+  "main": {
+    "id": "ef2fbc79-0a8a-53bf-8616-ec931004ae49",
+    "name": "shaders/mesh/ground_material",
+    "display_name": "ground_material",
+    "type_uuid": "00415831-a64c-4dc2-b573-5e112f99b674"
+  },
+  "inner": []
+}
