@@ -83,8 +83,12 @@ forward pass.
 - It draws every batch of the shared `DrawList` whose shader is
   `shaders/mesh/pbr`, and every water batch, whose shader is
   `shaders/mesh/water`, with `shaders/mesh/water_gbuffer.wgsl` in place of
-  `gbuffer.wgsl` (see Water in `docs/architecture/overview.md`); a draw with
-  any other shader takes the forward pass after lighting. The
+  `gbuffer.wgsl` (see Water in `docs/architecture/overview.md`), and every
+  grass batch, whose shader is `shaders/mesh/grass`, with
+  `shaders/mesh/grass_gbuffer.wgsl`: the PBR material, its vertices swayed
+  and bent and its fragments thinned around benders by the scene's
+  `ComponentGrassField`, which it reads as group 3 (`grass_field.wgsl`). A
+  draw with any other shader takes the forward pass after lighting. The
   draw list is built once from the enabled meshes, so both passes skip the
   same disabled meshes, and with the renderer's `mesh_cull_mode`.
 - Its vertex stage is `shaders/mesh/pbr_vertex.wgsl`, the one `pbr.wgsl`

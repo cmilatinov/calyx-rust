@@ -5,8 +5,10 @@
 //! colliders on it and its descendants, each a primitive volume; give them
 //! [`crate::collision::BRUSH`] so they stop nothing, since brush is not
 //! cover: tanks drive and rounds fly through it, and it blocks no sight. Its
-//! other direct children are the grass clumps it sways and parts around the
-//! tanks in it.
+//! grass is drawn by a [`calyx_engine::component::ComponentFoliage`] of
+//! `tall_grass` clumps, whose material's grass shader sways it and bends it
+//! by the scene's [`ComponentGrassField`]: every frame the brush hands the
+//! field the tanks the local player sees as benders ([`grass_benders`]).
 //!
 //! The rules, which [`crate::vision::TeamVision`] applies for every side,
 //! the local player's and the sentries' alike:
@@ -20,7 +22,10 @@
 //!   [`ComponentBrush::reveal_time`] ([`ComponentBrushReveal`]).
 //!
 //! The local player's own tank shows translucent while it is in brush, with
-//! its materials swapped for their screen-door variants ([`GHOST_MATERIALS`]).
+//! its materials swapped for their screen-door variants ([`GHOST_MATERIALS`]),
+//! and the grass thins out around it, and around the tanks the player sees in
+//! the same patch, so they show through the grass. A tank fog hides neither
+//! bends nor thins the grass, which would give it away.
 
 use crate::combat::is_tank_combatant;
 use crate::hud::ComponentTankHud;
@@ -28,8 +33,9 @@ use crate::spawn::ComponentRespawnState;
 use crate::tank::ComponentHealth;
 use calyx_engine::assets::{AssetAccess, AssetRef};
 use calyx_engine::component::{
-    ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentMesh,
-    ComponentRef, ComponentUpdate, Orientation, ReflectComponent, ReflectComponentUpdate,
+    ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentGrassField,
+    ComponentID, ComponentMesh, ComponentRef, ComponentUpdate, GrassBender, Orientation,
+    ReflectComponent, ReflectComponentUpdate,
 };
 use calyx_engine::input::Input;
 use calyx_engine::math::Transform;
@@ -38,8 +44,8 @@ use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid, Uuid};
 use legion::IntoQuery;
-use nalgebra::{Isometry3, Point3, Translation3, UnitQuaternion, Vector3};
-use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
+use nalgebra::{Isometry3, Point3, Translation3};
+use nalgebra_glm::{vec3, Vec3};
 use rapier3d::geometry::SharedShape;
 use serde::{Deserialize, Serialize};
 
@@ -57,65 +63,36 @@ pub struct ComponentBrush {
     /// How long firing from this patch reveals the shooter, in seconds.
     #[reflect_attr(min = 0.0, speed = 0.05)]
     pub reveal_time: f32,
-    /// How far the grass sways in the wind, in degrees.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
-    pub sway_angle: f32,
-    /// How fast the grass sways, in radians per second.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub sway_speed: f32,
-    /// How close to a tank, in metres, a clump bends away from it.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub part_radius: f32,
-    /// How far a clump next to a tank bends away from it, in degrees.
-    #[reflect_attr(min = 0.0, speed = 0.5)]
-    pub part_angle: f32,
-    #[serde(skip)]
-    #[reflect_skip]
-    elapsed: f32,
-    /// Each clump with its rest pose and how far it is bent apart.
-    #[serde(skip)]
-    #[reflect_skip]
-    clumps: Vec<Clump>,
 }
 
 impl Default for ComponentBrush {
     fn default() -> Self {
-        Self {
-            reveal_time: 1.5,
-            sway_angle: 4.0,
-            sway_speed: 1.7,
-            part_radius: 2.2,
-            part_angle: 38.0,
-            elapsed: 0.0,
-            clumps: Vec::new(),
-        }
+        Self { reveal_time: 1.5 }
     }
 }
 
 impl Component for ComponentBrush {
-    /// A disabled patch hides nothing and stops swaying.
+    /// A disabled patch hides nothing.
     fn can_disable(&self) -> bool {
         true
     }
-}
-
-#[derive(Clone, Debug)]
-struct Clump {
-    id: Uuid,
-    rest: Transform,
-    /// The clump's bend away from the tanks near it, as a ground direction
-    /// scaled by how far, from 0 to 1, eased towards where they are.
-    part: Vec2,
 }
 
 impl ComponentUpdate for ComponentBrush {
     fn update(
         this: ComponentRef<Self>,
         ComponentEventContext { scene, .. }: ComponentEventContext,
-        resources: &mut ResourceMap,
+        _resources: &mut ResourceMap,
         _input: &Input,
     ) {
-        animate_patch(scene, this.game_object(), resources.time().delta_time());
+        // The first patch hands the grass its benders for every patch.
+        let first = <(&ComponentID, &ComponentBrush)>::query()
+            .iter(scene.world())
+            .next()
+            .map(|(id, _)| id.id);
+        if first == Some(scene.uuid(this.game_object())) {
+            show_benders(scene);
+        }
     }
 }
 
@@ -457,116 +434,75 @@ fn is_live_tank(scene: &Scene, object: GameObject) -> bool {
             .unwrap_or(false)
 }
 
-/// How far, from 0 to 1, a clump at `clump` bends away from tanks at
-/// `tanks` within `radius`, as a ground direction scaled by the bend.
-pub(crate) fn part_from(clump: Vec2, tanks: &[Vec2], radius: f32) -> Vec2 {
-    if radius <= 0.0 {
-        return Vec2::zeros();
-    }
-    let push = tanks.iter().fold(Vec2::zeros(), |push, tank| {
-        let away = clump - *tank;
-        let distance = away.norm();
-        if distance >= radius {
-            return push;
-        }
-        let direction = away.try_normalize(1e-4).unwrap_or_else(|| vec2(1.0, 0.0));
-        let closeness = 1.0 - distance / radius;
-        push + direction * closeness * closeness.sqrt()
-    });
-    let length = push.norm();
-    if length > 1.0 {
-        push / length
-    } else {
-        push
-    }
-}
+/// How far from a tank, in metres, the grass bends away from it.
+pub(crate) const BEND_RADIUS: f32 = 1.8;
+/// How far from a tank the player sees in brush, in metres, the grass thins
+/// out so the tank shows through it.
+pub(crate) const REVEAL_RADIUS: f32 = 2.5;
 
-/// How fast a clump's bend eases towards where the tanks are, per second.
-const PART_EASE: f32 = 9.0;
-
-/// Sways `patch`'s clumps in the wind and bends them away from the tanks
-/// the local player sees among them.
-fn animate_patch(scene: &mut Scene, patch: GameObject, dt: f32) {
-    let dt = if dt.is_finite() {
-        dt.clamp(0.0, 0.1)
-    } else {
-        0.0
-    };
-    let Some(mut brush) = scene.read_component::<ComponentBrush, _, _>(patch, |b| b.clone()) else {
-        return;
-    };
-    let clump_objects = scene
-        .children(patch)
-        .filter(|&child| {
-            scene
-                .read_component::<ComponentCollider, _, _>(child, |_| ())
-                .is_none()
-        })
-        .collect::<Vec<_>>();
-    if brush.clumps.len() != clump_objects.len() {
-        brush.clumps = clump_objects
-            .iter()
-            .map(|&object| Clump {
-                id: scene.uuid(object),
-                rest: scene.transform(object),
-                part: Vec2::zeros(),
-            })
-            .collect();
-    }
-    brush.elapsed += dt;
-    // A tank fog hides would give itself away by parting the grass.
+/// What bends and thins the grass this frame, as the local player sees it:
+/// every live tank the player's fog shows bends it, and the player's own
+/// tank, while in a patch, and the tanks it sees in that same patch thin it.
+/// A tank fog hides does neither. Without a local player, every live tank
+/// bends the grass and none thins it.
+pub(crate) fn grass_benders(scene: &Scene) -> Vec<GrassBender> {
+    let patches = BrushPatches::read(scene);
+    let player = <(&ComponentID, &ComponentTankHud)>::query()
+        .iter(scene.world())
+        .find_map(|(id, _)| scene.find(id.id))
+        .filter(|&player| is_live_tank(scene, player));
+    let player_patch = player.and_then(|player| patches.patch_of(scene, player));
     let tanks = <(&ComponentID, &crate::tank::ComponentTankController)>::query()
         .iter(scene.world())
         .map(|(id, _)| id.id)
-        .collect::<Vec<_>>()
+        .collect::<Vec<_>>();
+    let mut benders = tanks
         .into_iter()
         .filter_map(|id| scene.find(id))
         .filter(|&tank| is_live_tank(scene, tank) && scene.is_visible_in_hierarchy(tank))
-        .map(|tank| crate::vision::ground(scene.world_transform(tank).position))
+        .map(|tank| {
+            let reveals = player_patch.is_some()
+                && (Some(tank) == player || patches.patch_of(scene, tank) == player_patch);
+            let bender = GrassBender {
+                position: scene.world_transform(tank).position,
+                bend_radius: BEND_RADIUS,
+                reveal_radius: if reveals { REVEAL_RADIUS } else { 0.0 },
+            };
+            // The player's own first, then the others that thin the grass,
+            // so neither is ever past the shader's limit.
+            let rank = if Some(tank) == player {
+                0
+            } else {
+                1 + u8::from(!reveals)
+            };
+            (rank, bender)
+        })
         .collect::<Vec<_>>();
-    let patch_transform = scene.world_transform(patch);
-    let to_local = patch_transform.rotation.inverse();
-    let ease = 1.0 - (-PART_EASE * dt).exp();
-    let mut poses = Vec::with_capacity(brush.clumps.len());
-    for clump in &mut brush.clumps {
-        let Some(object) = scene.find(clump.id) else {
-            continue;
-        };
-        let at = crate::vision::ground(patch_transform.transform_position(&clump.rest.position));
-        let target = part_from(at, &tanks, brush.part_radius);
-        clump.part += (target - clump.part) * ease;
-        // The wind blows along X; each clump sways a little out of step with
-        // its neighbours.
-        let phase = at.x * 0.9 + at.y * 0.6;
-        let sway = (brush.elapsed * brush.sway_speed + phase).sin() * brush.sway_angle;
-        let wind = UnitQuaternion::from_axis_angle(&Vector3::z_axis(), -sway.to_radians());
-        let bend = clump.part.norm();
-        let part = match Vector3::new(clump.part.x, 0.0, clump.part.y).try_normalize(1e-4) {
-            // Turning up about up x away leans the clump's top away.
-            Some(away) => UnitQuaternion::from_axis_angle(
-                &nalgebra::Unit::new_normalize(Vector3::y().cross(&away)),
-                (brush.part_angle * bend).to_radians(),
-            ),
-            None => UnitQuaternion::identity(),
-        };
-        let tilt = to_local * part * wind * patch_transform.rotation;
-        let mut pose = clump.rest.clone();
-        pose.rotation = tilt * clump.rest.rotation;
-        // A bent clump also squats a little, so its blades do not poke
-        // through the tank.
-        pose.scale = clump
-            .rest
-            .scale
-            .component_mul(&vec3(1.0, 1.0 - 0.25 * bend, 1.0));
-        poses.push((object, pose));
+    benders.sort_by_key(|(rank, _)| *rank);
+    benders
+        .into_iter()
+        .take(calyx_engine::component::MAX_GRASS_BENDERS)
+        .map(|(_, bender)| bender)
+        .collect()
+}
+
+/// Hands [`grass_benders`] to every grass field in `scene`.
+fn show_benders(scene: &mut Scene) {
+    let fields = <(&ComponentID, &ComponentGrassField)>::query()
+        .iter(scene.world())
+        .map(|(id, _)| id.id)
+        .collect::<Vec<_>>();
+    if fields.is_empty() {
+        return;
     }
-    for (object, pose) in poses {
-        scene.set_transform(object, &pose.matrix());
+    let benders = grass_benders(scene);
+    for id in fields {
+        if let Some(field) = scene.find(id) {
+            let _ = scene.write_component::<ComponentGrassField, _>(field, |field| {
+                field.benders.clone_from(&benders);
+            });
+        }
     }
-    let _ = scene.write_component::<ComponentBrush, _>(patch, |component| {
-        component.elapsed = brush.elapsed;
-        component.clumps = brush.clumps;
-    });
 }
 
 #[cfg(test)]

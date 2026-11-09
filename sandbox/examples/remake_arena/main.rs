@@ -14,9 +14,9 @@ use std::path::{Path, PathBuf};
 use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
     ColliderShape, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
-    ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentID,
-    ComponentMesh, ComponentRigidBody, ComponentSkyLight, ComponentTonemap, ComponentTransform,
-    ComponentVignette, FxaaQuality, TonemappingPreset,
+    ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentFoliage,
+    ComponentGrassField, ComponentID, ComponentMesh, ComponentRigidBody, ComponentSkyLight,
+    ComponentTonemap, ComponentTransform, ComponentVignette, FxaaQuality, TonemappingPreset,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
@@ -126,6 +126,68 @@ impl Author {
             vec3(17.0, PLATFORM_HEIGHT, 21.0),
             0.0,
         );
+    }
+
+    /// Test patches of tall-grass brush (`sandbox::brush`), until the layout
+    /// work places brush along the creek and the landmarks: each a Brush
+    /// with a box volume that stops nothing, 2 m high on the ground, and its
+    /// grass a Foliage of the kit's `tall_grass` clumps packed over it. The
+    /// Arena's Grass Field sways all of them and bends them around tanks.
+    fn brush(&mut self) {
+        let prefab = asset_id(&self.assets.join(format!(
+            "generated/prefabs/{}/tall_grass.cxprefab",
+            self.palette.folder()
+        )));
+        for (i, (name, x, z, width, depth)) in [
+            ("Centre", 3.0, -10.0, 7.0, 5.0),
+            ("East", 16.0, 4.0, 5.0, 6.0),
+            ("North", -4.0, 6.0, 5.0, 5.0),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let name = format!("Arena Brush {name}");
+            let patch = self.object(&name, self.arena, vec3(x, 0.0, z));
+            self.scene
+                .add_component(patch, sandbox::brush::ComponentBrush::default());
+            // The grass spills a little past the volume's edge, so a tank at
+            // the edge of the grass is already inside it.
+            self.scene.add_component(
+                patch,
+                ComponentFoliage {
+                    prefabs: vec![AssetRef::from_id(prefab)],
+                    area: vec2(width - 0.6, depth - 0.6),
+                    density: 2.2,
+                    seed: 575 + i as u32,
+                    scale_range: vec2(0.85, 1.15),
+                    rotation_range: vec2(0.0, 360.0),
+                    // Shadow maps would draw every blade again in each
+                    // cascade, for shadows the dense grass mostly falls on
+                    // itself; SSAO still grounds it.
+                    cast_shadows: false,
+                },
+            );
+            let volume = self.collider(
+                patch,
+                &format!("{name} Volume"),
+                vec3(0.0, 1.0, 0.0),
+                vec3(width, 2.0, depth),
+            );
+            self.scene
+                .write_component::<ComponentCollider, _>(volume, |collider| {
+                    collider.groups = sandbox::collision::BRUSH;
+                });
+        }
+        if self
+            .scene
+            .write_component::<ComponentGrassField, _>(self.arena, |field| {
+                *field = ComponentGrassField::default();
+            })
+            .is_none()
+        {
+            self.scene
+                .add_component(self.arena, ComponentGrassField::default());
+        }
     }
 
     /// The walls inside the pen. A corner shields the spawn from the east
@@ -966,6 +1028,7 @@ fn main() {
     }
     author.raised_area();
     author.interior_walls();
+    author.brush();
     author.farmland(&creek);
     for (model, name, x, z, yaw) in [
         ("tree_small", "Spawn East Tree", 6.0, -8.0, -20.0),

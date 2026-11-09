@@ -69,7 +69,7 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `lamp` | Post and framed warm lantern with pyramidal cap | Box around pole/base |
 | `berry_bush` | Low fused leaf clusters with visible red berries | Convex bush body |
 | `grass_tuft` | Five tapered leaves in a fan | Normally non-blocking; a bounds box is available if an interaction needs one |
-| `tall_grass` | Brush clump: six outward-leaning fan cards of three tapered blades, about 1.1 m high and 2 m across, in the `tall_grass` and `grass` roles | Non-blocking: the patch, not the clump, has volumes, `BRUSH`-group boxes that stop nothing (see Brush patches) |
+| `tall_grass` | Brush clump: six crossed, almost upright fan cards of five tapered blades, about 2.2 m tall, in the `tall_grass` and `tall_grass_light` roles, drawn with the grass shader | Non-blocking: the patch, not the clump, has volumes, `BRUSH`-group boxes that stop nothing (see Brush patches) |
 | `sandbag_stack` | Three staggered rows of soft bags, 1.27 m total height, with restrained seam bands | Box around the stack |
 | `pickup_yellow`, `pickup_blue` | Green and blue glowing orbs over octagonal pads; legacy yellow name retains stable IDs | Box around pad; collection trigger belongs to gameplay |
 | `sentry` | Anchored circular base with broad mounting pads and exposed yaw bearing; red player-2 head with clipped armor cheeks, pitch hubs, recoil sleeve, open muzzle, roof cooling banks and shaded optic | Cylinder around base, radius 0.57 m and height 0.15 m, plus a box around the solid head if cover collision is desired; visual integration preserves existing gameplay |
@@ -249,19 +249,24 @@ used.
 ## Brush patches
 
 Tall-grass brush (`sandbox/src/brush.rs`) is placed as patches: an object with
-the **Brush** component, a child volume collider in the `BRUSH` collision
-groups (memberships 8, filter 0) that stops no tank, round or sight, and
-`tall_grass` instances as its other children, packed about 1.15 m apart with
-random yaw and 0.9 to 1.15 scale, kept 0.6 m inside the volume's edge. The
-volume is a box 1.5 m high resting on the ground; any of the primitive
-collider shapes works, and a patch may hold several. Brush stands on the open
-floor, clear of cover, so that a tank can drive into it from any side.
+the **Brush** component, a child box volume in the `BRUSH` collision groups
+(memberships 8, filter 0) that stops no tank, round or sight, 2 m high on the
+ground, and a **Foliage** component scattering `tall_grass` clumps over it at
+about 2.2 per square metre, 0.3 m inside the volume's edge, casting no shadow (the
+dense grass would shade mostly itself, at the cost of every blade in each
+shadow cascade), with random yaw
+and 0.85 to 1.15 scale. The clumps are instances, not game objects, so the
+patch's grass is a few instanced draws however dense it is. Any of the
+primitive collider shapes works as a volume, and a patch may hold several.
+Brush stands on the open floor, clear of cover, so a tank can drive into it
+from any side.
 
-The authored arena carries three test patches until the layout pass places
-brush along the creek and landmarks: `Arena Brush Centre` (6 x 4 m at local
-`(0, -12)`, 10 m ahead of the spawn), `Arena Brush West` (4 x 7 m at
-`(-19, -10)`, beside the west sand lane) and `Arena Brush East` (5 x 4 m at
-`(19, -9)`, south of the east rocks and clear of the sentry's lane).
-They were placed by hand through the editor, so `remake_arena` does not
-rebuild them yet and drops them when it runs; the layout pass moves brush
-into it.
+The Arena carries the scene's **Grass Field**, whose wind and bend the grass
+shader reads; the brush hands it the tanks moving through the grass every
+frame.
+
+`remake_arena` places three test patches until the layout work places brush
+along the creek and the landmarks: `Arena Brush Centre` (6 x 4 m at local
+`(4, -11)`, ahead of the spawn), `Arena Brush East` (4 x 6 m at `(16, 4)`) and
+`Arena Brush North` (4 x 4 m at `(-4, 6)`), each clear of cover and of the
+sentry's firing lane.

@@ -34599,6 +34599,56 @@
         }
       }
     },
+    "8edf84d1-82ba-e0ad-096c-ac4106bd3a79": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "8edf84d1-82ba-e0ad-096c-ac4106bd3a79",
+        "name": "Arena Brush Centre Volume",
+        "visible": true
+      },
+      "53a682cb-a207-4c4c-8795-63f38351c7ef": {
+        "density": 100.0,
+        "friction": 0.800000011920929,
+        "groups": {
+          "filter": 0,
+          "memberships": 8
+        },
+        "shape": {
+          "Cuboid": {
+            "half_extents": [
+              3.5,
+              1.0,
+              2.5
+            ]
+          }
+        }
+      },
+      "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
+        "can_sleep": false,
+        "gravity_scale": 0.0,
+        "mass": 100.0,
+        "ty": "Fixed"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
     "8ee38f3a-3755-d090-336e-b3cc4c149240": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "8ee38f3a-3755-d090-336e-b3cc4c149240",
@@ -43019,6 +43069,56 @@
         }
       }
     },
+    "ae48ab5c-c672-f3f9-84d0-58454d702d35": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "ae48ab5c-c672-f3f9-84d0-58454d702d35",
+        "name": "Arena Brush North Volume",
+        "visible": true
+      },
+      "53a682cb-a207-4c4c-8795-63f38351c7ef": {
+        "density": 100.0,
+        "friction": 0.800000011920929,
+        "groups": {
+          "filter": 0,
+          "memberships": 8
+        },
+        "shape": {
+          "Cuboid": {
+            "half_extents": [
+              2.5,
+              1.0,
+              2.5
+            ]
+          }
+        }
+      },
+      "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
+        "can_sleep": false,
+        "gravity_scale": 0.0,
+        "mass": 100.0,
+        "ty": "Fixed"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            1.0,
+            0.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
     "ae48bb3f-3913-78d0-f805-994adb160e23": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "ae48bb3f-3913-78d0-f805-994adb160e23",
@@ -44680,6 +44780,56 @@
             1.0
           ]
         }
+      }
+    },
+    "b5bb2aef-5536-f471-207a-57147c5ca105": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "b5bb2aef-5536-f471-207a-57147c5ca105",
+        "name": "Arena Brush Centre",
+        "visible": true
+      },
+      "5b0f7c2e-93a4-4d61-8e0b-2c7a9f1d4e36": {
+        "reveal_time": 1.5
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            3.0,
+            0.0,
+            -10.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "e0ded3f3-5cc1-4412-a1ad-40db8a597735": {
+        "area": [
+          6.400000095367432,
+          4.400000095367432
+        ],
+        "cast_shadows": false,
+        "density": 2.200000047683716,
+        "prefabs": [
+          "6a6f14c7-2c46-5452-92a3-1f8ca55f6339"
+        ],
+        "rotation_range": [
+          0.0,
+          360.0
+        ],
+        "scale_range": [
+          0.8500000238418579,
+          1.149999976158142
+        ],
+        "seed": 575
       }
     },
     "b5c8415a-9e11-e84b-3bdb-91348a577126": {
@@ -50500,6 +50650,56 @@
         }
       }
     },
+    "cab2d237-8239-e044-a034-423084063f09": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "cab2d237-8239-e044-a034-423084063f09",
+        "name": "Arena Brush North",
+        "visible": true
+      },
+      "5b0f7c2e-93a4-4d61-8e0b-2c7a9f1d4e36": {
+        "reveal_time": 1.5
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            -4.0,
+            0.0,
+            6.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "e0ded3f3-5cc1-4412-a1ad-40db8a597735": {
+        "area": [
+          4.400000095367432,
+          4.400000095367432
+        ],
+        "cast_shadows": false,
+        "density": 2.200000047683716,
+        "prefabs": [
+          "6a6f14c7-2c46-5452-92a3-1f8ca55f6339"
+        ],
+        "rotation_range": [
+          0.0,
+          360.0
+        ],
+        "scale_range": [
+          0.8500000238418579,
+          1.149999976158142
+        ],
+        "seed": 577
+      }
+    },
     "cace2f4e-fcd1-699d-dfd5-b36bf55d7876": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "cace2f4e-fcd1-699d-dfd5-b36bf55d7876",
@@ -51275,6 +51475,56 @@
             0.25,
             0.0,
             0.25
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    "cf23c964-f14f-628d-81f8-2acf7e7c7617": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "cf23c964-f14f-628d-81f8-2acf7e7c7617",
+        "name": "Arena Brush East Volume",
+        "visible": true
+      },
+      "53a682cb-a207-4c4c-8795-63f38351c7ef": {
+        "density": 100.0,
+        "friction": 0.800000011920929,
+        "groups": {
+          "filter": 0,
+          "memberships": 8
+        },
+        "shape": {
+          "Cuboid": {
+            "half_extents": [
+              2.5,
+              1.0,
+              3.0
+            ]
+          }
+        }
+      },
+      "8cac1bae-e3c3-4ee6-b672-7689e9c10f7e": {
+        "can_sleep": false,
+        "gravity_scale": 0.0,
+        "mass": 100.0,
+        "ty": "Fixed"
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            0.0,
+            1.0,
+            0.0
           ],
           "rotation": [
             0.0,
@@ -55056,6 +55306,56 @@
         }
       }
     },
+    "d6e72c8b-a700-2f09-2854-afd9dd51b75f": {
+      "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+        "id": "d6e72c8b-a700-2f09-2854-afd9dd51b75f",
+        "name": "Arena Brush East",
+        "visible": true
+      },
+      "5b0f7c2e-93a4-4d61-8e0b-2c7a9f1d4e36": {
+        "reveal_time": 1.5
+      },
+      "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+        "transform": {
+          "position": [
+            16.0,
+            0.0,
+            4.0
+          ],
+          "rotation": [
+            0.0,
+            0.0,
+            0.0,
+            1.0
+          ],
+          "scale": [
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      },
+      "e0ded3f3-5cc1-4412-a1ad-40db8a597735": {
+        "area": [
+          4.400000095367432,
+          5.400000095367432
+        ],
+        "cast_shadows": false,
+        "density": 2.200000047683716,
+        "prefabs": [
+          "6a6f14c7-2c46-5452-92a3-1f8ca55f6339"
+        ],
+        "rotation_range": [
+          0.0,
+          360.0
+        ],
+        "scale_range": [
+          0.8500000238418579,
+          1.149999976158142
+        ],
+        "seed": 576
+      }
+    },
     "d6f0568c-2e9f-a709-251c-cdf5dc5658a7": {
       "02289c92-3412-406e-a7e5-3bbb15d7041e": {
         "id": "d6f0568c-2e9f-a709-251c-cdf5dc5658a7",
@@ -57370,6 +57670,12 @@
         "id": "de2a2612-fa64-4fb4-8801-55a27df12564",
         "name": "Arena",
         "visible": true
+      },
+      "7c4e2a91-5d38-4f0b-b6e1-93a8d27c5f14": {
+        "bend": 0.4000000059604645,
+        "height": 2.0,
+        "sway": 0.05999999865889549,
+        "sway_speed": 1.7000000476837158
       },
       "8591392e-d5f6-4543-89eb-93bc865073ea": {
         "cell_size": 2.0,
@@ -68434,6 +68740,9 @@
     "b59dcdea-8f7d-1bd2-5e38-4cbb162dbda1": [
       "4b1c716c-76c9-ab8b-c2a0-5709ea16a6d8"
     ],
+    "b5bb2aef-5536-f471-207a-57147c5ca105": [
+      "8edf84d1-82ba-e0ad-096c-ac4106bd3a79"
+    ],
     "b71995ac-9056-a735-8eca-4527470f17e1": [
       "ee7ea9ec-e486-8e32-dce6-c7d51f366778"
     ],
@@ -68705,6 +69014,9 @@
     "c96f5213-b33d-c96e-c696-4d488a97e1a1": [
       "27f78d40-cf0b-376d-0b99-b9bda1680638"
     ],
+    "cab2d237-8239-e044-a034-423084063f09": [
+      "ae48ab5c-c672-f3f9-84d0-58454d702d35"
+    ],
     "cce480d2-22f8-f290-7336-bd8b9e8b97f4": [
       "e93c45c2-ed9c-b23c-1d0c-386bc9fc7211"
     ],
@@ -68786,6 +69098,9 @@
     ],
     "d695e794-6359-5479-8af6-5120d0db1c70": [
       "9583fcea-e721-9382-c68a-c72ac2988c0d"
+    ],
+    "d6e72c8b-a700-2f09-2854-afd9dd51b75f": [
+      "cf23c964-f14f-628d-81f8-2acf7e7c7617"
     ],
     "d75300f0-2922-0040-bd72-6df0c5712a8d": [
       "cca42ebc-b30a-d838-624f-e18ec56d3b34"
@@ -69118,6 +69433,9 @@
       "f76c42f8-24f7-5c07-a19e-b5c819b2fa82",
       "af79166f-bb7e-fa3a-39e1-0f0d83bcfe7f",
       "78bc0c37-4b0b-5200-084e-18520d6879a0",
+      "b5bb2aef-5536-f471-207a-57147c5ca105",
+      "d6e72c8b-a700-2f09-2854-afd9dd51b75f",
+      "cab2d237-8239-e044-a034-423084063f09",
       "abc006f0-4c31-18a9-0ac7-da34866fe742",
       "d91e340d-0b63-d254-c9eb-97674dd9f57f",
       "801e28b4-cf8f-fa83-62fd-567a46793bda",

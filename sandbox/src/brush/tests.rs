@@ -5,6 +5,7 @@ use crate::tank::{ComponentProjectile, ComponentProjectileTarget, ComponentTankC
 use crate::vision::{apply_fog, FogState, TeamVision, FADE_TIME};
 use calyx_engine::scene::GameObjectRef;
 use calyx_engine::test_support::{test_scene, HeadlessSceneRunner};
+use nalgebra_glm::vec2;
 
 fn tank(scene: &mut Scene, name: &str, x: f32, z: f32, team: u32) -> GameObject {
     let tank = scene.create(
@@ -401,45 +402,60 @@ fn ghost_materials_are_the_tank_materials_files() {
 }
 
 #[test]
-fn clumps_bend_away_from_nearby_tanks_only() {
-    let clump = vec2(0.0, 0.0);
-    assert_eq!(part_from(clump, &[vec2(5.0, 0.0)], 2.0), Vec2::zeros());
-    let part = part_from(clump, &[vec2(1.0, 0.0)], 2.0);
-    assert!(
-        part.x < 0.0 && part.y.abs() < 1e-6,
-        "away from the tank: {part:?}"
-    );
-    let closer = part_from(clump, &[vec2(0.3, 0.0)], 2.0);
-    assert!(closer.norm() > part.norm(), "more when closer");
-    let both = part_from(clump, &[vec2(0.1, 0.0), vec2(0.0, 0.1)], 2.0);
-    assert!(both.norm() <= 1.0 + 1e-6, "never more than fully bent");
-}
-
-#[test]
-fn grass_sways_and_parts_around_a_tank_in_the_patch() {
+fn grass_bends_for_seen_tanks_and_thins_only_around_the_players_patch() {
     let mut scene = test_scene();
-    let brush = patch(&mut scene, 0.0, 0.0);
-    let clump = scene
-        .children(brush)
-        .find(|&child| {
-            scene
-                .read_component::<ComponentCollider, _, _>(child, |_| ())
-                .is_none()
-        })
-        .unwrap();
-    let rest = scene.transform(clump).rotation;
-    let mut runner = HeadlessSceneRunner::from_scene(scene);
-    runner.set_step_seconds(0.05);
-    runner.step_many(10);
-    let swayed = runner.scene().transform(clump).rotation;
-    assert!(swayed.angle_to(&rest) > 1e-3, "the wind sways it");
-    assert!(swayed.angle_to(&rest) < 10f32.to_radians(), "only a little");
+    let player = tank(&mut scene, "Player", 0.0, 0.0, 1);
+    scene.add_component(player, ComponentTankHud::default());
+    let field = scene.create(None, None);
+    scene.add_component(field, ComponentGrassField::default());
+    patch(&mut scene, 8.0, 0.0);
+    let enemy = tank(&mut scene, "Enemy", 8.0, 1.0, 2);
+    let ally = tank(&mut scene, "Ally", 8.5, -1.0, 1);
+    let outside = tank(&mut scene, "Outside", -6.0, 0.0, 2);
 
-    // A tank next to the clump, on its -X side, bends its top away along +X.
-    tank(runner.scene_mut(), "Tank", 0.3, 0.0, 1);
-    runner.set_step_seconds(0.05);
-    runner.step_many(20);
-    let parted = runner.scene().transform(clump);
-    let top = parted.rotation * Vec3::y();
-    assert!(top.x > 0.3, "leans away from the tank: {top:?}");
+    let reveal = |benders: &[GrassBender], at: (f32, f32)| {
+        benders
+            .iter()
+            .find(|b| b.position.x == at.0 && b.position.z == at.1)
+            .map(|b| b.reveal_radius)
+    };
+    // Out of the brush, every seen tank bends the grass and none thins it.
+    let benders = grass_benders(&scene);
+    assert_eq!(benders.len(), 4);
+    assert!(benders
+        .iter()
+        .all(|b| b.bend_radius > 0.0 && b.reveal_radius == 0.0));
+
+    // Fog hid the enemy in the brush: it must not move the grass at all.
+    let _ = scene.write_component::<ComponentID, _>(enemy, |id| id.visible = false);
+    let benders = grass_benders(&scene);
+    assert_eq!(
+        reveal(&benders, (8.0, 1.0)),
+        None,
+        "a hidden tank gives nothing away"
+    );
+
+    // In the patch, the player and the tanks it sees there thin the grass.
+    let _ = scene.write_component::<ComponentID, _>(enemy, |id| id.visible = true);
+    scene.set_world_transform(player, Transform::from_xyz(7.0, 0.0, 0.0).matrix());
+    let benders = grass_benders(&scene);
+    assert_eq!(benders[0].position.x, 7.0, "the player's own comes first");
+    assert_eq!(reveal(&benders, (7.0, 0.0)), Some(REVEAL_RADIUS));
+    assert_eq!(reveal(&benders, (8.0, 1.0)), Some(REVEAL_RADIUS));
+    assert_eq!(reveal(&benders, (8.5, -1.0)), Some(REVEAL_RADIUS));
+    assert_eq!(
+        reveal(&benders, (-6.0, 0.0)),
+        Some(0.0),
+        "outside the patch"
+    );
+    let _ = (ally, outside);
+
+    // In play the first patch hands them to the field every frame.
+    let mut runner = HeadlessSceneRunner::from_scene(scene);
+    runner.step();
+    let count = runner
+        .scene()
+        .read_component::<ComponentGrassField, _, _>(field, |field| field.benders.len())
+        .unwrap();
+    assert_eq!(count, 4);
 }

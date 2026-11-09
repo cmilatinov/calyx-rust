@@ -6,6 +6,9 @@ use serde_json::{json, Value};
 
 /// Calyx's PBR shader (`shaders/mesh/pbr`).
 pub const PBR_SHADER: &str = "869cbd32-a789-f19d-3e24-5207f558d1c2";
+/// The engine's grass shader, `shaders/mesh/grass`: PBR materials whose
+/// meshes sway and bend in the scene's grass field.
+pub const GRASS_SHADER: &str = "49614773-7999-52e5-85f9-b3c8b5e95b8a";
 
 /// One of the direction's map palettes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -100,8 +103,10 @@ pub const ROLES: &[Role] = &[
     role("hazard_black", "#303038", "#303030", "#30373F", 0.95),
     role("grass", "#83AC38", "#9AAB61", "#507165", 0.95),
     // Stealth brush: tall grass a step darker than the tufts and the
-    // ground, so a patch reads as one dark mass from the Far camera.
-    role("tall_grass", "#5E9A34", "#7F8F45", "#3B5F56", 0.95),
+    // ground, so a patch reads as one dark mass from the Far camera, with
+    // lighter blades between. Drawn with the grass shader (`GRASS_SHADER`).
+    role("tall_grass", "#4F8C2F", "#6F7F3C", "#2F5049", 0.95),
+    role("tall_grass_light", "#76A83A", "#9AA35A", "#4A6E5F", 0.95),
     role("rocks", "#B4B5AA", "#A29F96", "#848C96", 0.95),
     role("tree_trunks", "#A2855E", "#8F7960", "#4C4541", 0.95),
     role("tree_canopies", "#83B942", "#A4B479", "#3E6564", 0.95),
@@ -189,6 +194,16 @@ impl Role {
         }
     }
 
+    /// The shader the role's material uses: the grass shader for tall
+    /// grass, [`PBR_SHADER`] for everything else.
+    pub fn shader(&self) -> &'static str {
+        if self.name.starts_with("tall_grass") {
+            GRASS_SHADER
+        } else {
+            PBR_SHADER
+        }
+    }
+
     pub fn hex(&self, map: Map) -> &'static str {
         match map {
             Map::SunnyBattlefield => self.sunny,
@@ -219,7 +234,7 @@ impl Role {
         };
         let uniform = |name: &str, offset: u32, span: u32, value: Value| json!({"group": 3, "binding": 2, "offset": offset, "name": name, "span": span, "value": value});
         json!({
-            "shader": PBR_SHADER,
+            "shader": self.shader(),
             "variables": [
                 {"group": 3, "binding": 0, "offset": null, "name": "base_color_texture", "span": null,
                  "value": {"Texture2D": {"Color": [1.0, 1.0, 1.0, 1.0]}}},
@@ -407,5 +422,25 @@ mod tests {
         assert_eq!(linear_rgb("FFFFFF"), None);
         assert_eq!(linear_rgb("#FFF"), None);
         assert_eq!(linear_rgb("#GG0000"), None);
+    }
+
+    #[test]
+    fn tall_grass_uses_the_engines_grass_shader() {
+        let meta = std::fs::read_to_string(concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../assets/shaders/mesh/grass.meta"
+        ))
+        .unwrap();
+        let meta: Value = serde_json::from_str(&meta).unwrap();
+        assert_eq!(meta["main"]["id"], GRASS_SHADER);
+        for name in ["tall_grass", "tall_grass_light"] {
+            for map in Map::ALL {
+                assert_eq!(find(name).unwrap().material(map)["shader"], GRASS_SHADER);
+            }
+        }
+        assert_eq!(
+            find("grass").unwrap().material(Map::Moonlit)["shader"],
+            PBR_SHADER
+        );
     }
 }

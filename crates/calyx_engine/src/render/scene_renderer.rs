@@ -710,6 +710,10 @@ impl SceneRenderer {
                 &self.camera_uniform_buffer,
                 &self.scene_depth_texture,
                 self.options.mesh_cull_mode,
+                &crate::render::gbuffer::GrassFieldUniform::of_scene(
+                    scene,
+                    self.gbuffer_renderer.grass_time(),
+                ),
             );
         }
         let gbuffer = self
