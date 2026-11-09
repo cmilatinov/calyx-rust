@@ -8,6 +8,7 @@
           "visible": true
         },
         "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
           "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
           "mesh": "85efa0cc-732f-57d0-a26f-d9322a9db33a"
         },
@@ -66,6 +67,7 @@
           "visible": true
         },
         "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
           "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
           "mesh": "0912d8c0-8da3-5522-b8c6-2b4cf1309de0"
         },
@@ -97,6 +99,7 @@
           "visible": true
         },
         "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
           "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
           "mesh": "486d2197-a4e8-5495-b198-e8b7e4c55ae9"
         },
@@ -128,6 +131,7 @@
           "visible": true
         },
         "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
           "material": "e7bf5f28-d717-5c1f-8631-63daed3d54bb",
           "mesh": "04e5a66f-2b26-5a18-96f2-d611a35a905b"
         },

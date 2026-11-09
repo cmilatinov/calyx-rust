@@ -1,0 +1,36 @@
+# Round hay bale on its side, 1.24 m across and 1.2 m long, with two twine
+# bands. Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "bale"
+kind = "cylinder"
+role = "sandbags"
+radius = 0.62
+height = 1.2
+vertices = 16
+bevel = 0.04
+segments = 3
+offset = [-0.6, 0.62, 0]
+rotation = [0, 0, -90]
+
+[[parts]]
+name = "twine_0"
+kind = "ring"
+role = "sandbag_seams"
+radius = 0.645
+inner_radius = 0.58
+height = 0.07
+vertices = 16
+offset = [-0.335, 0.62, 0]
+rotation = [0, 0, -90]
+
+[[parts]]
+name = "twine_1"
+kind = "ring"
+role = "sandbag_seams"
+radius = 0.645
+inner_radius = 0.58
+height = 0.07
+vertices = 16
+offset = [0.265, 0.62, 0]
+rotation = [0, 0, -90]

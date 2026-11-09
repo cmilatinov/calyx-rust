@@ -1,0 +1,14 @@
+# A flat patch of grass dark with an organic outline, about 2 m across and
+# 2 cm thick; scaled and turned per instance over the ground tiles.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "surface"
+kind = "prism"
+role = "ground_grass_dark"
+points = [[1.076, 0], [0.902, -0.434], [0.551, -0.691], [0.21, -0.921], [-0.256, -1.122], [-0.671, -0.841], [-0.82, -0.395], [-0.912, 0], [-0.891, 0.429], [-0.675, 0.847], [-0.238, 1.043], [0.186, 0.817], [0.597, 0.749], [0.932, 0.449]]
+height = 0.02
+bevel = 0
+segments = 1
+offset = [0, 0, 0]
+cast_shadows = false

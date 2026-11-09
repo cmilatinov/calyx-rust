@@ -1,0 +1,14 @@
+# A flat patch of gravel with an organic outline, about 2 m across and
+# 2 cm thick; scaled and turned per instance over the ground tiles.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "surface"
+kind = "prism"
+role = "ground_gravel"
+points = [[0.981, 0], [1.051, -0.506], [0.641, -0.803], [0.196, -0.857], [-0.203, -0.888], [-0.636, -0.797], [-0.965, -0.465], [-1.031, 0], [-0.723, 0.348], [-0.567, 0.711], [-0.271, 1.187], [0.246, 1.077], [0.602, 0.754], [0.763, 0.367]]
+height = 0.02
+bevel = 0
+segments = 1
+offset = [0, 0, 0]
+cast_shadows = false

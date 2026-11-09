@@ -1,0 +1,74 @@
+{
+  "data": {
+    "components": {
+      "2f4c21e2-5bf2-59ca-8ea6-c6d42cbc11fe": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "2f4c21e2-5bf2-59ca-8ea6-c6d42cbc11fe",
+          "name": "surface",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
+          "material": "2baa97a2-f72c-5d9e-bb07-efc3aba89348",
+          "mesh": "be1f0b58-0307-5c88-a006-4d59e6b384fb"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "4d7be1cc-8c0d-530e-97f3-5b7fb32fbe67": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "4d7be1cc-8c0d-530e-97f3-5b7fb32fbe67",
+          "name": "ground_field",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "4d7be1cc-8c0d-530e-97f3-5b7fb32fbe67": [
+        "2f4c21e2-5bf2-59ca-8ea6-c6d42cbc11fe"
+      ]
+    },
+    "roots": [
+      "4d7be1cc-8c0d-530e-97f3-5b7fb32fbe67"
+    ]
+  },
+  "root": "4d7be1cc-8c0d-530e-97f3-5b7fb32fbe67"
+}

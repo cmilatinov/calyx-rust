@@ -1,6 +1,12 @@
 //! Rebuild the arena kit and explicit gameplay placements, preserving actor ids.
 //! Run from the repository root: cargo run -p sandbox --example remake_arena.
+//!
+//! `-- --palette sunbaked|moonlit --out <scene>` writes the same arena with
+//! that palette's kit, water and look-dev light rig to another scene, to
+//! preview a palette; the arena itself is Sunny Battlefield's.
 #![recursion_limit = "256"]
+
+mod farmland;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -57,6 +63,8 @@ fn component_text<'a>(text: &'a str, id: Uuid) -> &'a str {
 
 struct Author {
     scene: Scene,
+    /// The map whose kit the arena is built from.
+    palette: calyx_model_gen::palette::Map,
     assets: PathBuf,
     arena: GameObject,
     remap: BTreeMap<String, String>,
@@ -120,8 +128,10 @@ impl Author {
         );
     }
 
-    /// The walls inside the pen. Corners shield the spawn from the two sand
-    /// lanes, a run across the west middle splits the lane from the centre,
+    /// The walls inside the pen. A corner shields the spawn from the east
+    /// sand lane (the farmland's farmhouse, hedgerow and water tower shield
+    /// it from the west), a run across the west middle splits the lane from
+    /// the centre,
     /// a corner in the northwest faces the raised area across the north,
     /// and a run in the east middle screens the west ramp's approach from
     /// the centre. Sight between these opens and closes as tanks move. Each
@@ -133,19 +143,6 @@ impl Author {
         let run = |from: (f32, f32), to: (f32, f32)| (vec2(from.0, from.1), vec2(to.0, to.1));
         // Corner posts sit at the inner angle; their arms reach 3 m along
         // local +X and +Z, and an end cap closes on its local -X.
-        self.interior_wall(
-            "Southwest Corner",
-            &[
-                ("wall_corner", -16.0, -25.0, 0.0),
-                ("wall_long", -16.0, -20.0, 90.0),
-                ("wall_end", -16.0, -17.0, 90.0),
-                ("wall_end", -12.0, -25.0, 180.0),
-            ],
-            &[
-                run((-16.0, -25.6), (-16.0, -16.4)),
-                run((-16.6, -25.0), (-11.4, -25.0)),
-            ],
-        );
         self.interior_wall(
             "Southeast Corner",
             &[
@@ -292,9 +289,10 @@ impl Author {
         yaw: f32,
     ) -> GameObject {
         self.claim(name);
-        let path = self
-            .assets
-            .join(format!("generated/prefabs/sunny/{model}.cxprefab"));
+        let path = self.assets.join(format!(
+            "generated/prefabs/{}/{model}.cxprefab",
+            self.palette.folder()
+        ));
         let source = read(&path);
         let prefab = Prefab {
             data: serde_json::from_value(source["data"].clone()).unwrap(),
@@ -432,6 +430,17 @@ impl Author {
             "flag" | "lamp" => vec![bounds(0.75, 0.32, 1.5, 0.32)],
             "berry_bush" => vec![bounds(0.25, 0.8, 0.5, 0.7)],
             "grass_tuft" => vec![],
+            // The hedge's dense body; its outermost leaves are decorative.
+            "hedgerow" => vec![bounds(0.8, 4.4, 1.6, 1.3)],
+            // The tower's legs and footings, as one block: rounds and tanks
+            // stop at it, and its tank and roof stand high above both.
+            "water_tower" => vec![bounds(
+                1.0,
+                farmland::TOWER_SOLID,
+                2.0,
+                farmland::TOWER_SOLID,
+            )],
+            "hay_bale" => vec![bounds(0.62, 1.24, 1.24, 1.24)],
             _ => panic!("no collision handoff for {model}"),
         };
         for (i, (center, size)) in solids.into_iter().enumerate() {
@@ -641,6 +650,20 @@ fn light_and_post_process(scene: &mut Scene) -> [Uuid; 3] {
 fn main() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let path = root.join("assets/game/scenes/arena.cxscene");
+    let args: Vec<String> = std::env::args().collect();
+    let arg = |name: &str| {
+        args.iter()
+            .position(|a| a == name)
+            .map(|i| args[i + 1].clone())
+    };
+    use calyx_model_gen::palette::Map;
+    let palette = match arg("--palette").as_deref() {
+        None | Some("sunny") => Map::SunnyBattlefield,
+        Some("sunbaked") => Map::Sunbaked,
+        Some("moonlit") => Map::Moonlit,
+        Some(other) => panic!("no palette {other}"),
+    };
+    let out = arg("--out").map_or_else(|| path.clone(), PathBuf::from);
     // No asset scanning is needed to author references and prefab links.
     let assets = calyx_engine::test_support::test_asset_context_with_assets(Vec::new());
     sandbox::plugin_main(&mut assets.registries.types.write());
@@ -718,6 +741,7 @@ fn main() {
     scene.flush_deletes();
     let mut author = Author {
         scene,
+        palette,
         arena,
         assets: root.join("assets"),
         remap: BTreeMap::new(),
@@ -734,14 +758,15 @@ fn main() {
         vec3(60.0, 1.0, 64.0),
         UnitQuaternion::identity(),
     );
-    let foundation = author.object("Arena Foundation", arena, vec3(0.0, -0.6, 0.0));
-    // Continue the visible ground beyond the pen, including the camera's
-    // far zoom and aim lead at the walls. Its top stays below the tiles to
-    // avoid z-fighting; collision remains confined to the playfield above.
+    // The foundation lies far under the ground, a backstop the camera
+    // never sees: the ground tiles below cover the whole apron around the
+    // pen, carved where the creek runs beneath them, so it must clear the
+    // water. Collision remains confined to the playfield above.
+    let foundation = author.object("Arena Foundation", arena, vec3(0.0, -1.8, 0.0));
     author.scene.set_transform(
         foundation,
         &Transform::from_components(
-            vec3(0.0, -0.6, 0.0),
+            vec3(0.0, -1.8, 0.0),
             Default::default(),
             vec3(200.0, 1.0, 200.0),
         )
@@ -751,13 +776,15 @@ fn main() {
         foundation,
         ComponentMesh {
             mesh: AssetRef::from_id("4d2d87eb-60b4-4dcc-b3d4-67bc444396c9".parse().unwrap()),
-            material: AssetRef::from_id(asset_id(
-                &author.assets.join("generated/materials/sunny/ground.cxmat"),
-            )),
+            material: AssetRef::from_id(asset_id(&author.assets.join(format!(
+                "generated/materials/{}/ground.cxmat",
+                author.palette.folder()
+            )))),
             ..Default::default()
         },
     );
-    let ground_kind = |x: i32, z: i32| {
+    let creek = farmland::Creek::new(&author.assets, palette);
+    let pen_kind = |x: i32, z: i32| {
         if (-3..3).contains(&x) && (-26..-20).contains(&z) {
             "paving"
         } else if (-1..2).contains(&x) && (6..18).contains(&z) {
@@ -776,28 +803,51 @@ fn main() {
             "grass"
         }
     };
+    // The ground kind of each one-metre cell of the apron, the pen inside
+    // it, or none where the creek's trench takes the cell.
+    let ground_kind = |x: i32, z: i32| -> Option<&'static str> {
+        if creek.carves(x, z) {
+            return None;
+        }
+        let inside = (-30..30).contains(&x) && (-32..32).contains(&z);
+        Some(farmland::farm_ground(x, z).unwrap_or_else(|| {
+            if inside {
+                pen_kind(x, z)
+            } else {
+                "grass"
+            }
+        }))
+    };
     // Uniform, untextured tile surfaces can share one scaled instance per
     // rectangle. Keep paving joints and road dashes on individual metre cells.
-    let mut covered = std::collections::BTreeSet::new();
-    for x in -30..30 {
-        for z in -32..32 {
-            if covered.contains(&(x, z)) {
+    const APRON: i32 = 100;
+    let side = (2 * APRON) as usize;
+    let cell = |x: i32, z: i32| (z + APRON) as usize * side + (x + APRON) as usize;
+    let kinds: Vec<Option<&str>> = (0..side * side)
+        .map(|i| ground_kind((i % side) as i32 - APRON, (i / side) as i32 - APRON))
+        .collect();
+    let mut covered = vec![false; side * side];
+    for z in -APRON..APRON {
+        for x in -APRON..APRON {
+            let Some(kind) = kinds[cell(x, z)] else {
+                continue;
+            };
+            if covered[cell(x, z)] {
                 continue;
             }
-            let kind = ground_kind(x, z);
             let mut width = 1;
             let mut depth = 1;
             if kind != "paving" && kind != "road_marked" {
-                while x + width < 30
-                    && ground_kind(x + width, z) == kind
-                    && !covered.contains(&(x + width, z))
+                while x + width < APRON
+                    && kinds[cell(x + width, z)] == Some(kind)
+                    && !covered[cell(x + width, z)]
                 {
                     width += 1;
                 }
-                while z + depth < 32
+                while z + depth < APRON
                     && (x..x + width).all(|column| {
-                        ground_kind(column, z + depth) == kind
-                            && !covered.contains(&(column, z + depth))
+                        kinds[cell(column, z + depth)] == Some(kind)
+                            && !covered[cell(column, z + depth)]
                     })
                 {
                     depth += 1;
@@ -805,7 +855,7 @@ fn main() {
             }
             for column in x..x + width {
                 for row in z..z + depth {
-                    assert!(covered.insert((column, row)));
+                    covered[cell(column, row)] = true;
                 }
             }
             let position = vec3(
@@ -830,7 +880,10 @@ fn main() {
             );
         }
     }
-    assert_eq!(covered.len(), 60 * 64);
+    assert!(
+        (-30..30).all(|x| (-32..32).all(|z| covered[cell(x, z)] || creek.carves(x, z))),
+        "the pen's ground has a hole outside the creek"
+    );
 
     for (name, x, z, yaw) in [
         ("SW", -29.0, -31.0, 0.0),
@@ -897,11 +950,10 @@ fn main() {
         author.prop(model, &format!("Arena Cover {name}"), x * 2.0, z * 2.0, yaw);
     }
     // Companion cover makes clusters at the larger spacing, with clear
-    // four-metre sand lanes at X +/-20 and a clear spawn approach.
+    // four-metre sand lanes at X +/-20 and a clear spawn approach. The
+    // farmland covers the spawn's west side.
     for (model, name, x, z, yaw) in [
-        ("barrier_hazard", "Spawn Left Barrier", -7.0, -14.5, 0.0),
         ("crate_large", "Spawn Right Crate", 7.0, -14.0, 0.0),
-        ("crate_framed", "Spawn Left Supply", -9.0, -14.0, 0.0),
         ("crate_framed", "Left Forward Crate", -14.0, -5.0, 0.0),
         ("barrier_plain", "Centre Wing Barrier", -4.0, -3.0, 20.0),
         ("crate_large", "Right Forward Crate", 12.0, -5.0, 0.0),
@@ -914,16 +966,14 @@ fn main() {
     }
     author.raised_area();
     author.interior_walls();
+    author.farmland(&creek);
     for (model, name, x, z, yaw) in [
-        ("tree_small", "Spawn West Tree", -6.0, -9.0, 20.0),
         ("tree_small", "Spawn East Tree", 6.0, -8.0, -20.0),
-        ("tree", "Southwest Tree", -11.8, -12.5, 0.0),
         ("tree_small", "West Tree", -12.0, 5.0, 30.0),
         ("tree_large", "Northwest Tree", -11.0, 12.0, 0.0),
         ("tree", "Southeast Tree", 11.8, -12.5, 45.0),
-        ("berry_bush", "Southwest Bush", -12.0, -8.0, 20.0),
         ("berry_bush", "Northwest Bush", -9.0, 13.0, 0.0),
-        ("flag", "Spawn Flag", -3.5, -10.5, 0.0),
+        ("flag", "Spawn Flag", -3.5, -11.5, 0.0),
         ("lamp", "Spawn Lamp", 3.5, -10.5, 0.0),
     ] {
         author.prop(model, &format!("Arena Prop {name}"), x * 2.0, z * 2.0, yaw);
@@ -944,6 +994,8 @@ fn main() {
     ]
     .into_iter()
     .enumerate()
+    // The farmland's ground replaces the tufts in the southwest quadrant.
+    .filter(|(_, (x, z))| *x >= 0.0 || *z >= 0.0)
     {
         author.prop(
             "grass_tuft",
@@ -984,10 +1036,89 @@ fn main() {
         let generated = component_text(&output, id).to_string();
         output = output.replacen(&generated, &original, 1);
     }
-    std::fs::write(&path, output).unwrap();
+    if palette != Map::SunnyBattlefield {
+        output = with_look_dev_rig(&root, &output, palette);
+    }
+    std::fs::write(&out, output).unwrap();
     println!(
         "Authored {} objects into {}",
         data.components.len(),
-        path.display()
+        out.display()
     );
+}
+
+/// `scene` (the arena's JSON) with its Sun, Sky and Post Process taking
+/// `palette`'s look-dev rig from `lookdev/tank_direction.cxscene`, its
+/// components enabled, under the arena's ids and names.
+fn with_look_dev_rig(root: &Path, scene: &str, palette: calyx_model_gen::palette::Map) -> String {
+    use calyx_model_gen::palette::Map;
+    let look_dev = read(&root.join("assets/lookdev/tank_direction.cxscene"));
+    let mut scene: Value = serde_json::from_str(scene).unwrap();
+    let id_type = ComponentID::type_uuid().to_string();
+    let name = |data: &Value, id: &str| {
+        data["components"][id][&id_type]["name"]
+            .as_str()
+            .unwrap_or_default()
+            .to_string()
+    };
+    let group = match palette {
+        Map::SunnyBattlefield => "Sunny Battlefield",
+        Map::Sunbaked => "Sunbaked",
+        Map::Moonlit => "Moonlit",
+    };
+    let children = |data: &Value, id: &str| -> Vec<String> {
+        data["hierarchy"][id]
+            .as_array()
+            .map(|ids| {
+                ids.iter()
+                    .map(|id| id.as_str().unwrap().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
+    };
+    let group = look_dev["roots"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|id| id.as_str().unwrap().to_string())
+        .find(|id| name(&look_dev, id) == group)
+        .unwrap();
+    let rig = children(&look_dev, &group)
+        .into_iter()
+        .find(|id| name(&look_dev, id) == "Rig")
+        .unwrap();
+    let ids: Vec<String> = scene["components"]
+        .as_object()
+        .unwrap()
+        .keys()
+        .cloned()
+        .collect();
+    for (target, sources) in [
+        ("Sun", &["Sun", "Moon"][..]),
+        ("Sky", &["Sky"][..]),
+        ("Post Process", &["Post Process"][..]),
+    ] {
+        let source = children(&look_dev, &rig)
+            .into_iter()
+            .find(|id| sources.contains(&name(&look_dev, id).as_str()))
+            .unwrap();
+        let target = ids
+            .iter()
+            .find(|id| name(&scene, id) == target)
+            .unwrap()
+            .clone();
+        let mut components = look_dev["components"][&source].clone();
+        components[&id_type] = scene["components"][&target][&id_type].clone();
+        scene["components"][&target] = components;
+        // The look-dev scene disables every rig but Sunny Battlefield's; the
+        // preview's rig is the one it lights with, so all of it is enabled.
+        if let Some(Value::Object(map)) = scene
+            .as_object_mut()
+            .unwrap()
+            .get_mut("disabled_components")
+        {
+            map.remove(&target);
+        }
+    }
+    serde_json::to_string_pretty(&scene).unwrap()
 }

@@ -134,10 +134,11 @@ One-metre grass, sand, dirt, paving and road tiles use flat clay materials
 without ink. Uniform surfaces share scaled tile instances on whole-metre
 rectangles; paving joints and marked road dashes stay on individual tiles.
 The tiles share one uninterrupted collision floor at y = 0, so seams and
-paving joints do not catch tank tracks. The visible foundation extends to
-200 by 200 m, with its top 0.1 m below the tiles, to fill the camera view
-at the walls even with maximum zoom-out and aim lead. It adds no collision
-outside the closed playable pen. The ground materials and meshes are
+paving joints do not catch tank tracks. Ground tiles also cover a 200 by
+200 m apron around the pen, to fill the camera view at the walls even with
+maximum zoom-out and aim lead; the foundation, a backstop the camera never
+sees, lies 1.3 m under them so it clears the creek's water. Neither adds
+collision outside the closed playable pen. The ground materials and meshes are
 generated for all three palettes alongside the prop kit.
 
 The two sand flank lanes stay clear for tanks. Staggered barriers, crates,
@@ -156,9 +157,9 @@ degrees, climbs from the middle of the arena, north of the rear crates. A
 sandbag stack on the deck at `(17, 21)` gives cover overlooking the middle.
 
 Interior walls, each an `Arena Wall ...` object holding its kit modules,
-divide the pen into lanes and corners. Corners shield the spawn from the two
-sand lanes (`Southwest Corner`, `Southeast Corner`, roots at `(-16, -25)` and
-`(16, -25)`), a run across the west middle at z = 11 splits the west lane
+divide the pen into lanes and corners. A corner shields the spawn from the
+east sand lane (`Southeast Corner`, root at `(16, -25)`; the farmland's
+farmhouse, hedgerow and water tower do so on the west), a run across the west middle at z = 11 splits the west lane
 from the centre (`West Middle`), a corner at `(-6, 25)` faces the raised area
 across the north (`Northwest Corner`), and a run at x = 10 screens the west
 ramp's approach from the centre (`East Middle`). Their modules join at their
@@ -198,3 +199,51 @@ authored children with deterministic ids and engine-created prefab links.
 It assigns the explicit actor placements and initial Far camera above,
 preserving other component data and all actor ids/prefab links. Run
 the model generator first after changing a tile or kit parameter file.
+
+## Farmland front
+
+The southwest quadrant (x < 0, z < 0 in the Arena's frame) is a farmland
+front, Sunny Battlefield's setting, built by `remake_arena`'s `farmland`
+module. It reads by detail rather than height:
+
+- **Creek.** One Water component, `Arena Creek`, 0.6 m below the ground,
+  meanders in under the west wall, bends past the farm and leaves under the
+  south wall, 5.5 to 8 m wide, continuing outside both walls. Its banks are
+  the component's, in the generated `creek_bank` material (the dirt's
+  colours on the terrain's ink layer), with their lip 2 cm above the tiles.
+  The ground tiles leave out every cell that reaches into the trench, and
+  rotated grass strips along both banks cover the cells' steps under the
+  lip. Stones stand in the stream, with foam rings, and reeds on its banks.
+- **Collision.** `Arena Creek Blocker` boxes, 1.6 m pieces along the
+  centreline as wide as the water plus 0.5 m a side and overlapping the
+  next, are in the sandbox's `TANK_BLOCKER` collision groups: they stop
+  tanks short of the water but let rounds, sight and the aim across.
+  Colliders are primitives, so the blockers follow the bends in pieces;
+  either side of the bridge a block closes the creek up to the rails.
+- **Crossings.** A timber bridge (`bridge`) carries the west sand lane over
+  the creek, its deck 5 cm above the floor, its rails `TANK_BLOCKER` boxes.
+  The ford (`Arena Ford`, facing across the creek) is a gap in the
+  blockers 6.4 m along the flow, under a sheet of shallow water level with
+  the ground (`Arena Ford Water`) and stepping stones along its downstream
+  edge.
+- **Landmarks.** The ruined farmhouse (`Arena Wall Farmhouse`) is two kit
+  wall corners with doorways wider than 2.8 m, a 3.8 m `chimney` and a
+  broken `roof_ruin`, in a dirt yard with hay bales; the 9.7 m
+  `water_tower` stands in the pen's southwest corner, its solid meeting
+  both walls. Two `hedgerow`s are cover that stops rounds and, like crates,
+  sight.
+- **Ground.** Two tilled fields with crop rows, organic patches of darker
+  and lighter grass, gravel by the ford and the tower and the farmhouse's
+  dirt yard (`patch_*`), and worn tracks (`ground_track` ruts) up the lane,
+  from the spawn over the ford, and from the spawn through the farmhouse.
+- **Outside.** Fields with fences and copses of kit trees beyond the west
+  and south walls, around the creek's continuation.
+
+New models are generated in all three palettes like the kit: the ground
+tiles `ground_grass_dark`, `ground_grass_light`, `ground_gravel`,
+`ground_field`, `ground_crop`, `ground_track` and `creek_bank`, the
+`patch_*` overlays, `hedgerow`, `water_tower`, `bridge`, `chimney`,
+`roof_ruin`, `hay_bale` and `fence`, with the new roles `ground_grass_dark`,
+`ground_grass_light`, `ground_gravel`, `ground_field`, `ground_crop`,
+`ground_track`, `creek_bank` and `roof_tiles`. No third-party assets are
+used.

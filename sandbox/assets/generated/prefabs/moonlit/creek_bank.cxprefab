@@ -1,0 +1,74 @@
+{
+  "data": {
+    "components": {
+      "8eb576c9-34ff-5a13-bee7-9bdb61cd3213": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "8eb576c9-34ff-5a13-bee7-9bdb61cd3213",
+          "name": "creek_bank",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "cadf242a-6257-54b0-8904-6ebdc4dc5768": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "cadf242a-6257-54b0-8904-6ebdc4dc5768",
+          "name": "surface",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
+          "material": "3f72bf86-85d5-5688-bd7b-a13813326231",
+          "mesh": "89b2450a-6fbb-5fea-addd-d0dd5b8a3a0a"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "8eb576c9-34ff-5a13-bee7-9bdb61cd3213": [
+        "cadf242a-6257-54b0-8904-6ebdc4dc5768"
+      ]
+    },
+    "roots": [
+      "8eb576c9-34ff-5a13-bee7-9bdb61cd3213"
+    ]
+  },
+  "root": "8eb576c9-34ff-5a13-bee7-9bdb61cd3213"
+}
