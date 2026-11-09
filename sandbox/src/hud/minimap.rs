@@ -6,9 +6,11 @@ use crate::sentry::ComponentSentry;
 use crate::spawn::ComponentRespawnState;
 use crate::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
 #[cfg(test)]
+use crate::vision::arena_geometry;
+#[cfg(test)]
 use crate::vision::cover_entry;
 use crate::vision::sight::{side_sight, sight_rays};
-use crate::vision::{arena_geometry, ground, GroundRect, TeamVision};
+use crate::vision::{ground, GroundRect, TeamVision, VisionFrame};
 use calyx_engine::component::FogOfWarSight;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{UiColor, UiPoint, UiRect, UiSize};
@@ -128,17 +130,26 @@ pub(crate) struct MinimapState {
     pub sight: FogOfWarSight,
 }
 
-/// Reads the map of the scene `player`'s HUD shows: the first arena, facing
-/// the way `player`'s camera does, and every tank, sentry and live target.
+/// [`minimap_state_from`] over the arena and tanks as they are now.
+#[cfg(test)]
 pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
+    minimap_state_from(scene, player, &VisionFrame::read(scene))
+}
+
+/// Reads the map of the scene `player`'s HUD shows: the arena of `frame`,
+/// facing the way `player`'s camera does, and every tank, sentry and live
+/// target, with what `player`'s side sees now over `frame`'s arena.
+pub(crate) fn minimap_state_from(
+    scene: &Scene,
+    player: GameObject,
+    frame: &VisionFrame,
+) -> MinimapState {
     let right = camera_right(scene, player).unwrap_or_else(|| vec2(1.0, 0.0));
-    let arena = arena_geometry(scene);
-    let (view, floor, cover, blockers) = match arena {
+    let (view, floor, cover) = match &frame.arena {
         Some(arena) => (
             MinimapView::fitting(arena.floor, right),
             Some(arena.floor),
-            arena.cover,
-            arena.sight_blockers,
+            arena.cover.clone(),
         ),
         None => (
             MinimapView::facing(
@@ -148,11 +159,10 @@ pub(crate) fn minimap_state(scene: &Scene, player: GameObject) -> MinimapState {
             ),
             None,
             Vec::new(),
-            Vec::new(),
         ),
     };
 
-    let vision = TeamVision::of_player(scene, player, blockers);
+    let vision = frame.vision(scene, player);
     MinimapState {
         player_position: ground(scene.world_transform(player).position),
         vision_range: scene

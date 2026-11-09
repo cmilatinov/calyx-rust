@@ -72,6 +72,11 @@ pub struct ComponentTankHud {
     #[serde(skip)]
     #[reflect_skip]
     fog_sight: crate::vision::sight::FogSight,
+    /// The arena and tanks read at the last update, shared by everything
+    /// that asks what this HUD's player's side sees until the next.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) vision_frame: Option<crate::vision::VisionFrame>,
 }
 
 impl Default for ComponentTankHud {
@@ -89,6 +94,7 @@ impl Default for ComponentTankHud {
             map_boundary: Default::default(),
             fog: Default::default(),
             fog_sight: Default::default(),
+            vision_frame: None,
         }
     }
 }
@@ -169,14 +175,18 @@ impl ComponentUpdate for ComponentTankHud {
             previous,
         );
         let _ = this.write(scene, |hud| hud.scoreboard_blur = blur);
+        // Read the arena once this frame; fog, the HUD and every fog refresh
+        // until the next update share it.
+        let frame = crate::vision::VisionFrame::read(scene);
+        let vision = frame.vision(scene, this.game_object());
         if let Some(mut fog) = this.write(scene, |hud| std::mem::take(&mut hud.fog)) {
             fog.advance(dt);
-            crate::vision::apply_fog(scene, this.game_object(), &mut fog);
+            crate::vision::apply_fog_seen(scene, this.game_object(), &mut fog, &vision);
             let _ = this.write(scene, |hud| hud.fog = fog);
         }
-        let vision = crate::vision::TeamVision::in_scene(scene, this.game_object());
         if let Some(sight) = this.write(scene, |hud| {
             hud.fog_sight.update(&vision, dt);
+            hud.vision_frame = Some(frame);
             hud.fog_sight.sight().clone()
         }) {
             crate::vision::sight::show_sight(scene, &sight);
@@ -336,7 +346,17 @@ impl ComponentHud for ComponentTankHud {
         let width = viewport.width() / p.scale;
         let height = viewport.height() / p.scale;
         let margin = hud.screen_margin.max(12.0).min(width * 0.1);
-        let mut map = minimap::minimap_state(scene, player);
+        // The arena and tanks the last update read, shared with fog of war;
+        // read now only before the first update.
+        let read;
+        let frame = match &hud.vision_frame {
+            Some(frame) => frame,
+            None => {
+                read = crate::vision::VisionFrame::read(scene);
+                &read
+            }
+        };
+        let mut map = minimap::minimap_state_from(scene, player, frame);
         for blip in &mut map.blips {
             blip.presence = hud.fog.presence(blip.id);
         }
