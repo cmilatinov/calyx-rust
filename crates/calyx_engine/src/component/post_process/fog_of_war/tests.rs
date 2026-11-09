@@ -43,6 +43,22 @@ fn a_blocker_is_seen_and_the_ground_behind_it_is_not() {
 }
 
 #[test]
+fn a_point_on_a_blockers_far_side_is_on_the_blocker() {
+    // A wall's face turned from the viewer rebuilds from depth to points on
+    // the footprint's edge, give or take the depth's rounding: they are all
+    // the blocker's, and seen, wherever the line to them crosses it.
+    let sight = behind_a_block();
+    for step in 0..=200 {
+        let z = -0.99 + step as f32 * 0.0099;
+        for x in [6.0 - 1e-3, 6.0, 6.0 + 1e-3, 6.0 + 0.004] {
+            assert_eq!(sight.visibility(vec2(x, z)), 1.0, "({x}, {z})");
+        }
+    }
+    // Further out it is ground behind the block, in its shadow.
+    assert_eq!(sight.visibility(vec2(6.0 + 0.006, 0.0)), 0.0);
+}
+
+#[test]
 fn a_shadow_side_is_the_line_from_the_viewer_past_the_corner() {
     // The block's corner (4, 1) bounds its shadow on the +Z side: the side
     // runs along the line through it, at a quarter of the distance in z.

@@ -437,6 +437,66 @@ fn the_same_pixel_is_clear_on_a_surface_in_sight_and_fogged_on_one_in_shadow() {
 }
 
 #[test]
+fn a_wall_face_turned_from_the_viewer_is_lit_or_fogged_whole() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    // Looking along +X, level with the ground, at the face x = 4 of a block
+    // from 4 to 6, which turns from a viewer at x = 8: every pixel of the
+    // face rebuilds from depth to the block's edge, give or take rounding.
+    let view = looking(vec3(0.0, 0.5, 0.0), vec3(1.0, 0.5, 0.0));
+    let depth = planes().depth_of(4.0);
+    let face = |hidden: bool| {
+        let mut blockers = vec![block(vec2(5.0, 0.0), vec2(2.0, 2.0))];
+        if hidden {
+            // A block past a gap, between the viewer and the first one.
+            blockers.push(block(vec2(7.0, 0.0), vec2(0.5, 4.0)));
+        }
+        let fog = fog(Some(FogOfWarSight {
+            viewers: vec![viewer(vec2(8.0, 0.0))],
+            blockers,
+        }));
+        let output = run(&context, fog.clone(), &view, depth).expect("the pass runs");
+        let mut pixels = Vec::new();
+        for y in 0..SIZE.1 {
+            for x in 0..SIZE.0 {
+                let world = world_position(&view, x, y, depth);
+                if world.z.abs() < 0.9 {
+                    pixels.push((output[(y * SIZE.0 + x) as usize], world, fog.clone()));
+                }
+            }
+        }
+        pixels
+    };
+
+    let seen = face(false);
+    assert!(seen.len() > 100, "the face fills the view: {}", seen.len());
+    let fogged_pixels = seen
+        .iter()
+        .filter(|(texel, ..)| (texel[0] - COLOR[0]).abs() > TOLERANCE)
+        .count();
+    assert_eq!(
+        fogged_pixels,
+        0,
+        "of {} pixels of the face in sight",
+        seen.len()
+    );
+    for (texel, world, fog) in &seen {
+        let ground = vec2(world.x, world.z);
+        let sight = fog.sight.as_ref().expect("a sight");
+        assert_eq!(sight.visibility(ground), 1.0, "{world:?}");
+        assert_texel(*texel, COLOR, &format!("the face in sight at {world:?}"));
+    }
+    for (texel, world, fog) in &face(true) {
+        assert_texel(
+            *texel,
+            fogged(fog, 0.0),
+            &format!("the face in shadow at {world:?}"),
+        );
+    }
+}
+
+#[test]
 fn a_side_with_no_viewers_fogs_everything_fully() {
     let assets = TestAssets::engine();
     let context = assets.asset_context();

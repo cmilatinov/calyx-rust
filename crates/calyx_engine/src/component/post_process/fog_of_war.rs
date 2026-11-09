@@ -98,6 +98,14 @@ impl FogOfWarSight {
     /// into the next.
     pub const TOUCHING: f32 = 0.05;
 
+    /// How far past the side of a blocker a line of sight leaves by, in
+    /// world units, a point may lie and still count as on the blocker. The
+    /// pass rebuilds every pixel of a wall's face to a point on the edge of
+    /// the wall's footprint, give or take the depth's rounding, so without
+    /// it whether the face of a wall in sight turned from the viewer is lit
+    /// or in shadow falls either way from pixel to pixel and frame to frame.
+    pub const EDGE: f32 = 0.005;
+
     /// Where the fog of war pass samples sight inside a pixel, in pixels
     /// from its centre: a rotated grid, so near-horizontal and
     /// near-vertical shadow sides each cross four distinct sample rows.
@@ -136,11 +144,11 @@ impl FogOfWarSight {
     }
 
     /// Whether sight reaches from `from` to `to` over the ground: the line
-    /// between them leaves no blocker before `to` into open ground. Sight
-    /// carries on through blockers that overlap or touch, within
-    /// [`Self::TOUCHING`], so a point on or within the run of touching
-    /// blocks the line meets first is seen, and only the ground past the
-    /// run's far side is in shadow.
+    /// between them leaves no blocker into open ground more than
+    /// [`Self::EDGE`] before `to`. Sight carries on through blockers that
+    /// overlap or touch, within [`Self::TOUCHING`], so a point on or within
+    /// the run of touching blocks the line meets first is seen, and only the
+    /// ground past the run's far side is in shadow.
     pub fn clear_line(&self, from: Vec2, to: Vec2) -> bool {
         let offset = to - from;
         let distance = offset.norm();
@@ -155,7 +163,7 @@ impl FogOfWarSight {
             .filter_map(|blocker| blocker.span(from, direction, limit))
             .collect::<Vec<_>>();
         !spans.iter().any(|&(_, exit)| {
-            exit <= distance
+            exit < distance - Self::EDGE
                 && !spans
                     .iter()
                     .any(|&(near, far)| near <= exit + Self::TOUCHING && far > exit)
