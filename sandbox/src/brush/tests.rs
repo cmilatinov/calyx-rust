@@ -310,7 +310,7 @@ fn brush_volumes_neither_block_sight_nor_count_as_arena_cover() {
 }
 
 #[test]
-fn grass_bends_for_seen_tanks_and_parts_only_around_the_players_patch() {
+fn grass_bends_for_seen_tanks_and_fades_only_around_the_players_patch() {
     let mut scene = test_scene();
     let player = tank(&mut scene, "Player", 0.0, 0.0, 1);
     scene.add_component(player, ComponentTankHud::default());
@@ -327,7 +327,7 @@ fn grass_bends_for_seen_tanks_and_parts_only_around_the_players_patch() {
             .find(|b| b.position.x == at.0 && b.position.z == at.1)
             .map(|b| b.reveal_radius)
     };
-    // Out of the brush, every seen tank bends the grass and none parts it.
+    // Out of the brush, every seen tank bends the grass and none fades it.
     let benders = grass_benders(&scene);
     assert_eq!(benders.len(), 4);
     assert!(benders
@@ -343,7 +343,7 @@ fn grass_bends_for_seen_tanks_and_parts_only_around_the_players_patch() {
         "a hidden tank gives nothing away"
     );
 
-    // In the patch, the player and the tanks it sees there part the grass.
+    // In the patch, the player and the tanks it sees there fade the grass.
     let _ = scene.write_component::<ComponentID, _>(enemy, |id| id.visible = true);
     scene.set_world_transform(player, Transform::from_xyz(7.0, 0.0, 0.0).matrix());
     let benders = grass_benders(&scene);

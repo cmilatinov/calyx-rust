@@ -13,6 +13,7 @@ mod ground;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
+use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
     ColliderShape, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
     ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentFoliage,
@@ -61,6 +62,15 @@ fn component_text<'a>(text: &'a str, id: Uuid) -> &'a str {
     let end = start + text[start..].find("\n    }").unwrap() + "\n    }".len();
     &text[start..end]
 }
+
+/// The test patches of tall-grass brush, `(name, x, z, width, depth)` in
+/// the Arena's frame, until the layout work places brush along the creek
+/// and the landmarks. Each is clear of cover and of the sentry's lane.
+pub const BRUSH_PATCHES: [(&str, f32, f32, f32, f32); 3] = [
+    ("Centre", 3.0, -10.0, 7.0, 5.0),
+    ("East", 13.5, 4.0, 5.0, 6.0),
+    ("North", -4.0, 6.0, 5.0, 5.0),
+];
 
 struct Author {
     scene: Scene,
@@ -134,6 +144,8 @@ impl Author {
     /// with a box volume that stops nothing, 2 m high on the ground, and its
     /// grass a Foliage of the kit's `tall_grass` clumps packed over it. The
     /// Arena's Grass Field sways all of them and bends them around tanks.
+    /// The test patches: their volumes, the darker grass the ground paints
+    /// under them, and their clumps; see `BRUSH_PATCHES`.
     fn brush(&mut self) {
         // The kit's tall blades arc over by drooping in the grass shader.
         let grass_field = || ComponentGrassField {
@@ -141,26 +153,20 @@ impl Author {
             ..Default::default()
         };
         /// The side of the grid cells a patch's clumps stand in, in metres.
-        const GRASS_CELL: f32 = 1.6;
+        const GRASS_CELL: f32 = 1.1;
         let prefab = asset_id(&self.assets.join(format!(
             "generated/prefabs/{}/tall_grass.cxprefab",
             self.palette.folder()
         )));
-        for (i, (name, x, z, width, depth)) in [
-            ("Centre", 3.0, -10.0, 7.0, 5.0),
-            ("East", 13.5, 4.0, 5.0, 6.0),
-            ("North", -4.0, 6.0, 5.0, 5.0),
-        ]
-        .into_iter()
-        .enumerate()
-        {
+        for (i, &(name, x, z, width, depth)) in BRUSH_PATCHES.iter().enumerate() {
             let name = format!("Arena Brush {name}");
             let patch = self.object(&name, self.arena, vec3(x, 0.0, z));
             self.scene
                 .add_component(patch, sandbox::brush::ComponentBrush::default());
             // One clump to each cell of an even grid over the volume, placed
-            // at random within the middle of its cell, so the blades fill
-            // the patch to its edges without bunching or leaving holes.
+            // at random anywhere in its cell and turned at random, so the
+            // blades fill the patch evenly, to its edges, without showing the
+            // grid or a centre.
             let columns = (width / GRASS_CELL).round().max(1.0) as i32;
             let rows = (depth / GRASS_CELL).round().max(1.0) as i32;
             let (cell_width, cell_depth) = (width / columns as f32, depth / rows as f32);
@@ -175,7 +181,7 @@ impl Author {
                             (row as f32 + 0.5) * cell_depth - depth * 0.5,
                         ),
                     );
-                    let area = vec2(cell_width * 0.7, cell_depth * 0.7);
+                    let area = vec2(cell_width * 0.95, cell_depth * 0.95);
                     self.scene.add_component(
                         cell,
                         ComponentFoliage {
@@ -194,24 +200,6 @@ impl Author {
                     );
                 }
             }
-            // A darker ground under the patch, inside its edge, where the
-            // blades lean out over it, so no light ground shows between them.
-            let ground = self.kit_under(
-                patch,
-                "ground_grass_dark",
-                &format!("{name} Ground"),
-                vec3(0.0, -0.085, 0.0),
-                0.0,
-            );
-            self.scene.set_transform(
-                ground,
-                &Transform::from_components(
-                    vec3(0.0, -0.085, 0.0),
-                    Default::default(),
-                    vec3(width - 2.0, 1.0, depth - 2.0),
-                )
-                .matrix(),
-            );
             let volume = self.collider(
                 patch,
                 &format!("{name} Volume"),

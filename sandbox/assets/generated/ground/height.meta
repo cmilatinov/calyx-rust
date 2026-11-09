@@ -1,9 +1,9 @@
 {
+  "inner": [],
   "main": {
+    "display_name": "height",
     "id": "bbdac185-6020-2ced-2478-957277f4faf3",
     "name": "generated/ground/height",
-    "display_name": "height",
     "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
-  },
-  "inner": []
+  }
 }

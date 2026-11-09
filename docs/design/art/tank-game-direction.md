@@ -91,8 +91,8 @@ convention.
 | Sentry armor | pale steel `#B9BBAE` | bone steel `#C4BAA5` | cool steel `#A5B9C5` |
 | Sentry optic | pale cyan `#88DBE3` | turquoise `#79D0D8` | ice cyan `#9CDAE8` |
 | Grass tufts | grass `#83AC38` | scrub green `#9AAB61` | night grass `#507165` |
-| Tall grass (brush) | deep grass `#4F8C2F` | dry olive `#6F7F3C` | night reeds `#2F5049` |
-| Tall grass, light blades | grass `#76A83A` | sage `#9AA35A` | moonlit reeds `#4A6E5F` |
+| Tall grass (brush) | deep grass `#47802E` | dry olive `#6A7A3A` | night reeds `#2C4C45` |
+| Tall grass, mid blades | grass `#5E8F3A` | sage `#868E50` | moonlit reeds `#3F6156` |
 | Rocks | grey stone `#B4B5AA` | warm grey `#A29F96` | granite `#848C96` |
 | Tree trunks | bark `#A2855E` | bark `#8F7960` | night bark `#4C4541` |
 | Tree lower foliage | dark leaf `#5F8E2C` | dark sage `#7F8C57` | deep pine `#2E4D4C` |

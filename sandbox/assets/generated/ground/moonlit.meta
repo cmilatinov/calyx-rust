@@ -1,9 +1,9 @@
 {
+  "inner": [],
   "main": {
+    "display_name": "moonlit",
     "id": "2af721eb-4b97-47cb-f845-5411c8a8cbf2",
     "name": "generated/ground/moonlit",
-    "display_name": "moonlit",
     "type_uuid": "f98a7f41-84d4-482d-b7af-a670b07035ae"
-  },
-  "inner": []
+  }
 }

@@ -21,10 +21,10 @@
 //! - firing from a patch reveals the shooter to everyone for the patch's
 //!   [`ComponentBrush::reveal_time`] ([`ComponentBrushReveal`]).
 //!
-//! The grass parts around the local player's tank while it is in brush, and
-//! around the tanks the player sees in the same patch: the blades near them
-//! bend away and lie down, opening a clearing the tanks show in. A tank fog
-//! hides neither bends nor parts the grass, which would give it away.
+//! The grass fades around the local player's tank while it is in brush, and
+//! around the tanks the player sees in the same patch, to a translucent
+//! green, truly alpha blended, so the tanks read clearly through it. A tank
+//! fog hides neither bends nor fades the grass, which would give it away.
 
 use crate::combat::is_tank_combatant;
 use crate::hud::ComponentTankHud;
@@ -329,15 +329,15 @@ fn is_live_tank(scene: &Scene, object: GameObject) -> bool {
 
 /// How far from a tank, in metres, the grass bends away from it.
 pub(crate) const BEND_RADIUS: f32 = 1.8;
-/// How far from a tank the player sees in brush, in metres, the grass parts
-/// and lies down so the tank shows in a clearing.
-pub(crate) const REVEAL_RADIUS: f32 = 3.4;
+/// How far from a tank the player sees in brush, in metres, the grass fades
+/// so the tank shows through it.
+pub(crate) const REVEAL_RADIUS: f32 = 3.2;
 
-/// What bends and parts the grass this frame, as the local player sees it:
+/// What bends and fades the grass this frame, as the local player sees it:
 /// every live tank the player's fog shows bends it, and the player's own
-/// tank, while in a patch, and the tanks it sees in that same patch part it.
+/// tank, while in a patch, and the tanks it sees in that same patch fade it.
 /// A tank fog hides does neither. Without a local player, every live tank
-/// bends the grass and none parts it.
+/// bends the grass and none fades it.
 pub(crate) fn grass_benders(scene: &Scene) -> Vec<GrassBender> {
     let patches = BrushPatches::read(scene);
     let player = <(&ComponentID, &ComponentTankHud)>::query()
@@ -361,7 +361,7 @@ pub(crate) fn grass_benders(scene: &Scene) -> Vec<GrassBender> {
                 bend_radius: BEND_RADIUS,
                 reveal_radius: if reveals { REVEAL_RADIUS } else { 0.0 },
             };
-            // The player's own first, then the others that part the grass,
+            // The player's own first, then the others that fade the grass,
             // so neither is ever past the shader's limit.
             let rank = if Some(tank) == player {
                 0

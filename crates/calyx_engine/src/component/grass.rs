@@ -1,5 +1,5 @@
 //! Tall grass that sways in the wind, bends away from the things moving
-//! through it, and lies down around them so they can be seen inside it.
+//! through it, and fades around them so they can be seen inside it.
 
 use crate as calyx_engine;
 use crate::component::{Component, ReflectComponent};
@@ -81,10 +81,9 @@ pub struct GrassBender {
     pub position: Vec3,
     /// How far from it, in metres, the grass bends away.
     pub bend_radius: f32,
-    /// How far from it, in metres, the grass lies down out of the way, so it
-    /// stands in a clearing; 0 clears nothing. The grass lies down fully
-    /// within half the radius and rises again over the outer half. It stays
-    /// opaque: nothing dithers.
+    /// How far from it, in metres, the grass fades so it shows through; 0
+    /// fades nothing. The grass eases from opaque at the radius to its
+    /// least opacity a third of the way in, alpha blended, with no ink.
     pub reveal_radius: f32,
 }
 

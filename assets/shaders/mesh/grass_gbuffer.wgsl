@@ -6,9 +6,10 @@
 //#include "shaders/mesh/grass_field.wgsl"
 
 // Tall grass's geometry pass: writes it into the G-buffer as `shaders/mesh/gbuffer.wgsl` writes
-// a PBR surface, from the same material, with one difference: the vertex stage sways the grass
-// in the wind, bends it away from the scene's grass benders and lays it down around the benders
-// that reveal (`grass_displacement`), so what stands in the grass shows in a clearing.
+// a PBR surface, from the same material, with two differences: the vertex stage droops and sways
+// the grass in the wind and bends it away from the scene's grass benders (`grass_displacement`),
+// and the fragment stage leaves out the grass fading around the benders that reveal, which
+// `shaders/mesh/grass.wgsl` draws instead, alpha blended over the lit scene.
 //
 // Group 2 is the material's own bind group, built for group 3 of `shaders/mesh/grass.wgsl`,
 // which declares it as `shaders/mesh/pbr.wgsl` does; group 3 is the grass field.
@@ -50,7 +51,7 @@ var occlusion_sampler: sampler;
 var<uniform> field: GrassField;
 
 struct PbrVertexOut {
-    @builtin(position) position: vec4f,
+    @builtin(position) @invariant position: vec4f,
     @location(0) world_position: vec3f,
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
@@ -104,6 +105,10 @@ fn fs_main(in: PbrVertexOut) -> GBufferOut {
     texels.occlusion = textureSample(occlusion_texture, occlusion_sampler, in.uv).r;
     let surface = pbr_surface(material, texels, in.normal, in.tangent);
     if pbr_discards(material, surface) {
+        discard;
+    }
+    // Grass fading around a bender that reveals is drawn by the transparent pass, blended.
+    if grass_reveal(field, in.world_position) > 0.0 {
         discard;
     }
     var out: GBufferOut;

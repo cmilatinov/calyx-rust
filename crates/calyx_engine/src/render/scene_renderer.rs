@@ -710,6 +710,12 @@ impl SceneRenderer {
                 self.skybox_renderer.skybox_id(),
                 self.sky_light_intensity,
                 self.light_manager.ambient_light(),
+                assets
+                    .shader(self.gbuffer_renderer.grass_shader_id())
+                    .map(|shader| crate::render::GrassSceneInputs {
+                        layout: shader.bind_group_layouts[0].clone(),
+                        field: self.gbuffer_renderer.grass_field_buffer(),
+                    }),
             )
         };
         let mesh_targets = MeshRenderTargets {
@@ -799,6 +805,25 @@ impl SceneRenderer {
                 &options,
                 &view_draw_list,
                 &self.gbuffer_renderer.deferred_shaders(),
+            );
+        }
+        {
+            // The grass fading around revealing benders, blended over
+            // everything opaque.
+            crate::profile_scope!("Transparent grass pass");
+            self.mesh_renderer.render_grass(
+                &mut encoder.scope("Transparent grass"),
+                &assets,
+                &material_bind_groups,
+                &lighting,
+                MeshRenderTargets {
+                    color: &self.scene_texture_msaa,
+                    depth: &self.scene_depth_texture,
+                },
+                self.options.samples,
+                self.options.mesh_cull_mode,
+                &view_draw_list,
+                self.gbuffer_renderer.grass_shader_id(),
             );
         }
         if self.options.object_ids {

@@ -1,9 +1,9 @@
 {
+  "inner": [],
   "main": {
+    "display_name": "mask_a",
     "id": "b0a24752-7f20-2ced-248b-fd4dec4713cc",
     "name": "generated/ground/mask_a",
-    "display_name": "mask_a",
     "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
-  },
-  "inner": []
+  }
 }

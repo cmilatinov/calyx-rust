@@ -105,8 +105,8 @@ pub const ROLES: &[Role] = &[
     // Stealth brush: tall grass a step darker than the tufts and the
     // ground, so a patch reads as one dark mass from the Far camera, with
     // lighter blades between. Drawn with the grass shader (`GRASS_SHADER`).
-    role("tall_grass", "#4F8C2F", "#6F7F3C", "#2F5049", 0.95),
-    role("tall_grass_light", "#76A83A", "#9AA35A", "#4A6E5F", 0.95),
+    role("tall_grass", "#47802E", "#6A7A3A", "#2C4C45", 0.95),
+    role("tall_grass_light", "#5E8F3A", "#868E50", "#3F6156", 0.95),
     role("rocks", "#B4B5AA", "#A29F96", "#848C96", 0.95),
     role("tree_trunks", "#A2855E", "#8F7960", "#4C4541", 0.95),
     role("tree_canopies", "#83B942", "#A4B479", "#3E6564", 0.95),
