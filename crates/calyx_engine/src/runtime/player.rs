@@ -14,6 +14,7 @@ use crate::ui::{UiInput, UiPoint};
 use eframe::{Frame, NativeOptions};
 use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
+use egui_wgpu::wgpu;
 use std::path::PathBuf;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
@@ -37,8 +38,7 @@ impl GameApp {
         settings: &ProjectRuntimeSettings,
         plugin_main: extern "C" fn(&mut TypeRegistry),
     ) -> Result<Self, Box<DynError>> {
-        let startup_scene = settings
-            .startup_scene_path()
+        let startup_scene = player_scene(settings, std::env::var_os(SCENE_ENV).as_deref())
             .ok_or("the project does not configure a startup scene")?;
         if let Some(render_state) = &cc.wgpu_render_state {
             profiler::gpu::install(&render_state.device, &render_state.queue);
@@ -191,7 +191,8 @@ impl eframe::App for GameApp {
 
 /// Environment variable that turns profiling on in the player, which then
 /// logs a profile of the last [`PROFILE_LOG_FRAMES`] frames every as many
-/// frames.
+/// frames. A value other than `1` names a file each profile is also
+/// appended to, one JSON report per line.
 const PROFILE_ENV: &str = "CALYX_PROFILE";
 const PROFILE_LOG_FRAMES: u64 = 600;
 
@@ -201,9 +202,64 @@ fn log_profile() {
         return;
     }
     let report = profiler::report(PROFILE_LOG_FRAMES as usize);
-    match serde_json::to_string(&report) {
-        Ok(json) => log::info!("Profile of the last {} frames: {json}", report.frames),
-        Err(error) => log::warn!("Failed to serialize the profile: {error}"),
+    let json = match serde_json::to_string(&report) {
+        Ok(json) => json,
+        Err(error) => {
+            log::warn!("Failed to serialize the profile: {error}");
+            return;
+        }
+    };
+    log::info!("Profile of the last {} frames: {json}", report.frames);
+    if let Some(path) = profile_file(std::env::var_os(PROFILE_ENV).as_deref()) {
+        use std::io::Write;
+        let written = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| writeln!(file, "{json}"));
+        if let Err(error) = written {
+            log::warn!("Failed to write the profile to {}: {error}", path.display());
+        }
+    }
+}
+
+/// The file profiles are appended to: the value of [`PROFILE_ENV`], unless
+/// it is `1` or empty, which only turn profiling on.
+fn profile_file(value: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    value
+        .filter(|value| !value.is_empty() && *value != "1")
+        .map(PathBuf::from)
+}
+
+/// Environment variable naming a scene the player opens in place of the
+/// project's startup scene, relative to the project directory or absolute,
+/// so a scene other than the startup one can be measured in the player.
+const SCENE_ENV: &str = "CALYX_SCENE";
+
+/// Environment variable that, set to `0`, presents frames without waiting
+/// for vertical sync, so a measured frame time is the player's own rather
+/// than the display's refresh interval.
+const VSYNC_ENV: &str = "CALYX_VSYNC";
+
+/// The scene the player opens: `scene`, the value of [`SCENE_ENV`], when it
+/// is set and not empty, else the project's startup scene.
+fn player_scene(
+    settings: &ProjectRuntimeSettings,
+    scene: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    match scene.filter(|scene| !scene.is_empty()) {
+        Some(scene) => Some(settings.project_path(scene)),
+        None => settings.startup_scene_path(),
+    }
+}
+
+/// How the player presents frames: without vertical sync when `vsync`, the
+/// value of [`VSYNC_ENV`], is `0`, else waiting for it as the editor does.
+fn present_mode(vsync: Option<&std::ffi::OsStr>) -> wgpu::PresentMode {
+    if vsync.is_some_and(|vsync| vsync == "0") {
+        wgpu::PresentMode::AutoNoVsync
+    } else {
+        wgpu::PresentMode::AutoVsync
     }
 }
 
@@ -238,7 +294,10 @@ fn native_options(window: &WindowSettings) -> NativeOptions {
         // never saves a size that a later run would restore over it.
         persist_window: false,
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options: wgpu_configuration(),
+        wgpu_options: egui_wgpu::WgpuConfiguration {
+            present_mode: present_mode(std::env::var_os(VSYNC_ENV).as_deref()),
+            ..wgpu_configuration()
+        },
         event_loop_builder: Some(Box::new(|builder| {
             builder.with_any_thread(true);
         })),
@@ -266,11 +325,61 @@ pub fn run_player(
 
 #[cfg(test)]
 mod tests {
-    use super::{native_options, renderer_options, ProjectRuntimeSettings};
+    use super::{
+        native_options, player_scene, present_mode, profile_file, renderer_options,
+        ProjectRuntimeSettings,
+    };
+    use egui_wgpu::wgpu;
+    use std::ffi::OsStr;
     use std::path::PathBuf;
 
     fn project_directory() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sandbox")
+    }
+
+    #[test]
+    fn player_opens_the_scene_the_environment_names_over_the_startup_scene() {
+        let settings = ProjectRuntimeSettings::load(project_directory()).unwrap();
+        assert_eq!(
+            player_scene(&settings, None),
+            settings.startup_scene_path(),
+            "without a scene named, the startup scene"
+        );
+        assert_eq!(
+            player_scene(&settings, Some(OsStr::new(""))),
+            settings.startup_scene_path()
+        );
+        assert_eq!(
+            player_scene(
+                &settings,
+                Some(OsStr::new("assets/game/scenes/arena.cxscene"))
+            ),
+            Some(project_directory().join("assets/game/scenes/arena.cxscene"))
+        );
+    }
+
+    #[test]
+    fn player_appends_profiles_to_the_file_the_environment_names() {
+        assert_eq!(profile_file(None), None);
+        assert_eq!(profile_file(Some(OsStr::new("1"))), None);
+        assert_eq!(profile_file(Some(OsStr::new(""))), None);
+        assert_eq!(
+            profile_file(Some(OsStr::new("logs/profile.jsonl"))),
+            Some(PathBuf::from("logs/profile.jsonl"))
+        );
+    }
+
+    #[test]
+    fn player_waits_for_vsync_unless_the_environment_turns_it_off() {
+        assert_eq!(present_mode(None), wgpu::PresentMode::AutoVsync);
+        assert_eq!(
+            present_mode(Some(OsStr::new("1"))),
+            wgpu::PresentMode::AutoVsync
+        );
+        assert_eq!(
+            present_mode(Some(OsStr::new("0"))),
+            wgpu::PresentMode::AutoNoVsync
+        );
     }
 
     #[test]

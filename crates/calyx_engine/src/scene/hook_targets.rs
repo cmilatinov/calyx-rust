@@ -37,18 +37,30 @@ pub(crate) struct HookTargets {
 impl HookTargets {
     /// The non-root objects of `scene` now.
     pub fn new(scene: &Scene) -> Self {
-        let objects = <Entity>::query()
-            .iter(scene.world())
-            .filter_map(|entity| scene.game_object_from_entity(*entity))
-            .filter(|go| *go != scene.root())
-            .collect();
-        let mut targets = Self {
+        // Each archetype's objects are one run already, so grouping them
+        // reads no object's entry.
+        let mut objects = Vec::new();
+        let mut runs: Vec<Run> = Vec::new();
+        for chunk in <Entity>::query().iter_chunks(scene.world()) {
+            let layout = chunk.archetype().layout().clone();
+            objects.extend(
+                chunk
+                    .into_iter()
+                    .filter_map(|entity| scene.game_object_from_entity(*entity))
+                    .filter(|go| *go != scene.root()),
+            );
+            if runs.last().map_or(0, |run| run.end) < objects.len() {
+                runs.push(Run {
+                    end: objects.len(),
+                    layout: Some(layout),
+                });
+            }
+        }
+        Self {
             objects,
-            runs: Vec::new(),
-            layout_changes: 0,
-        };
-        targets.group(scene);
-        targets
+            runs,
+            layout_changes: scene.layout_changes(),
+        }
     }
 
     /// Groups the objects into runs of their archetypes now.

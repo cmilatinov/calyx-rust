@@ -60,6 +60,10 @@ impl Component for ComponentCamera {
         true
     }
 
+    fn has_gizmos(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         gizmos.set_color(&Vec4::new(1.0, 1.0, 1.0, 1.0));

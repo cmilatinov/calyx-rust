@@ -5,7 +5,7 @@
 //! Layout is a pure function of the screen and the view size, so the HUD's
 //! update hit-tests the same buttons its paint draws.
 use super::paint::{Painter, CYAN, LIGHT, MUTED, PANEL, RED, STEEL};
-use crate::combat::{is_tank_combatant, same_side};
+use crate::combat::same_side;
 use crate::game_state::{game_phase, ComponentGameState, GamePhase};
 use crate::match_rules::{match_rules, MatchMode};
 use calyx_engine::scene::{GameObject, Scene};
@@ -301,9 +301,7 @@ struct Entrant {
 }
 
 fn roster(scene: &Scene, player: GameObject) -> Vec<Entrant> {
-    let mut entrants: Vec<_> = scene
-        .objects()
-        .filter(|&object| is_tank_combatant(scene, object))
+    let mut entrants: Vec<_> = crate::vision::tank_combatants(scene)
         .map(|object| Entrant {
             name: scene.name(object),
             friendly: object == player || same_side(scene, player, object),
@@ -342,7 +340,7 @@ pub(super) fn paint_lobby(
         );
     }
     let ready = scene
-        .objects()
+        .objects_with::<ComponentGameState>()
         .find_map(|object| {
             scene.read_component::<ComponentGameState, _, _>(object, |state| state.players_ready)
         })

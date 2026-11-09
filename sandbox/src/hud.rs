@@ -114,7 +114,7 @@ impl ComponentTankHud {
                 .unwrap_or_else(|| rules.elapsed().floor());
         }
         scene
-            .objects()
+            .objects_with::<ComponentGameState>()
             .find_map(|object| {
                 scene.read_component::<ComponentGameState, _, _>(object, |state| {
                     if state.match_duration > 0.0 {
@@ -252,11 +252,7 @@ pub fn choose(scene: &mut Scene, resources: &mut ResourceMap, action: MenuAction
         resources.host_commands_mut().push(HostCommand::Quit);
         return;
     }
-    let Some(state) = scene.objects().find(|&object| {
-        scene
-            .read_component::<ComponentGameState, _, _>(object, |_| ())
-            .is_some()
-    }) else {
+    let Some(state) = scene.objects_with::<ComponentGameState>().next() else {
         return;
     };
     let _ = scene.write_component::<ComponentGameState, _>(state, |state| match action {
@@ -569,7 +565,7 @@ fn paint_world(
     let Some(projection) = Projection::scene(scene, width, height) else {
         return;
     };
-    for object in scene.objects() {
+    for object in scene.objects_with::<ComponentHealth>() {
         let Some(health) = scene
             .read_component::<ComponentHealth, _, _>(object, |h| *h)
             .filter(|h| !h.dead && h.max_health > 0.0)

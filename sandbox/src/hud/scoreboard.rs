@@ -1,7 +1,7 @@
 //! Live combat statistics, grouped by side, and the result of a finished
 //! match. Rendering never synthesizes rows.
 use super::paint::{Painter, CYAN, LIGHT, MUTED, RED};
-use crate::combat::{combat_team, is_tank_combatant, same_side, ComponentCombatStats};
+use crate::combat::{combat_team, same_side, ComponentCombatStats};
 use crate::match_rules::{match_mode, match_rules, MatchEnd, MatchMode, MatchWinner};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{TextAnchor, UiColor};
@@ -123,9 +123,7 @@ pub(super) fn match_result(scene: &Scene, player: GameObject) -> Option<MatchRes
 }
 
 pub(super) fn scoreboard_rows(scene: &Scene, player: GameObject) -> Vec<ScoreboardRow> {
-    let mut rows = scene
-        .objects()
-        .filter(|&object| is_tank_combatant(scene, object))
+    let mut rows = crate::vision::tank_combatants(scene)
         .filter_map(|object| {
             scene.read_component::<ComponentCombatStats, _, _>(object, |stats| ScoreboardRow {
                 name: scene.name(object),

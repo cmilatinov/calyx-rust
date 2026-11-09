@@ -374,6 +374,8 @@ pub struct AssetRegistry {
     /// Counts the watcher's reports of files and folders created, removed
     /// or renamed under the asset roots; see [`Self::file_change_count`].
     file_changes: AtomicU64,
+    /// See [`Self::source_change_count`].
+    source_changes: AtomicU64,
     asset_constructors: RwLock<HashMap<Uuid, AssetConstructor>>,
     loading: LoadSlots,
     background_loads: Mutex<HashMap<Uuid, BackgroundLoadState>>,
@@ -416,6 +418,7 @@ impl AssetRegistry {
                 change_epoch: Default::default(),
                 meta_epoch: Default::default(),
                 file_changes: Default::default(),
+                source_changes: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
                 background_loads: Default::default(),
@@ -467,6 +470,7 @@ impl AssetRegistry {
             change_epoch: Default::default(),
             meta_epoch: Default::default(),
             file_changes: Default::default(),
+            source_changes: Default::default(),
             asset_constructors: Default::default(),
             loading: Default::default(),
             background_loads: Default::default(),
@@ -501,6 +505,7 @@ impl AssetRegistry {
                 change_epoch: Default::default(),
                 meta_epoch: Default::default(),
                 file_changes: Default::default(),
+                source_changes: Default::default(),
                 asset_constructors: Default::default(),
                 loading: Default::default(),
                 background_loads: Default::default(),
@@ -1414,6 +1419,15 @@ impl AssetRegistry {
         self.file_changes.load(Ordering::Acquire)
     }
 
+    /// A counter that moves on whenever the watcher reports a file or folder
+    /// created, written, removed or renamed under the asset roots, whether
+    /// or not the asset is loaded. While it holds still, no asset's source
+    /// changed on disk, so what was read from the sources, such as a
+    /// thumbnail's source version, is current.
+    pub fn source_change_count(&self) -> u64 {
+        self.source_changes.load(Ordering::Acquire)
+    }
+
     fn asset_constructors(&self) -> RwLockReadGuard<'_, HashMap<Uuid, AssetConstructor>> {
         self.asset_constructors.read().unwrap()
     }
@@ -1442,6 +1456,12 @@ impl AssetRegistry {
     pub(crate) fn recv_notify_event(&self, event: Event) {
         log::trace!("Received asset notification: {:?}", event.kind);
         let paths_iter = Self::notify_event_paths(&event);
+        if matches!(
+            event.kind,
+            EventKind::Create(_) | EventKind::Modify(_) | EventKind::Remove(_)
+        ) {
+            self.source_changes.fetch_add(1, Ordering::AcqRel);
+        }
         if matches!(
             event.kind,
             EventKind::Create(_) | EventKind::Remove(_) | EventKind::Modify(ModifyKind::Name(_))

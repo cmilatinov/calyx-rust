@@ -5,7 +5,8 @@ use crate::panel::Panel;
 use crate::scene_edit::SceneEdit;
 use crate::selection::{Selection, SelectionType};
 use crate::widgets::{
-    FileButton, ThumbnailPriority, ThumbnailView, THUMBNAIL_MAX_SIZE, THUMBNAIL_MIN_SIZE,
+    FileButton, ThumbnailPriority, ThumbnailView, ThumbnailViewCache, THUMBNAIL_MAX_SIZE,
+    THUMBNAIL_MIN_SIZE,
 };
 use crate::{icons, EditorAppState};
 use calyx_engine::assets::animation_graph::AnimationGraph;
@@ -24,6 +25,8 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::BufWriter;
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
+use std::time::Instant;
 use uuid::Uuid;
 
 const CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX: f32 = THUMBNAIL_MIN_SIZE as f32;
@@ -36,6 +39,8 @@ pub struct PanelContentBrowser {
     /// its selected file.
     has_focus: bool,
     listings: FolderListings,
+    /// The thumbnails drawn, asked for again only when something changed.
+    thumbnails: ThumbnailViewCache,
 }
 
 /// One entry of a listed folder.
@@ -58,9 +63,10 @@ pub(crate) struct FolderListings {
     /// reflect.
     stamp: Option<(u64, u64)>,
     /// Each listed folder's subfolders, in the order the filesystem gives.
-    subfolders: HashMap<PathBuf, Vec<PathBuf>>,
+    /// Shared, so drawing a folder copies no list.
+    subfolders: HashMap<PathBuf, Rc<[PathBuf]>>,
     /// Each listed folder's entries other than `.meta` files.
-    entries: HashMap<PathBuf, Vec<ListedEntry>>,
+    entries: HashMap<PathBuf, Rc<[ListedEntry]>>,
 }
 
 impl FolderListings {
@@ -75,7 +81,10 @@ impl FolderListings {
         }
     }
 
-    fn subfolders(&mut self, folder: &Path) -> &[PathBuf] {
+    fn subfolders(&mut self, folder: &Path) -> Rc<[PathBuf]> {
+        if let Some(subfolders) = self.subfolders.get(folder) {
+            return subfolders.clone();
+        }
         self.subfolders
             .entry(folder.to_path_buf())
             .or_insert_with(|| {
@@ -90,6 +99,7 @@ impl FolderListings {
                     })
                     .unwrap_or_default()
             })
+            .clone()
     }
 
     /// Whether the entries of `folder` are listed, so drawing it reads no
@@ -99,35 +109,43 @@ impl FolderListings {
         self.entries.contains_key(folder)
     }
 
-    pub(crate) fn entries(&mut self, folder: &Path, registry: &AssetRegistry) -> &[ListedEntry] {
-        self.entries.entry(folder.to_path_buf()).or_insert_with(|| {
-            profile_scope!("List folder");
-            let Ok(entries) = fs::read_dir(folder) else {
-                return Vec::new();
-            };
-            entries
-                .flatten()
-                .filter_map(|entry| {
-                    let path = entry.path();
-                    if path.is_file() && path.extension().and_then(|e| e.to_str()) == Some("meta") {
-                        return None;
-                    }
-                    if file_name_str(&path).is_none() {
-                        warn_skipped_entry(&path);
-                        return None;
-                    }
-                    let is_dir = path.is_dir();
-                    let asset_id = (!is_dir)
-                        .then(|| registry.asset_id_from_path(&path))
-                        .flatten();
-                    Some(ListedEntry {
-                        path,
-                        is_dir,
-                        asset_id,
+    pub(crate) fn entries(&mut self, folder: &Path, registry: &AssetRegistry) -> Rc<[ListedEntry]> {
+        if let Some(entries) = self.entries.get(folder) {
+            return entries.clone();
+        }
+        self.entries
+            .entry(folder.to_path_buf())
+            .or_insert_with(|| {
+                profile_scope!("List folder");
+                let Ok(entries) = fs::read_dir(folder) else {
+                    return Rc::from([]);
+                };
+                entries
+                    .flatten()
+                    .filter_map(|entry| {
+                        let path = entry.path();
+                        if path.is_file()
+                            && path.extension().and_then(|e| e.to_str()) == Some("meta")
+                        {
+                            return None;
+                        }
+                        if file_name_str(&path).is_none() {
+                            warn_skipped_entry(&path);
+                            return None;
+                        }
+                        let is_dir = path.is_dir();
+                        let asset_id = (!is_dir)
+                            .then(|| registry.asset_id_from_path(&path))
+                            .flatten();
+                        Some(ListedEntry {
+                            path,
+                            is_dir,
+                            asset_id,
+                        })
                     })
-                })
-                .collect()
-        })
+                    .collect()
+            })
+            .clone()
     }
 }
 
@@ -139,6 +157,7 @@ impl PanelContentBrowser {
             thumbnail_size_px: CONTENT_BROWSER_THUMBNAIL_DEFAULT_SIZE_PX,
             has_focus: false,
             listings: FolderListings::default(),
+            thumbnails: ThumbnailViewCache::default(),
         }
     }
 }
@@ -159,9 +178,9 @@ impl Panel for PanelContentBrowser {
         let nodes = {
             let registry = state.game.assets.registries.assets.read();
             self.listings.refresh(&registry);
-            self.listings
-                .entries(&self.selected_folder, &registry)
-                .to_vec()
+            self.thumbnails
+                .begin_frame(&registry, &state.thumbnails.handle(), Instant::now());
+            self.listings.entries(&self.selected_folder, &registry)
         };
 
         egui::SidePanel::left("file_tree")
@@ -169,8 +188,8 @@ impl Panel for PanelContentBrowser {
             .show_inside(ui, |ui| {
                 egui::ScrollArea::both().show(ui, |ui| {
                     re_ui::list_item::list_item_scope(ui, "file_tree_scope", |ui| {
-                        for folder in self.listings.subfolders(&root_path).to_vec() {
-                            self.render_directory(ui, state, folder);
+                        for folder in self.listings.subfolders(&root_path).iter() {
+                            self.render_directory(ui, state, folder.clone());
                         }
                     });
                 });
@@ -268,9 +287,9 @@ impl Panel for PanelContentBrowser {
                                 let is_selected = self.is_selected(state, entry);
                                 let image_size = Vec2::splat(icon_size);
                                 let thumbnail = match entry.asset_id {
-                                    Some(asset_id) if !is_dir => {
-                                        Self::asset_thumbnail(state, asset_id)
-                                    }
+                                    Some(asset_id) if !is_dir => self
+                                        .thumbnails
+                                        .view(asset_id, || Self::asset_thumbnail(state, asset_id)),
                                     _ => ThumbnailView::Unsupported,
                                 };
                                 let image_src = match thumbnail.texture_id() {
@@ -534,7 +553,7 @@ impl PanelContentBrowser {
             .draggable(true)
             .selected(is_selected);
 
-        let child_entries = self.listings.subfolders(&curr_path).to_vec();
+        let child_entries = self.listings.subfolders(&curr_path);
         let response;
         if !child_entries.is_empty() {
             ShowCollapsingResponse {
@@ -546,8 +565,8 @@ impl PanelContentBrowser {
                 false,
                 re_ui::list_item::LabelContent::new(text).with_icon(&icons::FOLDER),
                 |ui| {
-                    for child in child_entries {
-                        self.render_directory(ui, state, child);
+                    for child in child_entries.iter() {
+                        self.render_directory(ui, state, child.clone());
                     }
                 },
             );

@@ -99,6 +99,10 @@ impl Component for ComponentCameraPath {
     /// While the follower, the path object or one of its stops is selected:
     /// the curve the follower flies, a marker at each stop, and a line
     /// showing which way each stop points.
+    fn has_gizmos(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let Some((parent, stop_objects)) = self.stops(scene) else {
             return;
