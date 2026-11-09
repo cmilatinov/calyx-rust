@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="t" gradientUnits="userSpaceOnUse" x1="16" y1="31" x2="212" y2="128"><stop offset="0" stop-color="#5BEBFF"/><stop offset="1" stop-color="#2E86FF"/></linearGradient><linearGradient id="b" gradientUnits="userSpaceOnUse" x1="16" y1="128" x2="212" y2="225"><stop offset="0" stop-color="#1C8FF0"/><stop offset="1" stop-color="#1E3FD0"/></linearGradient><linearGradient id="s" gradientUnits="userSpaceOnUse" x1="0" y1="80" x2="0" y2="176"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#9FF3FF"/></linearGradient>
+<g id="m">
+<polygon points="212.0,31.0 72.0,31.0 16.0,128.0 64.0,128.0 96.0,72.6 188.0,72.6" fill="url(#t)"/><polygon points="16.0,128.0 72.0,225.0 212.0,225.0 188.0,183.4 96.0,183.4 64.0,128.0" fill="url(#b)"/><polygon points="128.0,128.0 121.6,121.6 128.0,94.0" fill="url(#s)"/>
+<polygon points="128.0,128.0 128.0,94.0 134.4,121.6" fill="#6FD6FF"/>
+<polygon points="128.0,128.0 134.4,121.6 162.0,128.0" fill="#6FD6FF"/>
+<polygon points="128.0,128.0 162.0,128.0 134.4,134.4" fill="url(#s)"/>
+<polygon points="128.0,128.0 134.4,134.4 128.0,162.0" fill="url(#s)"/>
+<polygon points="128.0,128.0 128.0,162.0 121.6,134.4" fill="#6FD6FF"/>
+<polygon points="128.0,128.0 121.6,134.4 94.0,128.0" fill="#6FD6FF"/>
+<polygon points="128.0,128.0 94.0,128.0 121.6,121.6" fill="url(#s)"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

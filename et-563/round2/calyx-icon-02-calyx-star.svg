@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="la" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="256"><stop offset="0" stop-color="#7CF5C0"/><stop offset="1" stop-color="#1FBF8F"/></linearGradient><linearGradient id="lb" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="256"><stop offset="0" stop-color="#2BD18B"/><stop offset="1" stop-color="#0E8C78"/></linearGradient><linearGradient id="sa" gradientUnits="userSpaceOnUse" x1="0" y1="30" x2="0" y2="150"><stop offset="0" stop-color="#FFF6C9"/><stop offset="1" stop-color="#FFC94A"/></linearGradient><linearGradient id="sb" gradientUnits="userSpaceOnUse" x1="0" y1="30" x2="0" y2="150"><stop offset="0" stop-color="#FFD15C"/><stop offset="1" stop-color="#FF8A1F"/></linearGradient>
+<g id="m">
+<path d="M128.0,226.0 C115.8,175.5 55.4,134.9 24.0,120.0 C40.5,149.6 88.7,202.1 128.0,226.0 Z" fill="url(#la)"/>
+<path d="M128.0,226.0 C61.6,228.7 25.6,164.2 24.0,120.0 C40.5,149.6 88.7,202.1 128.0,226.0 Z" fill="url(#lb)"/>
+<path d="M128.0,226.0 C194.4,228.7 230.4,164.2 232.0,120.0 C215.5,149.6 167.3,202.1 128.0,226.0 Z" fill="url(#lb)"/>
+<path d="M128.0,226.0 C140.2,175.5 200.6,134.9 232.0,120.0 C215.5,149.6 167.3,202.1 128.0,226.0 Z" fill="url(#la)"/>
+<path d="M128.0,226.0 C150.0,211.0 140.1,187.0 128.0,176.0 C128.0,187.0 128.0,211.0 128.0,226.0 Z" fill="url(#la)"/>
+<path d="M128.0,226.0 C106.0,211.0 115.9,187.0 128.0,176.0 C128.0,187.0 128.0,211.0 128.0,226.0 Z" fill="url(#lb)"/>
+<polygon points="128.0,80.0 117.4,69.4 128.0,24.0" fill="url(#sa)"/>
+<polygon points="128.0,80.0 128.0,24.0 138.6,69.4" fill="url(#sb)"/>
+<polygon points="128.0,80.0 138.6,69.4 184.0,80.0" fill="url(#sb)"/>
+<polygon points="128.0,80.0 184.0,80.0 138.6,90.6" fill="url(#sa)"/>
+<polygon points="128.0,80.0 138.6,90.6 128.0,136.0" fill="url(#sa)"/>
+<polygon points="128.0,80.0 128.0,136.0 117.4,90.6" fill="url(#sb)"/>
+<polygon points="128.0,80.0 117.4,90.6 72.0,80.0" fill="url(#sb)"/>
+<polygon points="128.0,80.0 72.0,80.0 117.4,69.4" fill="url(#sa)"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

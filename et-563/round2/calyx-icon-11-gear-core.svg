@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="st" gradientUnits="userSpaceOnUse" x1="30" y1="30" x2="226" y2="226"><stop offset="0" stop-color="#7B8496"/><stop offset="1" stop-color="#2C313D"/></linearGradient><linearGradient id="tooth" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="236"><stop offset="0" stop-color="#FFB13D"/><stop offset="1" stop-color="#F0422A"/></linearGradient><linearGradient id="core" gradientUnits="userSpaceOnUse" x1="0" y1="90" x2="0" y2="166"><stop offset="0" stop-color="#FFF1B8"/><stop offset="1" stop-color="#FF9A2E"/></linearGradient>
+<g id="m">
+<polygon points="107.3,50.7 110.2,15.4 145.8,15.4 148.7,50.7" fill="url(#tooth)"/>
+<polygon points="168.0,58.7 195.0,35.8 220.2,61.0 197.3,88.0" fill="url(#tooth)"/>
+<polygon points="205.3,107.3 240.6,110.2 240.6,145.8 205.3,148.7" fill="url(#tooth)"/>
+<polygon points="197.3,168.0 220.2,195.0 195.0,220.2 168.0,197.3" fill="url(#tooth)"/>
+<polygon points="148.7,205.3 145.8,240.6 110.2,240.6 107.3,205.3" fill="url(#tooth)"/>
+<polygon points="88.0,197.3 61.0,220.2 35.8,195.0 58.7,168.0" fill="url(#tooth)"/>
+<polygon points="50.7,148.7 15.4,145.8 15.4,110.2 50.7,107.3" fill="url(#tooth)"/>
+<polygon points="58.7,88.0 35.8,61.0 61.0,35.8 88.0,58.7" fill="url(#tooth)"/>
+<path d="M128,40 A88,88 0 1 1 127.9,40 Z M128,82 A46,46 0 1 0 128.1,82 Z" fill="url(#st)" fill-rule="evenodd"/>
+<polygon points="128.0,128.0 120.9,120.9 128.0,92.0" fill="url(#core)"/>
+<polygon points="128.0,128.0 128.0,92.0 135.1,120.9" fill="#FFC35A"/>
+<polygon points="128.0,128.0 135.1,120.9 164.0,128.0" fill="#FFC35A"/>
+<polygon points="128.0,128.0 164.0,128.0 135.1,135.1" fill="url(#core)"/>
+<polygon points="128.0,128.0 135.1,135.1 128.0,164.0" fill="url(#core)"/>
+<polygon points="128.0,128.0 128.0,164.0 120.9,135.1" fill="#FFC35A"/>
+<polygon points="128.0,128.0 120.9,135.1 92.0,128.0" fill="#FFC35A"/>
+<polygon points="128.0,128.0 92.0,128.0 120.9,120.9" fill="url(#core)"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

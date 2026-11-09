@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs>
+<g id="m">
+<polygon points="128.0,18.0 20.0,214.0 70.0,186.0 128.0,84.0" fill="#3FF0E0"/>
+<polygon points="128.0,18.0 236.0,214.0 186.0,186.0 128.0,84.0" fill="#1AA6C9"/>
+<polygon points="20.0,214.0 236.0,214.0 186.0,186.0 70.0,186.0" fill="#147CB0"/>
+<polygon points="128.0,84.0 186.0,186.0 70.0,186.0" fill="#0B2238"/>
+<polygon points="128.0,146.0 121.6,139.6 128.0,110.0" fill="#FFFFFF"/>
+<polygon points="128.0,146.0 128.0,110.0 134.4,139.6" fill="#BDF7FF"/>
+<polygon points="128.0,146.0 134.4,139.6 164.0,146.0" fill="#BDF7FF"/>
+<polygon points="128.0,146.0 164.0,146.0 134.4,152.4" fill="#FFFFFF"/>
+<polygon points="128.0,146.0 134.4,152.4 128.0,182.0" fill="#FFFFFF"/>
+<polygon points="128.0,146.0 128.0,182.0 121.6,152.4" fill="#BDF7FF"/>
+<polygon points="128.0,146.0 121.6,152.4 92.0,146.0" fill="#BDF7FF"/>
+<polygon points="128.0,146.0 92.0,146.0 121.6,139.6" fill="#FFFFFF"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

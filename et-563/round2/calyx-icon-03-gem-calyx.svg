@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="ga" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="256"><stop offset="0" stop-color="#D59BFF"/><stop offset="1" stop-color="#7A3CF0"/></linearGradient><linearGradient id="gb" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="256"><stop offset="0" stop-color="#7E4BFF"/><stop offset="1" stop-color="#3A1FA8"/></linearGradient><linearGradient id="gc" gradientUnits="userSpaceOnUse" x1="0" y1="24" x2="0" y2="100"><stop offset="0" stop-color="#F1DDFF"/><stop offset="1" stop-color="#B37CFF"/></linearGradient><linearGradient id="pa" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="256"><stop offset="0" stop-color="#6FF0FF"/><stop offset="1" stop-color="#2A8CFF"/></linearGradient><linearGradient id="pb" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="0" y2="256"><stop offset="0" stop-color="#2A9BFF"/><stop offset="1" stop-color="#1D44C8"/></linearGradient>
+<g id="m">
+<path d="M128.0,236.0 C100.6,195.8 51.0,135.6 34.0,104.0 C41.2,142.7 82.7,208.6 128.0,236.0 Z" fill="url(#pa)"/>
+<path d="M128.0,236.0 C64.7,221.4 31.3,149.7 34.0,104.0 C41.2,142.7 82.7,208.6 128.0,236.0 Z" fill="url(#pb)"/>
+<path d="M128.0,236.0 C191.3,221.4 224.7,149.7 222.0,104.0 C214.8,142.7 173.3,208.6 128.0,236.0 Z" fill="url(#pb)"/>
+<path d="M128.0,236.0 C155.4,195.8 205.0,135.6 222.0,104.0 C214.8,142.7 173.3,208.6 128.0,236.0 Z" fill="url(#pa)"/>
+<polygon points="128.0,24.0 90.0,72.0 90.0,138.0 128.0,182.0" fill="url(#ga)"/>
+<polygon points="128.0,24.0 166.0,72.0 166.0,138.0 128.0,182.0" fill="url(#gb)"/>
+<polygon points="128.0,24.0 150.0,78.0 128.0,96.0 106.0,78.0" fill="url(#gc)"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="sp" gradientUnits="userSpaceOnUse" x1="70" y1="70" x2="186" y2="186"><stop offset="0" stop-color="#C9A2FF"/><stop offset="1" stop-color="#4B1FC2"/></linearGradient><linearGradient id="ring" gradientUnits="userSpaceOnUse" x1="16" y1="0" x2="240" y2="0"><stop offset="0" stop-color="#8FD8FF"/><stop offset="1" stop-color="#7A5CFF"/></linearGradient><clipPath id="front"><rect x="0" y="128" width="256" height="128" transform="rotate(-24 128 128)"/></clipPath>
+<g id="m">
+<path d="M16,128 A112,40 0 1 0 240,128 A112,40 0 1 0 16,128 Z M38,128 A90,24 0 1 1 218,128 A90,24 0 1 1 38,128 Z" fill="url(#ring)" transform="rotate(-24 128 128)" fill-rule="evenodd"/>
+<circle cx="128.0" cy="128.0" r="52.0" fill="url(#sp)"/>
+<path d="M98,96 A44,44 0 0 1 150,82 A52,52 0 0 0 96,120 Z" fill="#E8D6FF"/>
+<g clip-path="url(#front)"><path d="M16,128 A112,40 0 1 0 240,128 A112,40 0 1 0 16,128 Z M38,128 A90,24 0 1 1 218,128 A90,24 0 1 1 38,128 Z" fill="url(#ring)" transform="rotate(-24 128 128)" fill-rule="evenodd"/></g>
+<circle cx="36.0" cy="166.0" r="15.0" fill="#8FD8FF"/>
+<circle cx="214.0" cy="64.0" r="10.0" fill="#B9A4FF"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="o1" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="140"><stop offset="0" stop-color="#FFC03A"/><stop offset="1" stop-color="#FF7A1A"/></linearGradient><linearGradient id="o2" gradientUnits="userSpaceOnUse" x1="0" y1="40" x2="0" y2="220"><stop offset="0" stop-color="#FF8A22"/><stop offset="1" stop-color="#FF4A1E"/></linearGradient><linearGradient id="o3" gradientUnits="userSpaceOnUse" x1="0" y1="120" x2="0" y2="236"><stop offset="0" stop-color="#FF5A24"/><stop offset="1" stop-color="#D91F3A"/></linearGradient><linearGradient id="s" gradientUnits="userSpaceOnUse" x1="0" y1="90" x2="0" y2="166"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#FFD27A"/></linearGradient>
+<g id="m">
+<path d="M48.9,204.4 A110,110 0 0 1 48.9,51.6 L82.0,83.5 A64,64 0 0 0 82.0,172.5 Z" fill="url(#o2)"/>
+<path d="M54.4,46.3 A110,110 0 0 1 209.7,54.4 L175.6,85.2 A64,64 0 0 0 85.2,80.4 Z" fill="url(#o1)"/>
+<path d="M209.7,201.6 A110,110 0 0 1 54.4,209.7 L85.2,175.6 A64,64 0 0 0 175.6,170.8 Z" fill="url(#o3)"/>
+<polygon points="132.0,128.0 125.6,121.6 132.0,94.0" fill="url(#s)"/>
+<polygon points="132.0,128.0 132.0,94.0 138.4,121.6" fill="#FFB347"/>
+<polygon points="132.0,128.0 138.4,121.6 166.0,128.0" fill="#FFB347"/>
+<polygon points="132.0,128.0 166.0,128.0 138.4,134.4" fill="url(#s)"/>
+<polygon points="132.0,128.0 138.4,134.4 132.0,162.0" fill="url(#s)"/>
+<polygon points="132.0,128.0 132.0,162.0 125.6,134.4" fill="#FFB347"/>
+<polygon points="132.0,128.0 125.6,134.4 98.0,128.0" fill="#FFB347"/>
+<polygon points="132.0,128.0 98.0,128.0 125.6,121.6" fill="url(#s)"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

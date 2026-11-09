@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="u" gradientUnits="userSpaceOnUse" x1="0" y1="20" x2="0" y2="140"><stop offset="0" stop-color="#D29BFF"/><stop offset="1" stop-color="#7B4DFF"/></linearGradient><linearGradient id="l" gradientUnits="userSpaceOnUse" x1="0" y1="120" x2="0" y2="236"><stop offset="0" stop-color="#7B5CFF"/><stop offset="1" stop-color="#3A2DC8"/></linearGradient><linearGradient id="s" gradientUnits="userSpaceOnUse" x1="0" y1="90" x2="0" y2="166"><stop offset="0" stop-color="#FFF6C9"/><stop offset="1" stop-color="#FFC94A"/></linearGradient>
+<g id="m">
+<path d="M21.1,113.0 A108,108 0 0 1 210.7,58.6 A300,300 0 0 0 21.1,113.0 Z" fill="url(#u)"/>
+<path d="M210.7,197.4 A108,108 0 0 1 21.1,143.0 A300,300 0 0 0 210.7,197.4 Z" fill="url(#l)"/>
+<polygon points="124.0,128.0 116.2,120.2 124.0,88.0" fill="url(#s)"/>
+<polygon points="124.0,128.0 124.0,88.0 131.8,120.2" fill="#FFAE3A"/>
+<polygon points="124.0,128.0 131.8,120.2 164.0,128.0" fill="#FFAE3A"/>
+<polygon points="124.0,128.0 164.0,128.0 131.8,135.8" fill="url(#s)"/>
+<polygon points="124.0,128.0 131.8,135.8 124.0,168.0" fill="url(#s)"/>
+<polygon points="124.0,128.0 124.0,168.0 116.2,135.8" fill="#FFAE3A"/>
+<polygon points="124.0,128.0 116.2,135.8 84.0,128.0" fill="#FFAE3A"/>
+<polygon points="124.0,128.0 84.0,128.0 116.2,120.2" fill="url(#s)"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

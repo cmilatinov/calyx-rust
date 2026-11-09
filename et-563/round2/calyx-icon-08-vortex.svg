@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="va" gradientUnits="userSpaceOnUse" x1="30" y1="30" x2="226" y2="226"><stop offset="0" stop-color="#7DFFB0"/><stop offset="1" stop-color="#16B7E8"/></linearGradient><linearGradient id="vb" gradientUnits="userSpaceOnUse" x1="30" y1="30" x2="226" y2="226"><stop offset="0" stop-color="#2FE6C8"/><stop offset="1" stop-color="#1257D6"/></linearGradient>
+<g id="m">
+<path d="M168.0,128.0 C227.8,121.0 207.7,223.0 92.8,236.4 C144.7,222.5 158.1,195.6 137.7,166.8 Z" fill="url(#va)"/>
+<path d="M108.0,162.6 C84.2,217.9 5.9,149.5 51.7,43.3 C37.8,95.2 54.4,120.3 89.5,117.0 Z" fill="url(#vb)"/>
+<path d="M108.0,93.4 C72.1,45.1 170.4,11.5 239.5,104.3 C201.5,66.3 171.5,68.1 156.8,100.2 Z" fill="url(#va)"/>
+<circle cx="128.0" cy="128.0" r="26.0" fill="#C9FFF0"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

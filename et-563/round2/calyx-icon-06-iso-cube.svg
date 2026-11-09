@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs>
+<g id="m">
+<polygon points="31.0,72.0 128.0,16.0 225.0,72.0 197.3,88.0 128.0,48.0 58.7,88.0" fill="#B6FF6A"/>
+<polygon points="128.0,240.0 31.0,184.0 31.0,72.0 58.7,88.0 58.7,168.0 128.0,208.0" fill="#3EDB8A"/>
+<polygon points="225.0,72.0 225.0,184.0 128.0,240.0 128.0,208.0 197.3,168.0 197.3,88.0" fill="#139C88"/>
+<polygon points="128.0,128.0 84.7,103.0 128.0,78.0 171.3,103.0" fill="#E4FFB0"/>
+<polygon points="128.0,128.0 128.0,178.0 84.7,153.0 84.7,103.0" fill="#5FF0A6"/>
+<polygon points="128.0,128.0 171.3,103.0 171.3,153.0 128.0,178.0" fill="#1FB49A"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>

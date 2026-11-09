@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="256" height="256" viewBox="0 0 256 256">
+<defs><linearGradient id="r" gradientUnits="userSpaceOnUse" x1="20" y1="20" x2="236" y2="236"><stop offset="0" stop-color="#B48CFF"/><stop offset="1" stop-color="#4F5BFF"/></linearGradient><linearGradient id="s" gradientUnits="userSpaceOnUse" x1="0" y1="80" x2="0" y2="176"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D6C8FF"/></linearGradient>
+<g id="m">
+<path d="M141.9,29.0 A100,100 0 0 1 227.0,114.1 L199.3,118.0 A72,72 0 0 0 138.0,56.7 Z" fill="url(#r)"/>
+<path d="M227.0,141.9 A100,100 0 0 1 141.9,227.0 L138.0,199.3 A72,72 0 0 0 199.3,138.0 Z" fill="url(#r)"/>
+<path d="M114.1,227.0 A100,100 0 0 1 29.0,141.9 L56.7,138.0 A72,72 0 0 0 118.0,199.3 Z" fill="url(#r)"/>
+<path d="M29.0,114.1 A100,100 0 0 1 114.1,29.0 L118.0,56.7 A72,72 0 0 0 56.7,118.0 Z" fill="url(#r)"/>
+<circle cx="46.0" cy="46.0" r="14.0" fill="#9C8CFF"/>
+<circle cx="211.4" cy="211.4" r="11.0" fill="#7A9BFF"/>
+<polygon points="128.0,128.0 119.5,119.5 128.0,82.0" fill="url(#s)"/>
+<polygon points="128.0,128.0 128.0,82.0 136.5,119.5" fill="#B9A6FF"/>
+<polygon points="128.0,128.0 136.5,119.5 174.0,128.0" fill="#B9A6FF"/>
+<polygon points="128.0,128.0 174.0,128.0 136.5,136.5" fill="url(#s)"/>
+<polygon points="128.0,128.0 136.5,136.5 128.0,174.0" fill="url(#s)"/>
+<polygon points="128.0,128.0 128.0,174.0 119.5,136.5" fill="#B9A6FF"/>
+<polygon points="128.0,128.0 119.5,136.5 82.0,128.0" fill="#B9A6FF"/>
+<polygon points="128.0,128.0 82.0,128.0 119.5,119.5" fill="url(#s)"/>
+</g>
+</defs>
+<use xlink:href="#m" stroke="#07080D" stroke-width="14" stroke-linejoin="round"/>
+<use xlink:href="#m"/>
+</svg>
