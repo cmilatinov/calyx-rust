@@ -238,6 +238,10 @@ impl Component for ComponentWater {
 
     /// The centreline and both shores while the water is selected: the
     /// shores usually sit against the banks.
+    fn has_gizmos(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         if gizmos.selected_object() != Some(scene.uuid(game_object)) {
             return;

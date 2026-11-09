@@ -217,3 +217,61 @@ fn handle_requests_supported_assets_and_skips_unsupported_ones() {
     drop(registry);
     fs::remove_dir_all(root).expect("failed to remove temp asset root");
 }
+
+#[test]
+fn view_cache_asks_again_only_while_loading_or_after_a_change() {
+    let root = std::env::temp_dir().join(format!("calyx-thumbnail-cache-{}", Uuid::new_v4()));
+    fs::create_dir_all(&root).expect("failed to create asset root");
+    let context = calyx_engine::test_support::test_asset_context_with_assets(vec![root.clone()]);
+    let registry = context.registries.assets.read();
+    let mut service = ThumbnailService::default();
+    let handle = service.handle();
+    let ready = Uuid::from_u128(1);
+    let loading = Uuid::from_u128(2);
+    let asks = Cell::new(0);
+    let ask = |view: ThumbnailView| {
+        asks.set(asks.get() + 1);
+        view
+    };
+    let mut cache = ThumbnailViewCache::default();
+    let start = Instant::now();
+
+    // The first frame sees everything as changed and asks for every view.
+    cache.begin_frame(&registry, &handle, start);
+    assert!(cache.is_refreshing());
+    cache.view(ready, || ask(ThumbnailView::Ready(texture_id())));
+    cache.view(loading, || ask(ThumbnailView::Loading));
+    assert_eq!(asks.get(), 2);
+
+    // Once the change is a refresh interval old, a finished view is kept
+    // and only the loading one is asked for.
+    let idle = start + Duration::from_secs(2);
+    cache.begin_frame(&registry, &handle, idle);
+    assert!(!cache.is_refreshing());
+    assert_eq!(
+        cache.view(ready, || ask(ThumbnailView::Unsupported)),
+        ThumbnailView::Ready(texture_id())
+    );
+    cache.view(loading, || ask(ThumbnailView::Loading));
+    assert_eq!(asks.get(), 3);
+    cache.begin_frame(&registry, &handle, idle + Duration::from_secs(5));
+    cache.view(ready, || ask(ThumbnailView::Unsupported));
+    assert_eq!(asks.get(), 3, "an idle frame asks for no finished view");
+
+    // Clearing the service's textures moves its revision, so every view is
+    // asked for again for a refresh interval.
+    service.invalidate_cache();
+    let changed = idle + Duration::from_secs(10);
+    cache.begin_frame(&registry, &handle, changed);
+    assert!(cache.is_refreshing());
+    assert_eq!(
+        cache.view(ready, || ask(ThumbnailView::Loading)),
+        ThumbnailView::Loading
+    );
+    assert_eq!(asks.get(), 4);
+    cache.begin_frame(&registry, &handle, changed + Duration::from_secs(2));
+    assert!(!cache.is_refreshing());
+
+    drop(registry);
+    fs::remove_dir_all(root).expect("failed to remove temp asset root");
+}

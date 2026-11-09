@@ -10,7 +10,7 @@ use crate::vision::arena_geometry;
 #[cfg(test)]
 use crate::vision::cover_entry;
 use crate::vision::sight::{side_sight, sight_rays};
-use crate::vision::{ground, GroundRect, TeamVision, VisionFrame};
+use crate::vision::{ground, GroundRect, SightRays, TeamVision, VisionFrame};
 use calyx_engine::component::FogOfWarSight;
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::ui::{UiColor, UiPoint, UiRect, UiSize};
@@ -163,6 +163,12 @@ pub(crate) fn minimap_state_from(
     };
 
     let vision = frame.vision(scene, player);
+    let mut blips: Vec<MinimapBlip> = crate::vision::units(scene)
+        .into_iter()
+        .filter_map(|object| blip(scene, player, object))
+        .collect();
+    // The player's chevron is painted last, over any blip it overlaps.
+    blips.sort_by_key(|blip| blip.kind == BlipKind::Player);
     MinimapState {
         player_position: ground(scene.world_transform(player).position),
         vision_range: scene
@@ -176,10 +182,7 @@ pub(crate) fn minimap_state_from(
         view,
         floor,
         cover,
-        blips: scene
-            .objects()
-            .filter_map(|object| blip(scene, player, object))
-            .collect(),
+        blips,
     }
 }
 
@@ -254,22 +257,60 @@ fn rect_center(rect: UiRect) -> UiPoint {
 /// Clip convex geometry against a polygonal circle before sending it to the UI.
 /// This avoids square map corners and contacts bleeding over its steel rim.
 /// Retains only the current geometry, independent of player/camera movement.
+///
+/// It also keeps the sight rays last cast, with the sight they were cast
+/// for: casting every ray against the cover is most of what the map costs,
+/// and the sight holds still while the side's tanks do.
 #[derive(Default)]
 pub(super) struct BoundaryCache {
     floor: Option<GroundRect>,
     cover: Vec<GroundRect>,
     edges: Vec<(Vec2, Vec2)>,
+    rays: Option<(FogOfWarSight, Vec<SightRays>)>,
+}
+
+/// How far, in metres, the floor or a block of cover moves before the map's
+/// outline is traced again. Cover that creeps by a fraction of a millimetre
+/// every frame, as a slowly scaled prop does, would otherwise retrace the
+/// whole outline every frame for a change no map pixel shows.
+const OUTLINE_TOLERANCE: f32 = 1e-3;
+
+/// Whether `a` and `b` lie within [`OUTLINE_TOLERANCE`] of each other.
+fn nearly_same(a: &GroundRect, b: &GroundRect) -> bool {
+    let near = |a: Vec2, b: Vec2| (a - b).abs().max() <= OUTLINE_TOLERANCE;
+    near(a.center, b.center)
+        && near(a.half_axes[0], b.half_axes[0])
+        && near(a.half_axes[1], b.half_axes[1])
 }
 
 impl BoundaryCache {
     fn edges(&mut self, floor: Option<GroundRect>, cover: &[GroundRect]) -> &[(Vec2, Vec2)] {
-        if self.floor != floor || self.cover != cover {
+        let same_floor = match (&self.floor, &floor) {
+            (Some(a), Some(b)) => nearly_same(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        let same_cover = self.cover.len() == cover.len()
+            && self.cover.iter().zip(cover).all(|(a, b)| nearly_same(a, b));
+        if !same_floor || !same_cover {
             self.edges = playable_boundary(floor, cover);
             self.floor = floor;
             self.cover.clear();
             self.cover.extend_from_slice(cover);
         }
         &self.edges
+    }
+
+    /// The `count` sight rays of each of `sight`'s viewers, cast again only
+    /// when `sight` changed since the last call.
+    fn sight_rays(&mut self, sight: &FogOfWarSight, count: usize) -> &[SightRays] {
+        let current = self.rays.as_ref().is_some_and(|(cast_for, rays)| {
+            cast_for == sight && rays.first().is_none_or(|ray| ray.through.len() == count)
+        });
+        if !current {
+            self.rays = Some((sight.clone(), sight_rays(sight, count)));
+        }
+        self.rays.as_ref().map_or(&[], |(_, rays)| rays)
     }
 }
 
@@ -423,11 +464,14 @@ pub(super) fn paint_map(
     let mut indices = Vec::new();
     const RAYS: usize = 240;
     const RINGS: usize = 12;
+    let mut cache = cache
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     for (viewer, rays) in state
         .sight
         .viewers
         .iter()
-        .zip(sight_rays(&state.sight, RAYS))
+        .zip(cache.sight_rays(&state.sight, RAYS))
     {
         let count = rays.through.len();
         let first = points.len() as u32;
@@ -450,25 +494,24 @@ pub(super) fn paint_map(
         }
     }
     p.gradient(&points, &colors, &indices);
-    let mut boundary = cache
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    for &(a, b) in boundary.edges(state.floor, &state.cover) {
-        let seen = state.vision.visible(a)
-            || state.vision.visible(b)
-            || state.vision.visible((a + b) * 0.5);
-        if let Some((a, b)) = clip_line_circle(mapped(a), mapped(b), (x, y), radius - 2.0) {
-            p.line(
-                a,
-                b,
-                if seen {
-                    UiColor::rgba(107, 161, 164, 255)
-                } else {
-                    UiColor::rgba(40, 61, 65, 255)
-                },
-                1.8,
-            );
-        }
+    let seeing = state.vision.points();
+    for &(a, b) in cache.edges(state.floor, &state.cover) {
+        // Most of the arena's outline lies off the map; only what the map
+        // shows asks what the side sees, a line of sight per point.
+        let Some((from, to)) = clip_line_circle(mapped(a), mapped(b), (x, y), radius - 2.0) else {
+            continue;
+        };
+        let seen = seeing.visible(a) || seeing.visible(b) || seeing.visible((a + b) * 0.5);
+        p.line(
+            from,
+            to,
+            if seen {
+                UiColor::rgba(107, 161, 164, 255)
+            } else {
+                UiColor::rgba(40, 61, 65, 255)
+            },
+            1.8,
+        );
     }
     for blip in &state.blips {
         // An enemy fades in and out with fog, as it does in the main view.
@@ -718,6 +761,25 @@ mod tests {
     }
 
     #[test]
+    fn contour_cache_keeps_the_outline_while_cover_creeps_within_the_tolerance() {
+        let floor = Some(GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(20.0, 20.0)));
+        let mut cover = [GroundRect::axis_aligned(vec2(2.0, 0.0), vec2(2.0, 2.0))];
+        let mut cache = BoundaryCache::default();
+        let original = cache.edges(floor, &cover).to_vec();
+        let allocation = cache.edges.as_ptr();
+        // A prop scaled a hair every frame keeps the traced outline...
+        for _ in 0..10 {
+            cover[0].half_axes[0].x -= OUTLINE_TOLERANCE / 20.0;
+            assert_eq!(cache.edges(floor, &cover), original);
+            assert_eq!(cache.edges.as_ptr(), allocation);
+        }
+        // ...until it has moved past the tolerance since it was traced.
+        cover[0].half_axes[0].x -= OUTLINE_TOLERANCE;
+        assert_eq!(cache.edges(floor, &cover), playable_boundary(floor, &cover));
+        assert_ne!(cache.edges(floor, &cover), original);
+    }
+
+    #[test]
     fn live_cover_moves_and_visibility_changes_follow_generated_children() {
         let mut scene = calyx_engine::test_support::test_scene();
         let player = scene.create(None, None);
@@ -774,5 +836,65 @@ mod tests {
         let state = minimap_state(&scene, player);
         assert!(state.vision.visible(vec2(6.0, 0.0)));
         assert_eq!(state.cover.len(), 1, "the map still outlines the blocker");
+    }
+
+    #[test]
+    fn the_map_marks_only_units_and_paints_the_player_last() {
+        let mut scene = calyx_engine::test_support::test_scene();
+        let player = scene.create(None, None);
+        scene.add_component(player, ComponentTankController::default());
+        // Props that are not units get no blip, however many there are.
+        for _ in 0..20 {
+            let prop = scene.create(None, None);
+            scene.add_component(prop, ComponentCollider::default());
+        }
+        let enemy = scene.create(None, None);
+        scene.add_component(enemy, ComponentTankController::default());
+        let target = scene.create(None, None);
+        scene.add_component(target, ComponentProjectileTarget::default());
+
+        let blips = minimap_state(&scene, player).blips;
+        let mut ids = blips.iter().map(|blip| blip.id).collect::<Vec<_>>();
+        assert_eq!(ids.len(), 3);
+        assert_eq!(blips.last().map(|blip| blip.kind), Some(BlipKind::Player));
+        ids.sort();
+        let mut expected = vec![scene.uuid(player), scene.uuid(enemy), scene.uuid(target)];
+        expected.sort();
+        assert_eq!(ids, expected);
+    }
+
+    #[test]
+    fn sight_rays_are_cast_again_only_when_the_sight_changes() {
+        use calyx_engine::component::{FogOfWarBlocker, FogOfWarViewer};
+        let viewer = FogOfWarViewer {
+            position: vec2(0.0, 0.0),
+            fade_start: 10.0,
+            fade_end: 12.0,
+            fade_curve: 0.0,
+            weight: 1.0,
+        };
+        let mut sight = FogOfWarSight {
+            viewers: vec![viewer],
+            blockers: vec![FogOfWarBlocker {
+                center: vec2(4.0, 0.0),
+                half_axes: [vec2(1.0, 0.0), vec2(0.0, 1.0)],
+            }],
+        };
+        let mut cache = BoundaryCache::default();
+        let first = cache.sight_rays(&sight, 64).to_vec();
+        assert_eq!(first, sight_rays(&sight, 64));
+        let kept = cache.sight_rays(&sight, 64).as_ptr();
+        assert_eq!(
+            cache.sight_rays(&sight, 64).as_ptr(),
+            kept,
+            "an unchanged sight is not cast again"
+        );
+
+        sight.viewers[0].position = vec2(0.0, 3.0);
+        let moved = cache.sight_rays(&sight, 64).to_vec();
+        assert_eq!(moved, sight_rays(&sight, 64));
+        assert_ne!(moved, first);
+        assert_eq!(cache.sight_rays(&sight, 32).len(), 1);
+        assert_eq!(cache.sight_rays(&sight, 32)[0].through.len(), 32);
     }
 }

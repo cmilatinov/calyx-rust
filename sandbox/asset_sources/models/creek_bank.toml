@@ -1,0 +1,10 @@
+# A creek's carved bank, as a one-metre tile; the Water component draws the
+# arena creek's banks in this model's creek_bank material.
+[[parts]]
+name = "surface"
+kind = "box"
+role = "creek_bank"
+size = [1.0, 0.1, 1.0]
+bevel = 0.0
+segments = 1
+cast_shadows = false

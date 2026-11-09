@@ -1,0 +1,189 @@
+# Farm bridge: a timber deck 9 m long (along Z) and 4 m wide between rails on
+# posts, on two stringers and stone abutments; its deck top sits 0.05 m above
+# the root, the ground at its ends. Regenerate with calyx_model_gen;
+# dimensions in metres.
+
+[[parts]]
+name = "deck"
+kind = "box"
+role = "crate_plank"
+size = [4, 0.3, 9]
+bevel = 0.05
+segments = 2
+offset = [0, -0.25, 0]
+
+[[parts]]
+name = "plank_seam_0"
+kind = "box"
+role = "crate_frame"
+size = [3.9, 0.05, 0.08]
+bevel = 0
+segments = 1
+offset = [0, 0.03, -3]
+cast_shadows = false
+
+[[parts]]
+name = "plank_seam_1"
+kind = "box"
+role = "crate_frame"
+size = [3.9, 0.05, 0.08]
+bevel = 0
+segments = 1
+offset = [0, 0.03, -1.5]
+cast_shadows = false
+
+[[parts]]
+name = "plank_seam_2"
+kind = "box"
+role = "crate_frame"
+size = [3.9, 0.05, 0.08]
+bevel = 0
+segments = 1
+offset = [0, 0.03, 0]
+cast_shadows = false
+
+[[parts]]
+name = "plank_seam_3"
+kind = "box"
+role = "crate_frame"
+size = [3.9, 0.05, 0.08]
+bevel = 0
+segments = 1
+offset = [0, 0.03, 1.5]
+cast_shadows = false
+
+[[parts]]
+name = "plank_seam_4"
+kind = "box"
+role = "crate_frame"
+size = [3.9, 0.05, 0.08]
+bevel = 0
+segments = 1
+offset = [0, 0.03, 3]
+cast_shadows = false
+
+[[parts]]
+name = "stringer_0"
+kind = "box"
+role = "crate_frame"
+size = [0.4, 0.55, 9.4]
+bevel = 0.08
+segments = 2
+offset = [-2, -0.45, 0]
+
+[[parts]]
+name = "post_0_0"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 1, 0.24]
+bevel = 0.05
+segments = 2
+offset = [-2.05, 0.05, -4.2]
+
+[[parts]]
+name = "post_0_1"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 1, 0.24]
+bevel = 0.05
+segments = 2
+offset = [-2.05, 0.05, 0]
+
+[[parts]]
+name = "post_0_2"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 1, 0.24]
+bevel = 0.05
+segments = 2
+offset = [-2.05, 0.05, 4.2]
+
+[[parts]]
+name = "rail_0"
+kind = "box"
+role = "crate_plank"
+size = [0.2, 0.16, 9]
+bevel = 0.05
+segments = 2
+offset = [-2.05, 0.9, 0]
+
+[[parts]]
+name = "mid_rail_0"
+kind = "box"
+role = "crate_plank"
+size = [0.14, 0.12, 9]
+bevel = 0.04
+segments = 2
+offset = [-2.05, 0.5, 0]
+
+[[parts]]
+name = "stringer_1"
+kind = "box"
+role = "crate_frame"
+size = [0.4, 0.55, 9.4]
+bevel = 0.08
+segments = 2
+offset = [2, -0.45, 0]
+
+[[parts]]
+name = "post_1_0"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 1, 0.24]
+bevel = 0.05
+segments = 2
+offset = [2.05, 0.05, -4.2]
+
+[[parts]]
+name = "post_1_1"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 1, 0.24]
+bevel = 0.05
+segments = 2
+offset = [2.05, 0.05, 0]
+
+[[parts]]
+name = "post_1_2"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 1, 0.24]
+bevel = 0.05
+segments = 2
+offset = [2.05, 0.05, 4.2]
+
+[[parts]]
+name = "rail_1"
+kind = "box"
+role = "crate_plank"
+size = [0.2, 0.16, 9]
+bevel = 0.05
+segments = 2
+offset = [2.05, 0.9, 0]
+
+[[parts]]
+name = "mid_rail_1"
+kind = "box"
+role = "crate_plank"
+size = [0.14, 0.12, 9]
+bevel = 0.04
+segments = 2
+offset = [2.05, 0.5, 0]
+
+[[parts]]
+name = "abutment_0"
+kind = "box"
+role = "rocks"
+size = [5, 0.9, 1.4]
+bevel = 0.15
+segments = 2
+offset = [0, -0.95, -3.9]
+
+[[parts]]
+name = "abutment_1"
+kind = "box"
+role = "rocks"
+size = [5, 0.9, 1.4]
+bevel = 0.15
+segments = 2
+offset = [0, -0.95, 3.9]

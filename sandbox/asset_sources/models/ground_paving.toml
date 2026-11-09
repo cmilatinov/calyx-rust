@@ -1,6 +1,7 @@
 # Four inset paving stones on one metre of clay ground.
 
 [[parts]]
+cast_shadows = false
 name = "nw"
 kind = "box"
 role = "ground_paving"
@@ -10,6 +11,7 @@ bevel = 0.012
 segments = 2
 
 [[parts]]
+cast_shadows = false
 name = "ne"
 kind = "box"
 role = "ground_paving"
@@ -19,6 +21,7 @@ bevel = 0.012
 segments = 2
 
 [[parts]]
+cast_shadows = false
 name = "sw"
 kind = "box"
 role = "ground_paving"
@@ -28,6 +31,7 @@ bevel = 0.012
 segments = 2
 
 [[parts]]
+cast_shadows = false
 name = "se"
 kind = "box"
 role = "ground_paving"

@@ -46,7 +46,7 @@ mod service;
 mod tests;
 
 pub(crate) use handle::paint_thumbnail_badge;
-pub use handle::{ThumbnailBadge, ThumbnailHandle, ThumbnailView};
+pub use handle::{ThumbnailBadge, ThumbnailHandle, ThumbnailView, ThumbnailViewCache};
 #[allow(unused_imports)]
 pub use pipeline::{ThumbnailJob, ThumbnailPipeline, ThumbnailPriority, ThumbnailStatus};
 pub use service::ThumbnailService;

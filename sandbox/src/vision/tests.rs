@@ -17,6 +17,27 @@ fn viewer(x: f32, z: f32, range: f32) -> Viewer {
 }
 
 #[test]
+fn points_see_what_the_side_sees() {
+    let vision = TeamVision {
+        viewers: vec![viewer(0.0, 0.0, 10.0), viewer(12.0, 0.0, 6.0)],
+        cover: vec![
+            GroundRect::axis_aligned(vec2(4.0, 0.0), vec2(1.0, 1.0)),
+            GroundRect::axis_aligned(vec2(5.0, 3.0), vec2(1.0, 2.0)),
+            // At the edge of the first viewer's range, and far beyond both.
+            GroundRect::axis_aligned(vec2(-9.5, 2.0), vec2(1.0, 1.0)),
+            GroundRect::axis_aligned(vec2(40.0, 30.0), vec2(2.0, 2.0)),
+        ],
+    };
+    let points = vision.points();
+    for x in -12..=24 {
+        for z in -12..=12 {
+            let point = vec2(x as f32, z as f32);
+            assert_eq!(points.visible(point), vision.visible(point), "at {point:?}");
+        }
+    }
+}
+
+#[test]
 fn visibility_needs_range_and_a_clear_line_from_any_viewer() {
     let wall = GroundRect::axis_aligned(vec2(4.0, 0.0), vec2(2.0, 4.0));
     let vision = TeamVision {
@@ -210,15 +231,17 @@ fn sentry_behind(cover_name: &str) -> (Scene, GameObject, GameObject, GameObject
 }
 
 #[test]
-fn only_walls_and_boxes_block_sight() {
+fn only_walls_boxes_and_hedgerows_block_sight() {
     for (cover, blocks) in [
         ("Arena Cover Stack Crate", true),
+        ("Arena Cover Field Hedgerow", true),
         ("Arena Cover Left Supply", true),
         ("Arena Wall North 4", true),
         ("Arena Cover Centre Barrier", false),
         ("Arena Cover Right Sandbags", false),
         ("Arena Cover West Boulder", false),
         ("Arena Cover East Rock", false),
+        ("Arena Cover Farm Hay Bale 0", false),
     ] {
         let (mut scene, player, sentry, _) = sentry_behind(cover);
         apply_fog(&mut scene, player, &mut FogState::default());

@@ -46,6 +46,10 @@ impl Component for ComponentPointLight {
         true
     }
 
+    fn has_gizmos(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         let color = self.color.to_normalized_gamma_f32();

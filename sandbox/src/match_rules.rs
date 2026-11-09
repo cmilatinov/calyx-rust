@@ -7,7 +7,7 @@
 //! is a draw. Once a match is decided, gameplay stops and the HUD shows the
 //! final scoreboard.
 
-use crate::combat::{combat_team, is_tank_combatant, ComponentCombatStats};
+use crate::combat::{combat_team, ComponentCombatStats};
 use crate::game_state::{ComponentGameState, GamePhase};
 use calyx_engine::component::{
     Component, ComponentEventContext, ComponentRef, ComponentUpdate, ReflectComponent,
@@ -176,10 +176,7 @@ impl Standings {
     pub fn in_scene(scene: &Scene, mode: MatchMode) -> Self {
         let mut teams = BTreeMap::<u32, u32>::new();
         let mut players = Vec::new();
-        for object in scene.objects() {
-            if !is_tank_combatant(scene, object) {
-                continue;
-            }
+        for object in crate::vision::tank_combatants(scene) {
             let Some(kills) =
                 scene.read_component::<ComponentCombatStats, _, _>(object, |stats| stats.kills)
             else {
@@ -255,14 +252,7 @@ pub(crate) fn settle_kill_limit(scene: &mut Scene) {
     if match_rules(scene).is_none() {
         return;
     }
-    let rules: Vec<_> = scene
-        .objects()
-        .filter(|&object| {
-            scene
-                .read_component::<ComponentMatchRules, _, _>(object, |_| ())
-                .is_some()
-        })
-        .collect();
+    let rules: Vec<_> = scene.objects_with::<ComponentMatchRules>().collect();
     for object in rules {
         run_match_rules(scene, object, 0.0, false);
     }
@@ -276,11 +266,13 @@ fn run_match_rules(
     dt: f32,
     may_start: bool,
 ) -> Option<MatchOutcome> {
-    let phase = scene.objects().find_map(|object| {
-        scene.read_component::<ComponentGameState, _, _>(object, |state| {
-            (object, state.current_phase())
-        })
-    });
+    let phase = scene
+        .objects_with::<ComponentGameState>()
+        .find_map(|object| {
+            scene.read_component::<ComponentGameState, _, _>(object, |state| {
+                (object, state.current_phase())
+            })
+        });
     if let Some((_, phase)) = phase {
         let played = scene
             .read_component::<ComponentMatchRules, _, _>(game_object, |rules| {
@@ -351,10 +343,7 @@ pub fn match_over(scene: &Scene) -> bool {
 /// Clears every tank's kills, deaths, assists, score and damage credit, so
 /// a rematch starts from zero.
 fn reset_match_stats(scene: &mut Scene) {
-    let tanks: Vec<_> = scene
-        .objects()
-        .filter(|&object| is_tank_combatant(scene, object))
-        .collect();
+    let tanks: Vec<_> = crate::vision::tank_combatants(scene).collect();
     for tank in tanks {
         let _ = scene.write_component::<ComponentCombatStats, _>(tank, |stats| {
             stats.reset_match();

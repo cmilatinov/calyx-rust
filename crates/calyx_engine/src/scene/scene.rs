@@ -1514,6 +1514,44 @@ impl Scene {
         self.view().objects()
     }
 
+    /// Iterates every non-root object holding component `T`, in world
+    /// order (by archetype, then by when each object joined it), not in
+    /// hierarchy order as [`Self::objects`] does.
+    ///
+    /// The query visits only the archetypes that hold `T`, so it costs the
+    /// matching objects rather than every object in the scene. Per-frame
+    /// code that looks for a few kinds of objects (tanks, targets, effects)
+    /// asks for them this way instead of reading a component from every
+    /// object.
+    pub fn objects_with<T: Component + 'static>(&self) -> impl Iterator<Item = GameObject> + '_ {
+        <Entity>::query()
+            .filter(legion::query::component::<T>())
+            .iter(&self.world.0)
+            .filter_map(|entity| self.game_object_from_entity(*entity))
+            .filter(|game_object| *game_object != self.root)
+            .collect::<Vec<_>>()
+            .into_iter()
+    }
+
+    /// The non-root objects holding the component of type `component`, in
+    /// world order, as [`Self::objects_with`] for a type known only by its
+    /// id. Only the archetypes holding it are visited.
+    pub(crate) fn objects_holding(&self, component: ComponentTypeId) -> Vec<GameObject> {
+        let mut objects = Vec::new();
+        for chunk in <Entity>::query().iter_chunks(&self.world.0) {
+            if !chunk.archetype().layout().has_component_by_id(component) {
+                continue;
+            }
+            objects.extend(
+                chunk
+                    .into_iter()
+                    .filter_map(|entity| self.game_object_from_entity(*entity))
+                    .filter(|game_object| *game_object != self.root),
+            );
+        }
+        objects
+    }
+
     /// Returns the display name stored in [`ComponentID`] for `game_object`.
     pub fn name(&self, game_object: GameObject) -> String {
         self.view().name(game_object).unwrap_or_default()

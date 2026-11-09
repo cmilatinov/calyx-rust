@@ -247,6 +247,15 @@ impl ThumbnailHandle {
         ctx.data(|data| data.get_temp::<Self>(Self::context_id()))
     }
 
+    /// A counter that moves on whenever what a finished thumbnail draws can
+    /// change: a texture stored or dropped, a request failed, the cache
+    /// cleared. While it and the asset sources hold still, a view that is
+    /// not [`ThumbnailView::Loading`] stays what it is, so a UI can keep it
+    /// instead of asking every frame.
+    pub fn revision(&self) -> u64 {
+        self.shared.revision()
+    }
+
     /// Whether both handles point at the same service.
     pub fn ptr_eq(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.shared, &other.shared)
@@ -321,5 +330,71 @@ impl ThumbnailHandle {
         let key = request.key();
         let status = request_thumbnail(&self.shared, request, priority);
         thumbnail_view(Some(status), thumbnail_texture_id(&self.shared, key))
+    }
+}
+
+/// The thumbnail views a panel drew, kept between frames so a panel that
+/// shows many assets asks the service nothing while nothing changes.
+///
+/// A view is asked for again only while it is loading, and for every asset
+/// for [`THUMBNAIL_REQUEST_REFRESH_INTERVAL`] after the asset sources, the
+/// asset files or the service's [`ThumbnailHandle::revision`] moved: long
+/// enough for the memoized requests to read the new sources. Otherwise a
+/// finished view (ready, failed or unsupported) is drawn as it was.
+#[derive(Default)]
+pub struct ThumbnailViewCache {
+    views: HashMap<Uuid, ThumbnailView>,
+    /// The asset registry's source change count, file change count and
+    /// metadata epoch, and the service's revision, last seen.
+    stamp: Option<[u64; 4]>,
+    /// Until when every view is asked for again, after a change.
+    refresh_until: Option<Instant>,
+    /// Whether this frame asks for every view again.
+    refreshing: bool,
+}
+
+impl ThumbnailViewCache {
+    /// Starts a frame at `now`, seeing whether anything a view depends on
+    /// moved since the last.
+    pub fn begin_frame(
+        &mut self,
+        registry: &AssetRegistry,
+        handle: &ThumbnailHandle,
+        now: Instant,
+    ) {
+        let stamp = [
+            registry.source_change_count(),
+            registry.file_change_count(),
+            registry.meta_epoch(),
+            handle.revision(),
+        ];
+        if self.stamp != Some(stamp) {
+            self.stamp = Some(stamp);
+            self.refresh_until = Some(now + THUMBNAIL_REQUEST_REFRESH_INTERVAL);
+        }
+        self.refreshing = self.refresh_until.is_some_and(|until| now < until);
+        if !self.refreshing {
+            self.refresh_until = None;
+        }
+    }
+
+    /// The view of `asset_id`: the one kept when it is finished and nothing
+    /// changed, else what `ask` returns now, which is kept.
+    pub fn view(&mut self, asset_id: Uuid, ask: impl FnOnce() -> ThumbnailView) -> ThumbnailView {
+        if !self.refreshing {
+            if let Some(view) = self.views.get(&asset_id) {
+                if *view != ThumbnailView::Loading {
+                    return view.clone();
+                }
+            }
+        }
+        let view = ask();
+        self.views.insert(asset_id, view.clone());
+        view
+    }
+
+    /// Whether this frame asks for every view again.
+    pub fn is_refreshing(&self) -> bool {
+        self.refreshing
     }
 }

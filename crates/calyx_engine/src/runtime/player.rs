@@ -28,9 +28,6 @@ struct GameApp {
     renderer: SceneRenderer,
     hud: SceneHud,
     frame_counter: FrameCounter,
-    /// The frame after which the player closes itself, from
-    /// [`EXIT_AFTER_FRAMES_ENV`].
-    exit_after_frames: Option<u64>,
     #[allow(unused)]
     log: Log<DefaultLogger>,
 }
@@ -41,8 +38,7 @@ impl GameApp {
         settings: &ProjectRuntimeSettings,
         plugin_main: extern "C" fn(&mut TypeRegistry),
     ) -> Result<Self, Box<DynError>> {
-        let startup_scene = startup_scene_override()
-            .or_else(|| settings.startup_scene_path())
+        let startup_scene = player_scene(settings, std::env::var_os(SCENE_ENV).as_deref())
             .ok_or("the project does not configure a startup scene")?;
         if let Some(render_state) = &cc.wgpu_render_state {
             profiler::gpu::install(&render_state.device, &render_state.queue);
@@ -83,9 +79,6 @@ impl GameApp {
             )?,
             hud: SceneHud::default(),
             frame_counter: FrameCounter::default(),
-            exit_after_frames: std::env::var(EXIT_AFTER_FRAMES_ENV)
-                .ok()
-                .and_then(|frames| frames.trim().parse().ok()),
             log: Log::new(
                 DefaultLogger::builder()
                     .app_vendor("Calyx")
@@ -119,16 +112,6 @@ impl eframe::App for GameApp {
     fn update(&mut self, ctx: &Context, _frame: &mut Frame) {
         profiler::new_frame();
         log_profile();
-        if self
-            .exit_after_frames
-            .is_some_and(|frames| profiler::current_frame() >= frames)
-        {
-            log::info!(
-                "Closing the player after {} frames",
-                profiler::current_frame()
-            );
-            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
-        }
         crate::profile_scope!("Player update");
         profiler::time_ui_pass(ctx);
         self.game.update();
@@ -208,7 +191,8 @@ impl eframe::App for GameApp {
 
 /// Environment variable that turns profiling on in the player, which then
 /// logs a profile of the last [`PROFILE_LOG_FRAMES`] frames every as many
-/// frames.
+/// frames. A value other than `1` names a file each profile is also
+/// appended to, one JSON report per line.
 const PROFILE_ENV: &str = "CALYX_PROFILE";
 const PROFILE_LOG_FRAMES: u64 = 600;
 
@@ -218,41 +202,65 @@ fn log_profile() {
         return;
     }
     let report = profiler::report(PROFILE_LOG_FRAMES as usize);
-    match serde_json::to_string(&report) {
-        Ok(json) => log::info!("Profile of the last {} frames: {json}", report.frames),
-        Err(error) => log::warn!("Failed to serialize the profile: {error}"),
+    let json = match serde_json::to_string(&report) {
+        Ok(json) => json,
+        Err(error) => {
+            log::warn!("Failed to serialize the profile: {error}");
+            return;
+        }
+    };
+    log::info!("Profile of the last {} frames: {json}", report.frames);
+    if let Some(path) = profile_file(std::env::var_os(PROFILE_ENV).as_deref()) {
+        use std::io::Write;
+        let written = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| writeln!(file, "{json}"));
+        if let Err(error) = written {
+            log::warn!("Failed to write the profile to {}: {error}", path.display());
+        }
     }
 }
 
-/// Environment variable naming a scene file the player starts in place of
-/// the project's startup scene, as a measurement run does.
-const STARTUP_SCENE_ENV: &str = "CALYX_STARTUP_SCENE";
-/// Environment variable that, set to `off`, presents frames without waiting
-/// for vertical sync, so a measurement sees the frame time rather than the
-/// display's refresh interval.
+/// The file profiles are appended to: the value of [`PROFILE_ENV`], unless
+/// it is `1` or empty, which only turn profiling on.
+fn profile_file(value: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    value
+        .filter(|value| !value.is_empty() && *value != "1")
+        .map(PathBuf::from)
+}
+
+/// Environment variable naming a scene the player opens in place of the
+/// project's startup scene, relative to the project directory or absolute,
+/// so a scene other than the startup one can be measured in the player.
+const SCENE_ENV: &str = "CALYX_SCENE";
+
+/// Environment variable that, set to `0`, presents frames without waiting
+/// for vertical sync, so a measured frame time is the player's own rather
+/// than the display's refresh interval.
 const VSYNC_ENV: &str = "CALYX_VSYNC";
-/// Environment variable giving a frame count after which the player closes
-/// itself, so a measurement run ends on its own and its log is complete.
-const EXIT_AFTER_FRAMES_ENV: &str = "CALYX_EXIT_AFTER_FRAMES";
-/// Environment variable giving the window's size as `WIDTHxHEIGHT` in
-/// logical points, in place of the project's window size.
-const WINDOW_SIZE_ENV: &str = "CALYX_WINDOW_SIZE";
 
-fn startup_scene_override() -> Option<PathBuf> {
-    std::env::var_os(STARTUP_SCENE_ENV).map(PathBuf::from)
+/// The scene the player opens: `scene`, the value of [`SCENE_ENV`], when it
+/// is set and not empty, else the project's startup scene.
+fn player_scene(
+    settings: &ProjectRuntimeSettings,
+    scene: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    match scene.filter(|scene| !scene.is_empty()) {
+        Some(scene) => Some(settings.project_path(scene)),
+        None => settings.startup_scene_path(),
+    }
 }
 
-fn vsync_off(value: Option<&str>) -> bool {
-    value.is_some_and(|value| value.eq_ignore_ascii_case("off") || value == "0")
-}
-
-fn parse_window_size(value: &str) -> Option<WindowSettings> {
-    let (width, height) = value.split_once(['x', 'X'])?;
-    let window = WindowSettings {
-        width: width.trim().parse().ok()?,
-        height: height.trim().parse().ok()?,
-    };
-    window.non_zero_size().map(|_| window)
+/// How the player presents frames: without vertical sync when `vsync`, the
+/// value of [`VSYNC_ENV`], is `0`, else waiting for it as the editor does.
+fn present_mode(vsync: Option<&std::ffi::OsStr>) -> wgpu::PresentMode {
+    if vsync.is_some_and(|vsync| vsync == "0") {
+        wgpu::PresentMode::AutoNoVsync
+    } else {
+        wgpu::PresentMode::AutoVsync
+    }
 }
 
 /// How the player renders the scene: like the editor's Game panel, without
@@ -274,14 +282,6 @@ fn renderer_options() -> SceneRendererOptions {
 const PLAYER_APP_ID: &str = "calyx-player";
 
 fn native_options(window: &WindowSettings) -> NativeOptions {
-    let window_override = std::env::var(WINDOW_SIZE_ENV)
-        .ok()
-        .and_then(|value| parse_window_size(&value));
-    let window = window_override.as_ref().unwrap_or(window);
-    let mut wgpu_options = wgpu_configuration();
-    if vsync_off(std::env::var(VSYNC_ENV).ok().as_deref()) {
-        wgpu_options.present_mode = wgpu::PresentMode::AutoNoVsync;
-    }
     NativeOptions {
         viewport: egui::ViewportBuilder {
             // eframe restores a window saved under the app id before applying
@@ -296,7 +296,10 @@ fn native_options(window: &WindowSettings) -> NativeOptions {
         // never saves a size that a later run would restore over it.
         persist_window: false,
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options,
+        wgpu_options: egui_wgpu::WgpuConfiguration {
+            present_mode: present_mode(std::env::var_os(VSYNC_ENV).as_deref()),
+            ..wgpu_configuration()
+        },
         event_loop_builder: Some(Box::new(|builder| {
             builder.with_any_thread(true);
         })),
@@ -325,8 +328,11 @@ pub fn run_player(
 #[cfg(test)]
 mod tests {
     use super::{
-        native_options, parse_window_size, renderer_options, vsync_off, ProjectRuntimeSettings,
+        native_options, player_scene, present_mode, profile_file, renderer_options,
+        ProjectRuntimeSettings,
     };
+    use egui_wgpu::wgpu;
+    use std::ffi::OsStr;
     use std::path::PathBuf;
 
     fn project_directory() -> PathBuf {
@@ -334,23 +340,55 @@ mod tests {
     }
 
     #[test]
+    fn player_opens_the_scene_the_environment_names_over_the_startup_scene() {
+        let settings = ProjectRuntimeSettings::load(project_directory()).unwrap();
+        assert_eq!(
+            player_scene(&settings, None),
+            settings.startup_scene_path(),
+            "without a scene named, the startup scene"
+        );
+        assert_eq!(
+            player_scene(&settings, Some(OsStr::new(""))),
+            settings.startup_scene_path()
+        );
+        assert_eq!(
+            player_scene(
+                &settings,
+                Some(OsStr::new("assets/game/scenes/arena.cxscene"))
+            ),
+            Some(project_directory().join("assets/game/scenes/arena.cxscene"))
+        );
+    }
+
+    #[test]
+    fn player_appends_profiles_to_the_file_the_environment_names() {
+        assert_eq!(profile_file(None), None);
+        assert_eq!(profile_file(Some(OsStr::new("1"))), None);
+        assert_eq!(profile_file(Some(OsStr::new(""))), None);
+        assert_eq!(
+            profile_file(Some(OsStr::new("logs/profile.jsonl"))),
+            Some(PathBuf::from("logs/profile.jsonl"))
+        );
+    }
+
+    #[test]
+    fn player_waits_for_vsync_unless_the_environment_turns_it_off() {
+        assert_eq!(present_mode(None), wgpu::PresentMode::AutoVsync);
+        assert_eq!(
+            present_mode(Some(OsStr::new("1"))),
+            wgpu::PresentMode::AutoVsync
+        );
+        assert_eq!(
+            present_mode(Some(OsStr::new("0"))),
+            wgpu::PresentMode::AutoNoVsync
+        );
+    }
+
+    #[test]
     fn player_renders_without_the_editor_grid_or_gizmos() {
         let options = renderer_options();
         assert!(!options.grid);
         assert!(options.gizmos.is_none());
-    }
-
-    #[test]
-    fn measurement_overrides_parse_vsync_and_window_size() {
-        assert!(vsync_off(Some("off")));
-        assert!(vsync_off(Some("OFF")));
-        assert!(vsync_off(Some("0")));
-        assert!(!vsync_off(Some("on")));
-        assert!(!vsync_off(None));
-        let window = parse_window_size("1536x864").unwrap();
-        assert_eq!((window.width, window.height), (1536, 864));
-        assert!(parse_window_size("0x864").is_none());
-        assert!(parse_window_size("wide").is_none());
     }
 
     #[test]

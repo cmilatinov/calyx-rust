@@ -65,6 +65,38 @@ mod tests {
     }
 
     #[test]
+    fn objects_with_finds_the_objects_holding_a_component_and_never_the_root() {
+        let mut scene = test_scene();
+        let plain = scene.create(None, None);
+        let camera = scene.create(None, Some(plain));
+        scene.add_component(camera, ComponentCamera::default());
+        let other = scene.create(None, None);
+        scene.add_component(other, ComponentCamera::default());
+
+        let mut found = scene.objects_with::<ComponentCamera>().collect::<Vec<_>>();
+        found.sort_by_key(|object| scene.uuid(*object));
+        let mut expected = vec![camera, other];
+        expected.sort_by_key(|object| scene.uuid(*object));
+        assert_eq!(found, expected);
+        // Every object, the root included, holds an id; the root is not one
+        // of the scene's objects.
+        assert_eq!(
+            scene.objects_with::<ComponentID>().count(),
+            scene.objects().count()
+        );
+        assert!(scene
+            .objects_with::<ComponentID>()
+            .all(|object| object != scene.root()));
+
+        scene.delete(other);
+        scene.flush_deletes();
+        assert_eq!(
+            scene.objects_with::<ComponentCamera>().collect::<Vec<_>>(),
+            [camera]
+        );
+    }
+
+    #[test]
     fn create_increments_name() {
         let mut scene = test_scene();
         let go1 = scene.create(None, None);

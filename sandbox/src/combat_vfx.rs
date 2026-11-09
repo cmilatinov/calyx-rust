@@ -45,7 +45,7 @@ impl Component for ComponentCombatPalette {}
 impl ComponentCombatPalette {
     fn in_scene(scene: &Scene) -> Self {
         scene
-            .objects()
+            .objects_with::<Self>()
             .find_map(|object| scene.read_component::<Self, _, _>(object, |palette| *palette))
             .unwrap_or_default()
     }

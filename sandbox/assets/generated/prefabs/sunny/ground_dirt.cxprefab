@@ -8,6 +8,7 @@
           "visible": true
         },
         "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
           "material": "2828d45b-5505-5a37-85e3-e4c61f4bdb2c",
           "mesh": "70268b77-b717-586f-aed2-dea9cb04a98a"
         },

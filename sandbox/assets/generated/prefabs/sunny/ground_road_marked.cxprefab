@@ -8,6 +8,7 @@
           "visible": true
         },
         "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
           "material": "f83d46a7-3bce-5948-8528-baf2bf3dfa12",
           "mesh": "b3a6e8b8-1073-523d-adf8-6a667502117b"
         },
@@ -39,6 +40,7 @@
           "visible": true
         },
         "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "cast_shadows": false,
           "material": "90a6feeb-8cb6-55ba-9c26-f16a54173548",
           "mesh": "89516ed5-7420-51d6-a358-63c00014478b"
         },

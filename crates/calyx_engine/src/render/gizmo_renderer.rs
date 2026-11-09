@@ -314,35 +314,49 @@ impl GizmoRenderer {
                 crate::profile_scope!("Component gizmos");
                 let registry = registry_ref.read();
                 gizmos = self.gizmos(camera, camera_transform, viewport_size, gizmo_options);
-                // Each object asks only the registered types among its own
-                // components to draw, instead of every registered type.
+                // Only the registered types that draw gizmos are asked, and
+                // only on the objects holding one of them: an archetype
+                // without such a type is skipped whole, so the meshes and
+                // colliders that make up most of a scene cost nothing here.
                 let binders: HashMap<ComponentTypeId, &dyn Component> = registry
                     .components()
+                    .filter(|(_, binder)| binder.has_gizmos())
                     .map(|(_, binder)| (binder.component_type_id(), binder.as_ref()))
                     .collect();
                 let mut visibility = HierarchyVisibility::default();
+                let mut drawers = Vec::new();
                 let mut query = <Entity>::query();
-                let world = scene.world();
-                for entity in query.iter(world) {
-                    let Some(game_object) = scene.game_object_from_entity(*entity) else {
+                for chunk in query.iter_chunks(scene.world()) {
+                    drawers.clear();
+                    drawers.extend(
+                        chunk
+                            .archetype()
+                            .layout()
+                            .component_types()
+                            .iter()
+                            .filter_map(|type_id| binders.get(type_id).copied()),
+                    );
+                    if drawers.is_empty() {
                         continue;
-                    };
-                    let Some(entry) = scene.entry(game_object) else {
-                        continue;
-                    };
-                    gizmos.set_object_id(object_id_for_game_object(scene.uuid(game_object)));
-                    let opacity = if visibility.is_visible(scene, game_object) {
-                        1.0
-                    } else {
-                        HIDDEN_GIZMO_OPACITY
-                    };
-                    gizmos.set_opacity(opacity);
-                    for type_id in entry.archetype().layout().component_types() {
-                        let Some(binder) = binders.get(type_id) else {
+                    }
+                    for entity in chunk {
+                        let Some(game_object) = scene.game_object_from_entity(*entity) else {
                             continue;
                         };
-                        if let Some(instance) = binder.get_instance(&entry) {
-                            instance.draw_gizmos(scene, game_object, &mut gizmos);
+                        let Some(entry) = scene.entry(game_object) else {
+                            continue;
+                        };
+                        gizmos.set_object_id(object_id_for_game_object(scene.uuid(game_object)));
+                        let opacity = if visibility.is_visible(scene, game_object) {
+                            1.0
+                        } else {
+                            HIDDEN_GIZMO_OPACITY
+                        };
+                        gizmos.set_opacity(opacity);
+                        for binder in &drawers {
+                            if let Some(instance) = binder.get_instance(&entry) {
+                                instance.draw_gizmos(scene, game_object, &mut gizmos);
+                            }
                         }
                     }
                 }
@@ -678,6 +692,53 @@ impl OverlayPass for GizmoRenderer {
 mod tests {
     use super::*;
     use crate::test_support::TestAssets;
+
+    #[test]
+    fn only_objects_holding_a_gizmo_type_are_asked_to_draw() {
+        use crate::component::{ComponentCollider, ComponentPointLight};
+        use crate::render::scene_renderer::CameraUniform;
+        use crate::test_support::test_scene;
+
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let device = context.render_context.device();
+        let queue = context.render_context.queue();
+        let camera_buffer = device.create_buffer_init(&wgpu::util::BufferInitDescriptor {
+            label: None,
+            contents: bytemuck::cast_slice(&[CameraUniform::default()]),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+        let mut renderer = GizmoRenderer::new(&context, &camera_buffer, 1).unwrap();
+        let mut scene = test_scene();
+        // Many objects that draw no gizmo, and one light that does.
+        for _ in 0..50 {
+            let prop = scene.create(None, None);
+            scene.add_component(prop, ComponentCollider::default());
+        }
+        let light = scene.create(None, None);
+        scene.add_component(light, ComponentPointLight::default());
+        let mut asked = Vec::new();
+        renderer.draw_gizmos(
+            device,
+            queue,
+            &Camera::default(),
+            &Transform::default(),
+            [64.0, 64.0],
+            &scene,
+            &GizmoOptions::default(),
+            None,
+            |id| {
+                asked.push(id);
+                1
+            },
+        );
+        assert_eq!(asked, [scene.uuid(light)]);
+        assert!(
+            !renderer.circle_list.is_empty(),
+            "the light draws its range sphere"
+        );
+    }
 
     #[test]
     fn gizmo_icon_shader_builds_pipeline() {

@@ -196,8 +196,20 @@ pub trait Component: TypeUuidDynamic + ComponentInstance {
     ///
     /// This is called by editor rendering paths and should be treated as
     /// read-only visualization. It receives `&Scene`, not `&mut Scene`, by
-    /// design.
+    /// design. Only types whose [`Self::has_gizmos`] is `true` are asked.
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {}
+
+    /// Whether this type draws gizmos through [`Self::draw_gizmos`].
+    /// Defaults to `false`.
+    ///
+    /// The scene view asks only the objects holding a type that returns
+    /// `true`, so a scene of thousands of meshes and colliders pays for its
+    /// few lights, cameras and volumes rather than for every object. A type
+    /// that overrides `draw_gizmos` returns `true` here too. The method is on
+    /// the prototype the component registry keeps, as [`Self::can_disable`].
+    fn has_gizmos(&self) -> bool {
+        false
+    }
 }
 
 /// A typed handle to the component of type `T` on one game object, given to
