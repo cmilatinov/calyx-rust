@@ -29,14 +29,11 @@ impl Component for ComponentDriveSurface {}
 /// Entities whose colliders are drive surfaces.
 pub(crate) fn drive_surfaces(scene: &Scene) -> HashSet<Entity> {
     scene
-        .objects()
+        .objects_with::<ComponentDriveSurface>()
         .filter(|&object| {
             scene
-                .read_component::<ComponentDriveSurface, _, _>(object, |_| ())
+                .read_component::<ComponentCollider, _, _>(object, |_| ())
                 .is_some()
-                && scene
-                    .read_component::<ComponentCollider, _, _>(object, |_| ())
-                    .is_some()
         })
         .map(|object| object.entity)
         .collect()

@@ -149,6 +149,10 @@ impl Component for ComponentLocalPostProcessVolume {
         true
     }
 
+    fn has_gizmos(&self) -> bool {
+        true
+    }
+
     fn draw_gizmos(&self, scene: &Scene, game_object: GameObject, gizmos: &mut Gizmos) {
         let transform = scene.world_transform(game_object);
         let blend_distance = self.blend_distance.max(0.0);

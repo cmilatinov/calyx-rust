@@ -133,7 +133,7 @@ pub(crate) struct ArenaGeometry {
 /// Reads the first arena's ground geometry from its live cover objects.
 pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
     let (object, transform, ((width, depth), cell_size, cover, generated)) =
-        scene.objects().find_map(|object| {
+        scene.objects_with::<ComponentArena>().find_map(|object| {
             scene
                 .read_component::<ComponentArena, _, _>(object, |arena| {
                     Some((
@@ -256,7 +256,7 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
 pub(crate) struct VisionFrame {
     /// The arena's floor, cover and sight blockers, when there is an arena.
     pub arena: Option<ArenaGeometry>,
-    /// Every tank combatant, in scene order.
+    /// Every tank combatant, in world order.
     tanks: Vec<GameObject>,
 }
 
@@ -265,10 +265,7 @@ impl VisionFrame {
     pub fn read(scene: &Scene) -> Self {
         Self {
             arena: arena_geometry(scene),
-            tanks: scene
-                .objects()
-                .filter(|&object| is_tank_combatant(scene, object))
-                .collect(),
+            tanks: tank_combatants(scene).collect(),
         }
     }
 
@@ -327,7 +324,7 @@ impl TeamVision {
     /// The vision of `player`'s side: every live tank on `player`'s team,
     /// `player` included, sees over `cover`.
     pub fn of_player(scene: &Scene, player: GameObject, cover: Vec<GroundRect>) -> Self {
-        Self::of_tanks(scene, player, scene.objects(), cover)
+        Self::of_tanks(scene, player, tank_combatants(scene), cover)
     }
 
     /// [`Self::of_player`], looking for the side's tanks only among
@@ -384,6 +381,25 @@ impl TeamVision {
             (point - viewer.position).norm() <= viewer.range
                 && self.clear_line(viewer.position, point)
         })
+    }
+
+    /// [`Self::visible`] for many points, with the cover read once rather
+    /// than for every point.
+    pub fn points(&self) -> VisiblePoints<'_> {
+        VisiblePoints {
+            viewers: &self.viewers,
+            blockers: FogOfWarSight {
+                viewers: Vec::new(),
+                blockers: self
+                    .cover
+                    .iter()
+                    .map(|cover| FogOfWarBlocker {
+                        center: cover.center,
+                        half_axes: cover.half_axes,
+                    })
+                    .collect(),
+            },
+        }
     }
 
     /// `count` evenly spaced sight rays of every viewer.
@@ -448,6 +464,61 @@ fn ray_through_cover(viewer: Viewer, direction: Vec2, cover: &[GroundRect]) -> f
 }
 
 /// Whether `object` is a tank that is alive and in play.
+/// What a side sees, ready to ask about many points; see
+/// [`TeamVision::points`].
+pub(crate) struct VisiblePoints<'a> {
+    viewers: &'a [Viewer],
+    blockers: FogOfWarSight,
+}
+
+impl VisiblePoints<'_> {
+    /// Whether the side sees the ground point `point`, as
+    /// [`TeamVision::visible`] says.
+    pub fn visible(&self, point: Vec2) -> bool {
+        self.viewers.iter().any(|viewer| {
+            (point - viewer.position).norm() <= viewer.range
+                && self.blockers.clear_line(viewer.position, point)
+        })
+    }
+}
+
+/// Every tank combatant of `scene`, in world order: the objects with a tank
+/// controller that are not sentries.
+pub(crate) fn tank_combatants(scene: &Scene) -> impl Iterator<Item = GameObject> + '_ {
+    scene
+        .objects_with::<ComponentTankController>()
+        .filter(|&object| is_tank_combatant(scene, object))
+}
+
+/// Every unit of `scene` (tank, sentry or practice target), each once, in
+/// world order by kind.
+pub(crate) fn units(scene: &Scene) -> Vec<GameObject> {
+    each_once(
+        scene
+            .objects_with::<ComponentTankController>()
+            .chain(scene.objects_with::<ComponentSentry>())
+            .chain(scene.objects_with::<ComponentProjectileTarget>()),
+    )
+}
+
+/// The objects fog of war decides on: units, rounds and combat effects,
+/// each once. Every other object has no [`sighting`], so fog leaves it as
+/// it is.
+fn fog_managed(scene: &Scene) -> Vec<GameObject> {
+    each_once(
+        units(scene)
+            .into_iter()
+            .chain(scene.objects_with::<ComponentProjectile>())
+            .chain(scene.objects_with::<ComponentCombatEffectLifetime>()),
+    )
+}
+
+/// `objects` in order, without repeats.
+fn each_once(objects: impl Iterator<Item = GameObject>) -> Vec<GameObject> {
+    let mut seen = std::collections::HashSet::new();
+    objects.filter(|object| seen.insert(*object)).collect()
+}
+
 fn is_live_tank(scene: &Scene, object: GameObject) -> bool {
     is_tank_combatant(scene, object)
         && scene
@@ -716,7 +787,7 @@ pub(crate) fn apply_fog_seen(
     fog: &mut FogState,
     vision: &TeamVision,
 ) {
-    let objects = scene.objects().collect::<Vec<_>>();
+    let objects = fog_managed(scene);
     apply_fog_to(scene, viewer, fog, vision, &objects);
     fog.hidden.retain(|id, _| scene.find(*id).is_some());
     fog.presence.retain(|id, _| scene.find(*id).is_some());

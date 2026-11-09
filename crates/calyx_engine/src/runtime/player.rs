@@ -14,6 +14,7 @@ use crate::ui::{UiInput, UiPoint};
 use eframe::{Frame, NativeOptions};
 use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
+use egui_wgpu::wgpu;
 use std::path::PathBuf;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
@@ -37,8 +38,7 @@ impl GameApp {
         settings: &ProjectRuntimeSettings,
         plugin_main: extern "C" fn(&mut TypeRegistry),
     ) -> Result<Self, Box<DynError>> {
-        let startup_scene = settings
-            .startup_scene_path()
+        let startup_scene = player_scene(settings, std::env::var_os(SCENE_ENV).as_deref())
             .ok_or("the project does not configure a startup scene")?;
         if let Some(render_state) = &cc.wgpu_render_state {
             profiler::gpu::install(&render_state.device, &render_state.queue);
@@ -207,6 +207,38 @@ fn log_profile() {
     }
 }
 
+/// Environment variable naming a scene the player opens in place of the
+/// project's startup scene, relative to the project directory or absolute,
+/// so a scene other than the startup one can be measured in the player.
+const SCENE_ENV: &str = "CALYX_SCENE";
+
+/// Environment variable that, set to `0`, presents frames without waiting
+/// for vertical sync, so a measured frame time is the player's own rather
+/// than the display's refresh interval.
+const VSYNC_ENV: &str = "CALYX_VSYNC";
+
+/// The scene the player opens: `scene`, the value of [`SCENE_ENV`], when it
+/// is set and not empty, else the project's startup scene.
+fn player_scene(
+    settings: &ProjectRuntimeSettings,
+    scene: Option<&std::ffi::OsStr>,
+) -> Option<PathBuf> {
+    match scene.filter(|scene| !scene.is_empty()) {
+        Some(scene) => Some(settings.project_path(scene)),
+        None => settings.startup_scene_path(),
+    }
+}
+
+/// How the player presents frames: without vertical sync when `vsync`, the
+/// value of [`VSYNC_ENV`], is `0`, else waiting for it as the editor does.
+fn present_mode(vsync: Option<&std::ffi::OsStr>) -> wgpu::PresentMode {
+    if vsync.is_some_and(|vsync| vsync == "0") {
+        wgpu::PresentMode::AutoNoVsync
+    } else {
+        wgpu::PresentMode::AutoVsync
+    }
+}
+
 /// How the player renders the scene: like the editor's Game panel, without
 /// the editor grid.
 fn renderer_options() -> SceneRendererOptions {
@@ -238,7 +270,10 @@ fn native_options(window: &WindowSettings) -> NativeOptions {
         // never saves a size that a later run would restore over it.
         persist_window: false,
         renderer: eframe::Renderer::Wgpu,
-        wgpu_options: wgpu_configuration(),
+        wgpu_options: egui_wgpu::WgpuConfiguration {
+            present_mode: present_mode(std::env::var_os(VSYNC_ENV).as_deref()),
+            ..wgpu_configuration()
+        },
         event_loop_builder: Some(Box::new(|builder| {
             builder.with_any_thread(true);
         })),
@@ -266,11 +301,49 @@ pub fn run_player(
 
 #[cfg(test)]
 mod tests {
-    use super::{native_options, renderer_options, ProjectRuntimeSettings};
+    use super::{
+        native_options, player_scene, present_mode, renderer_options, ProjectRuntimeSettings,
+    };
+    use egui_wgpu::wgpu;
+    use std::ffi::OsStr;
     use std::path::PathBuf;
 
     fn project_directory() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../sandbox")
+    }
+
+    #[test]
+    fn player_opens_the_scene_the_environment_names_over_the_startup_scene() {
+        let settings = ProjectRuntimeSettings::load(project_directory()).unwrap();
+        assert_eq!(
+            player_scene(&settings, None),
+            settings.startup_scene_path(),
+            "without a scene named, the startup scene"
+        );
+        assert_eq!(
+            player_scene(&settings, Some(OsStr::new(""))),
+            settings.startup_scene_path()
+        );
+        assert_eq!(
+            player_scene(
+                &settings,
+                Some(OsStr::new("assets/game/scenes/arena.cxscene"))
+            ),
+            Some(project_directory().join("assets/game/scenes/arena.cxscene"))
+        );
+    }
+
+    #[test]
+    fn player_waits_for_vsync_unless_the_environment_turns_it_off() {
+        assert_eq!(present_mode(None), wgpu::PresentMode::AutoVsync);
+        assert_eq!(
+            present_mode(Some(OsStr::new("1"))),
+            wgpu::PresentMode::AutoVsync
+        );
+        assert_eq!(
+            present_mode(Some(OsStr::new("0"))),
+            wgpu::PresentMode::AutoNoVsync
+        );
     }
 
     #[test]

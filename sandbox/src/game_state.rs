@@ -232,21 +232,11 @@ pub fn combat_paused(scene: &Scene) -> bool {
 /// ready to move the moment the match starts. Kills, deaths, assists and
 /// score are reset by the scene's Match Rules.
 pub fn reset_combat(scene: &mut Scene) {
-    let rounds: Vec<_> = scene
-        .objects()
-        .filter(|&object| {
-            scene
-                .read_component::<ComponentProjectile, _, _>(object, |_| ())
-                .is_some()
-        })
-        .collect();
+    let rounds: Vec<_> = scene.objects_with::<ComponentProjectile>().collect();
     for round in rounds {
         scene.delete(round);
     }
-    let tanks: Vec<_> = scene
-        .objects()
-        .filter(|&object| crate::combat::is_tank_combatant(scene, object))
-        .collect();
+    let tanks: Vec<_> = crate::vision::tank_combatants(scene).collect();
     for tank in tanks {
         crate::spawn::reset_for_match(scene, tank);
         let _ = scene.write_component::<ComponentHealth, _>(tank, ComponentHealth::restore_full);

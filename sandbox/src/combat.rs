@@ -226,14 +226,7 @@ pub fn record_kill(scene: &mut Scene, event: &KillEvent) {
         }
     }
 
-    let feeds: Vec<GameObject> = scene
-        .objects()
-        .filter(|&object| {
-            scene
-                .read_component::<ComponentKillFeed, _, _>(object, |_| ())
-                .is_some()
-        })
-        .collect();
+    let feeds: Vec<GameObject> = scene.objects_with::<ComponentKillFeed>().collect();
     for feed in feeds {
         let _ = scene.write_component::<ComponentKillFeed, _>(feed, |feed| feed.push(event));
     }

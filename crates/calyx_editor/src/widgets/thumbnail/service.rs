@@ -5,7 +5,7 @@ use super::pipeline::*;
 use super::*;
 use std::any::Any;
 use std::panic::{self, AssertUnwindSafe};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::MutexGuard;
 
 pub struct ThumbnailService {
@@ -22,6 +22,23 @@ pub(super) struct ThumbnailShared {
     /// [`ThumbnailService::pause_scene_jobs`].
     scene_job_done: Condvar,
     state_poisoned: AtomicBool,
+    /// Moves on whenever a thumbnail texture is stored or dropped or a
+    /// request fails, so a UI that keeps what it drew can tell when to ask
+    /// again; see [`ThumbnailShared::revision`].
+    revision: AtomicU64,
+}
+
+impl ThumbnailShared {
+    /// A counter that moves on whenever what a finished request draws can
+    /// change: a texture stored or dropped, a request failed, the cache
+    /// cleared. A request still loading changes without it.
+    pub(super) fn revision(&self) -> u64 {
+        self.revision.load(Ordering::Acquire)
+    }
+
+    fn bump_revision(&self) {
+        self.revision.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 #[derive(Default)]
@@ -70,6 +87,7 @@ impl ThumbnailService {
                 wake: Condvar::new(),
                 scene_job_done: Condvar::new(),
                 state_poisoned: AtomicBool::new(false),
+                revision: AtomicU64::new(0),
             }),
             worker: None,
         }
@@ -91,6 +109,7 @@ impl ThumbnailService {
         state.pipeline = ThumbnailPipeline::default();
         state.textures.clear();
         drop(state);
+        self.shared.bump_revision();
         self.shared.wake.notify_one();
     }
 
@@ -101,6 +120,7 @@ impl ThumbnailService {
         state.pipeline = ThumbnailPipeline::default();
         state.textures.clear();
         drop(state);
+        self.shared.bump_revision();
         self.shared.wake.notify_one();
     }
 
@@ -262,11 +282,16 @@ pub(super) fn request_thumbnail(
     state
         .pipeline
         .clear_asset_versions_except(request.asset_id, request.source_version);
+    let textures = state.textures.len();
     state.textures.retain(|key, _| {
         key.asset_id != request.asset_id || key.source_version == request.source_version
     });
+    let dropped = state.textures.len() != textures;
     let status = state.pipeline.request(request, priority);
     drop(state);
+    if dropped {
+        shared.bump_revision();
+    }
     shared.wake.notify_one();
     status
 }
@@ -397,6 +422,8 @@ pub(super) fn process_thumbnail_job(
         let status_updated = state.cache_epoch == cache_epoch && state.pipeline.complete(key);
         if status_updated {
             state.textures.insert(key, texture);
+            drop(state);
+            shared.bump_revision();
         }
         return;
     }
@@ -470,6 +497,8 @@ fn store_generated_thumbnail(
                     started_at.elapsed().as_millis()
                 );
                 state.textures.insert(key, texture);
+                drop(state);
+                shared.bump_revision();
             }
         }
         Err(message) => {
@@ -492,6 +521,9 @@ fn fail_thumbnail_job(
         return;
     }
     let status_updated = state.pipeline.fail(key, message.as_str());
+    if status_updated {
+        shared.bump_revision();
+    }
     let failure_count = state.pipeline.failure_count(key);
     if status_updated && failure_count <= THUMBNAIL_MAX_FAILURES {
         log::warn!(

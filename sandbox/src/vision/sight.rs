@@ -181,12 +181,7 @@ impl FogSight {
 /// Hands `sight` to every fog of war effect in `scene`.
 pub(crate) fn show_sight(scene: &mut Scene, sight: &FogOfWarSight) {
     let effects = scene
-        .objects()
-        .filter(|&object| {
-            scene
-                .read_component::<ComponentFogOfWar, _, _>(object, |_| ())
-                .is_some()
-        })
+        .objects_with::<ComponentFogOfWar>()
         .collect::<Vec<_>>();
     for object in effects {
         let _ = scene.write_component::<ComponentFogOfWar, _>(object, |fog| match &mut fog.sight {

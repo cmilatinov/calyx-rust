@@ -125,13 +125,20 @@ impl ProjectRuntimeSettings {
     /// Returns the configured startup scene as an absolute path, resolving a
     /// relative entry against the project root.
     pub fn startup_scene_path(&self) -> Option<PathBuf> {
-        self.startup_scene.as_ref().map(|scene| {
-            if scene.is_absolute() {
-                scene.clone()
-            } else {
-                self.root_directory.join(scene)
-            }
-        })
+        self.startup_scene
+            .as_ref()
+            .map(|scene| self.project_path(scene))
+    }
+
+    /// Returns `path` as an absolute path, resolving a relative one against
+    /// the project root.
+    pub fn project_path(&self, path: impl AsRef<Path>) -> PathBuf {
+        let path = path.as_ref();
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            self.root_directory.join(path)
+        }
     }
 
     pub fn runtime(&self) -> &RuntimeSettings {

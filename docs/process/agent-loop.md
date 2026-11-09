@@ -152,6 +152,40 @@ rebuilds everything). The standalone player profiles itself with the
 `CALYX_PROFILE` environment variable set, logging the same JSON every 600
 frames.
 
+### Measuring the standalone player
+
+The player has no remote control, so it is measured from its own profile
+log. Three environment variables set it up:
+
+- `CALYX_SCENE`: a scene to open in place of the project's `startup_scene`,
+  relative to the project directory (`assets/game/scenes/arena.cxscene`).
+- `CALYX_VSYNC=0`: present without waiting for vertical sync, so the frame
+  time is the player's own and not the display's refresh interval.
+- `CALYX_PROFILE=1`: log a `ProfileReport`, the JSON `profiler read` prints,
+  every 600 frames, to `logs/calyx_player_<timestamp>.log` under the working
+  directory.
+
+To measure the arena in a playing match, build the release player with
+`cargo build --release -p sandbox --bin game`, then from PowerShell:
+
+```
+$env:CALYX_SCENE = "assets/game/scenes/arena.cxscene"
+$env:CALYX_VSYNC = "0"
+$env:CALYX_PROFILE = "1"
+$p = Start-Process "$env:CARGO_TARGET_DIR\release\game.exe" -WorkingDirectory <out dir> -PassThru
+Start-Sleep 15                      # load the arena; it opens on its main menu
+$sh = New-Object -ComObject WScript.Shell
+foreach ($i in 1..2) { [void]$sh.AppActivate($p.Id); Start-Sleep -Milliseconds 500; $sh.SendKeys("{ENTER}"); Start-Sleep 2 }
+Start-Sleep 40                      # play; each 600 frames log a report
+Stop-Process -Id $p.Id
+```
+
+Enter picks the screen's main button, Play on the main menu and Ready in the
+lobby, so the second press starts the match. Use the reports logged once
+the match runs (the first one or two cover loading and the menus), and quote
+`frame`, `cpu` and `gpu`. The window opens at the project's `[window]` size.
+Keep the window in front and hands off the keyboard and mouse while it runs.
+
 ## Input injection
 
 Synthetic input is injected through eframe's `raw_input_hook`, so it flows
