@@ -23,8 +23,9 @@ struct FogOfWarUniform {
     view_to_world: mat4x4f,
     viewer_count: u32,
     blocker_count: u32,
-    _pad0: u32,
-    _pad1: u32,
+    // How many angular sectors each viewer's blockers are sorted into, as `SIGHT_SECTORS`.
+    sector_count: u32,
+    _pad: u32,
 };
 
 // One viewer, as `GpuViewer` in `crates/calyx_engine/src/render/postprocess/fog_of_war.rs`.
@@ -36,6 +37,9 @@ struct Viewer {
     fade_curve: f32,
     // How much of its sight the viewer lends, 0 to 1.
     weight: f32,
+    // The viewer's first entry in `sectors`.
+    first_sector: u32,
+    _pad: u32,
 };
 
 // One blocker, as `GpuBlocker` in `crates/calyx_engine/src/render/postprocess/fog_of_war.rs`.
@@ -65,6 +69,54 @@ var<storage, read> viewers: array<Viewer>;
 
 @group(0) @binding(4)
 var<storage, read> blockers: array<Blocker>;
+
+// Each viewer's `fog.sector_count` equal angular sectors around it, counted from +x towards +y, as
+// the first index into `sector_blockers` and how many follow: the blockers whose angular span seen
+// from the viewer overlaps the sector. A line of sight from a viewer meets only blockers of the
+// sector its direction lies in.
+@group(0) @binding(5)
+var<storage, read> sectors: array<vec2u>;
+
+@group(0) @binding(6)
+var<storage, read> sector_blockers: array<u32>;
+
+// How much a pixel's window of directions is widened, in radians, as `SECTOR_SLACK`.
+const SECTOR_SLACK: f32 = 1e-3;
+
+const HALF_TURN: f32 = 3.14159265;
+
+// The sectors a viewer's lines of sight to a pixel lie in: the viewer's first entry in `sectors`,
+// the first of the pixel's sectors around the viewer, and how many follow it, wrapping around.
+struct SectorWindow {
+    base: u32,
+    first: u32,
+    count: u32,
+};
+
+// The sectors of `viewer` holding every direction within `half_width` radians of `axis`, a unit
+// direction; half a turn or more holds them all.
+fn sector_window(viewer: Viewer, axis: vec2f, half_width: f32) -> SectorWindow {
+    var window: SectorWindow;
+    window.base = viewer.first_sector;
+    window.first = 0u;
+    window.count = fog.sector_count;
+    if half_width >= HALF_TURN {
+        return window;
+    }
+    let sector_angle = 2.0 * HALF_TURN / f32(fog.sector_count);
+    let angle = atan2(axis.y, axis.x);
+    let first = i32(floor((angle - half_width) / sector_angle));
+    let last = i32(floor((angle + half_width) / sector_angle));
+    let count = i32(fog.sector_count);
+    window.first = u32(((first % count) + count) % count);
+    window.count = u32(min(last - first + 1, count));
+    return window;
+}
+
+// The entry in `sectors` of the `index`th sector of `window`.
+fn window_sector(window: SectorWindow, index: u32) -> vec2u {
+    return sectors[window.base + (window.first + index) % fog.sector_count];
+}
 
 // How far apart two blockers along a line of sight may be and still count as touching, as
 // `FogOfWarSight::TOUCHING`.
@@ -152,11 +204,21 @@ fn near_line(blocker: Blocker, start: vec2f, direction: vec2f, reach: f32, margi
 
 // Whether the line from `start` along the unit `direction`, which leaves a blocker at `leaves_at`,
 // carries on into another blocker that overlaps or touches it there, within `limit` of `start`.
-fn carried_on(start: vec2f, direction: vec2f, limit: f32, leaves_at: f32) -> bool {
-    for (var index = 0u; index < fog.blocker_count; index++) {
-        let into = span(blockers[index], start, direction, limit);
-        if into.z != 0.0 && into.x <= leaves_at + TOUCHING && into.y > leaves_at {
-            return true;
+// `window` holds the sectors the line lies in.
+fn carried_on(
+    window: SectorWindow,
+    start: vec2f,
+    direction: vec2f,
+    limit: f32,
+    leaves_at: f32,
+) -> bool {
+    for (var k = 0u; k < window.count; k++) {
+        let sector = window_sector(window, k);
+        for (var index = sector.x; index < sector.x + sector.y; index++) {
+            let into = span(blockers[sector_blockers[index]], start, direction, limit);
+            if into.z != 0.0 && into.x <= leaves_at + TOUCHING && into.y > leaves_at {
+                return true;
+            }
         }
     }
     return false;
@@ -196,18 +258,20 @@ fn spans(blocker: Blocker, start: vec2f, dir_x: vec4f, dir_y: vec4f, limit: vec4
     return Spans(max(near, vec4f(0.0)), min(far, limit), hit);
 }
 
-// Which of the four sample points `(points_x, points_y)` sight reaches from `start`, 1 or 0 each:
+// Which of the four sample points `(points_x, points_y)` sight reaches from `viewer`, 1 or 0 each:
 // those whose line from `start` leaves no blocker before reaching them into open ground, as
 // `FogOfWarSight::clear_line`. The four lines are traced together, so each blocker is read once
 // for all of them, and one that comes nowhere near the line to the pixel's centre `center`,
-// widened by how far the samples lie from it, `spread`, is skipped for all of them.
+// widened by how far the samples lie from it, `spread`, is skipped for all of them. Only the
+// blockers of the viewer's sectors the four lines lie in are read.
 fn clear_lines(
-    start: vec2f,
+    viewer: Viewer,
     points_x: vec4f,
     points_y: vec4f,
     center: vec2f,
     spread: f32,
 ) -> vec4f {
+    let start = viewer.position;
     let offset_x = points_x - start.x;
     let offset_y = points_y - start.y;
     let distance = sqrt(offset_x * offset_x + offset_y * offset_y);
@@ -221,30 +285,44 @@ fn clear_lines(
     // Every sample's line lies within `margin` of the centre's, out to `along`.
     let along = reach + spread + TOUCHING;
     let margin = spread * along / max(reach - spread, 1e-4) + 1e-3;
+    // Every sample lies within `spread` of the centre, so its line turns from the centre's by
+    // less than asin(spread / reach); close to the viewer the lines can point anywhere.
+    var half_width = HALF_TURN;
+    if spread * 2.0 < reach {
+        half_width = asin(spread / reach) + SECTOR_SLACK;
+    }
+    let window = sector_window(viewer, axis, half_width);
     var open = !here;
     var blocked = vec4<bool>(false);
-    for (var index = 0u; index < fog.blocker_count; index++) {
-        let blocker = blockers[index];
-        if !near_line(blocker, start, axis, along, margin) {
-            continue;
-        }
-        let inside = spans(blocker, start, dir_x, dir_y, limit);
-        // Lines that leave this blocker before their sample: into open ground, unless another
-        // blocker carries them on.
-        let leaving = open & inside.hit & inside.far <= distance;
-        if !any(leaving) {
-            continue;
-        }
-        let carried = vec4<bool>(
-            leaving.x && carried_on(start, vec2f(dir_x.x, dir_y.x), limit.x, inside.far.x),
-            leaving.y && carried_on(start, vec2f(dir_x.y, dir_y.y), limit.y, inside.far.y),
-            leaving.z && carried_on(start, vec2f(dir_x.z, dir_y.z), limit.z, inside.far.z),
-            leaving.w && carried_on(start, vec2f(dir_x.w, dir_y.w), limit.w, inside.far.w),
-        );
-        blocked = blocked | (leaving & !carried);
-        open = open & !blocked;
-        if !any(open) {
-            break;
+    for (var k = 0u; k < window.count && any(open); k++) {
+        let sector = window_sector(window, k);
+        for (var entry = sector.x; entry < sector.x + sector.y; entry++) {
+            let blocker = blockers[sector_blockers[entry]];
+            if !near_line(blocker, start, axis, along, margin) {
+                continue;
+            }
+            let inside = spans(blocker, start, dir_x, dir_y, limit);
+            // Lines that leave this blocker before their sample: into open ground, unless another
+            // blocker carries them on.
+            let leaving = open & inside.hit & inside.far <= distance;
+            if !any(leaving) {
+                continue;
+            }
+            let carried = vec4<bool>(
+                leaving.x
+                    && carried_on(window, start, vec2f(dir_x.x, dir_y.x), limit.x, inside.far.x),
+                leaving.y
+                    && carried_on(window, start, vec2f(dir_x.y, dir_y.y), limit.y, inside.far.y),
+                leaving.z
+                    && carried_on(window, start, vec2f(dir_x.z, dir_y.z), limit.z, inside.far.z),
+                leaving.w
+                    && carried_on(window, start, vec2f(dir_x.w, dir_y.w), limit.w, inside.far.w),
+            );
+            blocked = blocked | (leaving & !carried);
+            open = open & !blocked;
+            if !any(open) {
+                break;
+            }
         }
     }
     return select(vec4f(1.0), vec4f(0.0), blocked);
@@ -267,7 +345,7 @@ fn pixel_visibility(center: vec2f, dx: vec2f, dy: vec2f) -> f32 {
         if all(sight <= seen) {
             continue;
         }
-        seen = max(seen, sight * clear_lines(viewer.position, points_x, points_y, center, spread));
+        seen = max(seen, sight * clear_lines(viewer, points_x, points_y, center, spread));
     }
     return (seen.x + seen.y + seen.z + seen.w) * 0.25;
 }

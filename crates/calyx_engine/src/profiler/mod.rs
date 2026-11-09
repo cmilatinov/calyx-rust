@@ -33,7 +33,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{LazyLock, Mutex};
 use std::time::Instant;
 
-pub use gpu::{time_ui_pass, GpuScope};
+pub use gpu::{time_ui_pass, GpuScope, PassScope};
 pub use puffin;
 pub use report::{
     aggregate, FrameSample, GpuTimingStatus, ProfileReport, ScopeSample, ScopeStats, ThreadSample,

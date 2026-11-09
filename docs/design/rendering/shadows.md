@@ -109,6 +109,13 @@ pass, on the same command encoder.
   scene skips, disabled or hidden, is never drawn into a shadow either. Batches
   split on `cast_shadows` as well as shader, material and mesh, and the pass
   skips the batches that do not cast.
+- Each cascade and spot tile skips the static batches whose world bounds lie
+  outside its view, by the view's four side planes only, as the camera
+  passes cull them by the camera's: a caster between the light and the near
+  plane still casts, flattened onto it. A static batch merges one chunk of
+  32 x 32 world units, so a cascade smaller than a chunk still draws every
+  batch its column touches; batches without bounds, such as moving meshes,
+  draw in every cascade.
 - A batch whose material is a PBR material with an `alpha_cutoff` above 0
   draws with `assets/shaders/mesh/shadow_masked.wgsl` instead. It binds the
   material's own bind group, built for group 3 of `pbr.wgsl`, as its group 2
