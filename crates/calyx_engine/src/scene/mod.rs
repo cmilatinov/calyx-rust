@@ -36,6 +36,7 @@ mod visual_bounds;
 // the engine crate (e.g. physics, networking) while remaining hidden
 // from external consumers. The public API is re-exported above.
 pub(crate) mod change_set;
+pub(crate) use self::change_set::ChangeJournal;
 pub(crate) mod game_object_store;
 pub(crate) mod network_index;
 pub(crate) mod scene;

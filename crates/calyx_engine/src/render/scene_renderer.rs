@@ -18,6 +18,7 @@ use crate::render::postprocess::{
     PostProcessSettings, SceneInput, SsaoInputs, SsaoPass, TonemapPass,
 };
 use crate::render::render_utils::RenderUtils;
+use crate::render::static_batch::outside_view;
 use crate::render::{
     Camera, DeferredLightingRenderer, DrawBatch, GBufferRenderer, GBufferTargets, GBufferView,
     GizmoRenderer, GridRenderer, LightManager, MeshRenderDefaults, MeshRenderTargets, MeshRenderer,
@@ -128,6 +129,10 @@ pub struct SceneRendererOptions {
     /// The name this view's CPU scopes and GPU passes go under in the
     /// profiler.
     pub profile_name: &'static str,
+    /// Whether the view draws the object id pass, which picking and the
+    /// selection outline read. A view nobody picks in, as the player's, turns
+    /// it off and saves the pass.
+    pub object_ids: bool,
 }
 
 /// Lighting a view supplies itself instead of taking it from the scene: an
@@ -156,6 +161,7 @@ impl Default for SceneRendererOptions {
             shadows: false,
             gbuffer_view: None,
             profile_name: "Scene renderer",
+            object_ids: true,
         }
     }
 }
@@ -615,6 +621,22 @@ impl SceneRenderer {
             crate::profile_scope!("Draw list");
             self.build_draw_list(&draws.draw_list)
         };
+        // The camera passes skip the static batches out of the view; the
+        // shadow maps, which see what the camera does not, draw them all.
+        let view_draw_list = {
+            crate::profile_scope!("Culling");
+            let clip_from_world = camera.projection * camera_transform.inverse_matrix();
+            draw_list
+                .iter()
+                .filter(|batch| {
+                    draws
+                        .batch_bounds
+                        .get(&batch.mesh_id)
+                        .is_none_or(|bounds| !outside_view(&clip_from_world, bounds))
+                })
+                .cloned()
+                .collect::<Vec<_>>()
+        };
         {
             crate::profile_scope!("Mesh data");
             self.build_mesh_data(&render_context);
@@ -706,7 +728,7 @@ impl SceneRenderer {
                 &mut encoder.scope("G-buffer"),
                 &assets,
                 &material_bind_groups,
-                &draw_list,
+                &view_draw_list,
                 &self.camera_uniform_buffer,
                 &self.scene_depth_texture,
                 self.options.mesh_cull_mode,
@@ -775,11 +797,11 @@ impl SceneRenderer {
                 &lighting,
                 mesh_targets,
                 &options,
-                &draw_list,
+                &view_draw_list,
                 &self.gbuffer_renderer.deferred_shaders(),
             );
         }
-        {
+        if self.options.object_ids {
             crate::profile_scope!("Object id pass");
             self.mesh_renderer.render_object_ids(
                 device,
@@ -790,7 +812,7 @@ impl SceneRenderer {
                     depth: &self.scene_object_id_depth_texture,
                 },
                 &self.camera_uniform_buffer,
-                &draw_list,
+                &view_draw_list,
                 self.options
                     .gizmos
                     .is_some()
@@ -1882,6 +1904,14 @@ mod tests {
         builder.scene().uuid(game_object)
     }
 
+    /// Gives the object `uuid` a dynamic rigid body, so it moves as far as
+    /// the draws know and draws as its own instance instead of merging into
+    /// a static batch.
+    fn keep_unbatched(builder: &mut SceneBuilder, uuid: Uuid) {
+        let game_object = builder.scene().find(uuid).expect("the object exists");
+        builder.add_component(game_object, crate::component::ComponentRigidBody::default());
+    }
+
     /// A camera on the negative z axis looking at the origin.
     fn front_camera(aspect: f32, distance: f32) -> (Camera, Transform) {
         let camera = Camera::new(aspect, 60f32.to_radians(), 0.1, 200.0);
@@ -2227,6 +2257,7 @@ mod tests {
         let second = pbr_material(&read_only_context, "test/batch_second");
 
         // Interleaved, so batching has to regroup what the scene holds apart.
+        // The objects move, so they draw as instances rather than merge.
         let mut builder = SceneBuilder::new(read_only_context.registries.clone());
         let layout = [
             (&cube, &first),
@@ -2238,13 +2269,14 @@ mod tests {
             (&cube, &first),
         ];
         for (index, (mesh, material)) in layout.iter().enumerate() {
-            spawn_mesh(
+            let uuid = spawn_mesh(
                 &mut builder,
                 &format!("object_{index}"),
                 mesh,
                 material,
                 vec3(index as f32, 0.0, 0.0),
             );
+            keep_unbatched(&mut builder, uuid);
         }
         let hidden = builder.scene_mut().create(
             Some(ComponentID {
@@ -2408,6 +2440,47 @@ mod tests {
             let _ = device.poll(wgpu::Maintain::Wait);
         }
         assert_eq!(picked, Some(left_uuid));
+    }
+
+    #[test]
+    fn picks_and_outlines_each_object_merged_into_one_static_batch() {
+        const SIZE: (u32, u32) = (128, 64);
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let read_only_context = context.lock_read();
+        let cube = read_only_context
+            .registries
+            .assets
+            .read()
+            .cube()
+            .expect("missing cube mesh");
+        let material = pbr_material(&read_only_context, "test/pick_batched");
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let left = vec3(-3.0, 0.0, 0.0);
+        let right = vec3(3.0, 0.0, 0.0);
+        let left_uuid = spawn_mesh(&mut builder, "left", &cube, &material, left);
+        let right_uuid = spawn_mesh(&mut builder, "right", &cube, &material, right);
+        let scene = builder.finish();
+        let (camera, transform) = front_camera(2.0, 10.0);
+
+        let mut renderer = renderer(&read_only_context, 1, SIZE);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        let draws = renderer.draws();
+        assert_eq!(draws.static_batches.batches().count(), 1);
+        assert_eq!(draws.draw_list.len(), 1, "both cubes draw as one batch");
+        let right_id = draws.object_id_lookup[&right_uuid];
+
+        let (x, y) = project(&camera, &transform, left, SIZE);
+        assert_eq!(renderer.pick_game_object(x, y), Some(left_uuid));
+        let (x, y) = project(&camera, &transform, right, SIZE);
+        assert_eq!(renderer.pick_game_object(x, y), Some(right_uuid));
+        assert_eq!(renderer.pick_game_object(0, 0), None, "background");
+        assert_eq!(
+            renderer.object_id_for_game_object(Some(right_uuid)),
+            right_id,
+            "the outline finds the batched object by its own id"
+        );
     }
 
     /// Registers a copy of the cube mesh skinned entirely to one bone, `bone`, whose bind pose is
@@ -2895,10 +2968,12 @@ mod tests {
         let first = pbr_material(&read_only_context, "test/drop_first");
         let second = pbr_material(&read_only_context, "test/drop_second");
         let mut builder = SceneBuilder::new(read_only_context.registries.clone());
-        spawn_mesh(&mut builder, "sphere", &sphere, &first, Vec3::zeros());
+        let uuid = spawn_mesh(&mut builder, "sphere", &sphere, &first, Vec3::zeros());
+        keep_unbatched(&mut builder, uuid);
         let sphere_scene = builder.finish();
         let mut builder = SceneBuilder::new(read_only_context.registries.clone());
-        spawn_mesh(&mut builder, "cube", &cube, &second, Vec3::zeros());
+        let uuid = spawn_mesh(&mut builder, "cube", &cube, &second, Vec3::zeros());
+        keep_unbatched(&mut builder, uuid);
         let cube_scene = builder.finish();
         let (camera, transform) = front_camera(1.0, 5.0);
 
@@ -3525,7 +3600,14 @@ mod tests {
         renderer.render_scene_base(&camera, &transform, &scene, None, None);
         renderer.finalize_scene();
         assert_eq!(renderer.pick_game_object(16, 16), Some(uuid));
-        assert!(renderer.assets.contains(sphere_id));
+        let sphere_object = scene.find(uuid).expect("the sphere exists");
+        assert!(
+            renderer
+                .draws()
+                .static_batches
+                .is_batched(sphere_object.entity),
+            "the sphere draws merged into a static batch"
+        );
         let sphere_weak = sphere.downgrade();
         drop(sphere);
 
@@ -3990,6 +4072,7 @@ mod tests {
                     &material,
                     position,
                 );
+                keep_unbatched(&mut builder, uuid);
                 expected.push((position, uuid));
             }
         }
@@ -4591,11 +4674,13 @@ mod tests {
             ],
         );
         let shadowed = |frame: &ShadowFrame<1>| frame.pixels[0] <= 2;
-        // The ground and the box, in each cascade.
+        // At first the ground and the box merge into one static batch; once
+        // edited, the box draws as its own instance, in each cascade.
+        let merged = SHADOW_CASCADE_COUNT as u32;
         let both = 2 * SHADOW_CASCADE_COUNT as u32;
         let ground_only = SHADOW_CASCADE_COUNT as u32;
         assert!(shadowed(&frames[0]));
-        assert_eq!(frames[0].stats.caster_instances, both);
+        assert_eq!(frames[0].stats.caster_instances, merged);
         assert!(
             !shadowed(&frames[1]),
             "a box that casts no shadow leaves the plane lit"

@@ -30,6 +30,7 @@ use crate::scene::hook_targets::HookTargets;
 use crate::scene::network_index::NetworkObjectIndex;
 use crate::scene::scene_graph::SceneGraph;
 use crate::scene::transform_cache::TransformCache;
+use crate::scene::ChangeJournal;
 use crate::scene::{DropReason, DroppedComponent, Prefab, PrefabLink, SceneError, SceneView};
 use crate::utils::{ContextSeed, TypeUuid};
 
@@ -872,6 +873,12 @@ impl Scene {
         let parent = parent.unwrap_or(self.root);
         self.graph.set_parent(game_object, parent, sibling)?;
         self.transforms.mark_dirty_subtree(game_object, &self.graph);
+        // A new parent moves the object's world transform, and can change
+        // its visibility, without a write to its own transform.
+        self.changes.note(
+            game_object.entity,
+            ComponentTypeId::of::<ComponentTransform>(),
+        );
         Ok(())
     }
 
@@ -1099,6 +1106,14 @@ impl Scene {
     /// changes.
     pub(crate) fn layout_changes(&self) -> u64 {
         self.layout_changes
+    }
+
+    /// The scene's changes in order, each an entity and the component type
+    /// written; a move to another parent counts as a write of the moved
+    /// object's transform, and an object that left the scene ends with its
+    /// [`ComponentID`]. See [`ChangeJournal`].
+    pub(crate) fn change_journal(&self) -> &ChangeJournal {
+        self.changes.journal()
     }
 
     /// Reads component `T` from `game_object` and maps it through `reader`.
