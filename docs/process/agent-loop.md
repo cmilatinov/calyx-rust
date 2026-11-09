@@ -149,42 +149,55 @@ copy of the profiler, whose capture stays off. The engine's `Update hook` and
 one atomic load per scope; to measure without any scopes, build with
 `RUSTFLAGS="--cfg calyx_no_profiling"` (in its own `CARGO_TARGET_DIR`, as it
 rebuilds everything). The standalone player profiles itself with the
-`CALYX_PROFILE` environment variable set, logging the same JSON every 600
-frames.
+`CALYX_PROFILE` environment variable set, writing the same JSON every 600
+frames; see below.
 
 ### Measuring the standalone player
 
-The player has no remote control, so it is measured from its own profile
-log. Three environment variables set it up:
+The player has no remote control, so it is measured from the profiles it
+writes. Three environment variables set it up:
 
 - `CALYX_SCENE`: a scene to open in place of the project's `startup_scene`,
   relative to the project directory (`assets/game/scenes/arena.cxscene`).
 - `CALYX_VSYNC=0`: present without waiting for vertical sync, so the frame
   time is the player's own and not the display's refresh interval.
-- `CALYX_PROFILE=1`: log a `ProfileReport`, the JSON `profiler read` prints,
-  every 600 frames, to `logs/calyx_player_<timestamp>.log` under the working
-  directory.
+- `CALYX_PROFILE=<file>`: profile every frame and append a `ProfileReport`,
+  the JSON `profiler read` prints, to `<file>` every 600 frames, one per
+  line. `CALYX_PROFILE=1` only logs the reports, and the player's log does
+  not receive them today, so give a file.
 
 To measure the arena in a playing match, build the release player with
-`cargo build --release -p sandbox --bin game`, then from PowerShell:
+`cargo build --release -p sandbox --bin game`, then run this from
+PowerShell. The player runs from the repository root, where it finds the
+engine's assets, and needs the toolchain's `std` DLL on `PATH`, since the
+workspace links it dynamically:
 
 ```
+$env:PATH = "$(rustc --print target-libdir);$env:PATH"
 $env:CALYX_SCENE = "assets/game/scenes/arena.cxscene"
 $env:CALYX_VSYNC = "0"
-$env:CALYX_PROFILE = "1"
-$p = Start-Process "$env:CARGO_TARGET_DIR\release\game.exe" -WorkingDirectory <out dir> -PassThru
-Start-Sleep 15                      # load the arena; it opens on its main menu
-$sh = New-Object -ComObject WScript.Shell
-foreach ($i in 1..2) { [void]$sh.AppActivate($p.Id); Start-Sleep -Milliseconds 500; $sh.SendKeys("{ENTER}"); Start-Sleep 2 }
-Start-Sleep 40                      # play; each 600 frames log a report
-Stop-Process -Id $p.Id
+$env:CALYX_PROFILE = "$PWD\logs\player-profile.jsonl"
+$p = Start-Process "$env:CARGO_TARGET_DIR
+elease\game.exe" -WorkingDirectory $PWD -PassThru
+Start-Sleep 20                      # load the arena; it opens on its main menu
+Add-Type 'using System; using System.Runtime.InteropServices; public class PW { [DllImport("user32.dll")] public static extern bool PostMessage(IntPtr h, uint m, IntPtr w, IntPtr l); }'
+$p.Refresh(); $h = $p.MainWindowHandle
+foreach ($i in 1..2) {              # Enter: Play on the main menu, then Ready in the lobby
+    [void][PW]::PostMessage($h, 0x100, [IntPtr]0x0D, [IntPtr]0x1C0001)
+    Start-Sleep -Milliseconds 200
+    [void][PW]::PostMessage($h, 0x101, [IntPtr]0x0D, [IntPtr]([int64]0xC01C0001))
+    Start-Sleep 2
+}
+Start-Sleep 40                      # play; every 600 frames append a report
+[void]$p.CloseMainWindow()
 ```
 
-Enter picks the screen's main button, Play on the main menu and Ready in the
-lobby, so the second press starts the match. Use the reports logged once
-the match runs (the first one or two cover loading and the menus), and quote
-`frame`, `cpu` and `gpu`. The window opens at the project's `[window]` size.
-Keep the window in front and hands off the keyboard and mouse while it runs.
+Posting the key to the player's window starts the match without moving
+focus, so no keystroke reaches another window. Use the reports written once
+the match runs: the first ones cover loading and the menus, whose blurred
+backdrop costs the GPU more. Quote `frame`, `cpu` and `gpu`, and the scopes
+under `Player update`. The window opens at the project's `[window]` size and
+must stay unminimized.
 
 ## Input injection
 

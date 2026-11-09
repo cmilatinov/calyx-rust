@@ -385,20 +385,36 @@ impl TeamVision {
 
     /// [`Self::visible`] for many points, with the cover read once rather
     /// than for every point.
-    pub fn points(&self) -> VisiblePoints<'_> {
+    pub fn points(&self) -> VisiblePoints {
         VisiblePoints {
-            viewers: &self.viewers,
-            blockers: FogOfWarSight {
-                viewers: Vec::new(),
-                blockers: self
-                    .cover
-                    .iter()
-                    .map(|cover| FogOfWarBlocker {
-                        center: cover.center,
-                        half_axes: cover.half_axes,
-                    })
-                    .collect(),
-            },
+            viewers: self
+                .viewers
+                .iter()
+                .map(|&viewer| {
+                    // A line of sight is at most the viewer's range long, so
+                    // cover beyond that, and the touching margin, from the
+                    // viewer never meets one.
+                    let blockers = self
+                        .cover
+                        .iter()
+                        .filter(|cover| {
+                            (cover.center - viewer.position).norm()
+                                <= viewer.range + cover.reach() + FogOfWarSight::TOUCHING + 1.0
+                        })
+                        .map(|cover| FogOfWarBlocker {
+                            center: cover.center,
+                            half_axes: cover.half_axes,
+                        })
+                        .collect();
+                    (
+                        viewer,
+                        FogOfWarSight {
+                            viewers: Vec::new(),
+                            blockers,
+                        },
+                    )
+                })
+                .collect(),
         }
     }
 
@@ -466,18 +482,18 @@ fn ray_through_cover(viewer: Viewer, direction: Vec2, cover: &[GroundRect]) -> f
 /// Whether `object` is a tank that is alive and in play.
 /// What a side sees, ready to ask about many points; see
 /// [`TeamVision::points`].
-pub(crate) struct VisiblePoints<'a> {
-    viewers: &'a [Viewer],
-    blockers: FogOfWarSight,
+pub(crate) struct VisiblePoints {
+    /// Each viewer, with the cover near enough to block its sight.
+    viewers: Vec<(Viewer, FogOfWarSight)>,
 }
 
-impl VisiblePoints<'_> {
+impl VisiblePoints {
     /// Whether the side sees the ground point `point`, as
     /// [`TeamVision::visible`] says.
     pub fn visible(&self, point: Vec2) -> bool {
-        self.viewers.iter().any(|viewer| {
+        self.viewers.iter().any(|(viewer, near)| {
             (point - viewer.position).norm() <= viewer.range
-                && self.blockers.clear_line(viewer.position, point)
+                && near.clear_line(viewer.position, point)
         })
     }
 }

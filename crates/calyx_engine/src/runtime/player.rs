@@ -191,7 +191,8 @@ impl eframe::App for GameApp {
 
 /// Environment variable that turns profiling on in the player, which then
 /// logs a profile of the last [`PROFILE_LOG_FRAMES`] frames every as many
-/// frames.
+/// frames. A value other than `1` names a file each profile is also
+/// appended to, one JSON report per line.
 const PROFILE_ENV: &str = "CALYX_PROFILE";
 const PROFILE_LOG_FRAMES: u64 = 600;
 
@@ -201,10 +202,33 @@ fn log_profile() {
         return;
     }
     let report = profiler::report(PROFILE_LOG_FRAMES as usize);
-    match serde_json::to_string(&report) {
-        Ok(json) => log::info!("Profile of the last {} frames: {json}", report.frames),
-        Err(error) => log::warn!("Failed to serialize the profile: {error}"),
+    let json = match serde_json::to_string(&report) {
+        Ok(json) => json,
+        Err(error) => {
+            log::warn!("Failed to serialize the profile: {error}");
+            return;
+        }
+    };
+    log::info!("Profile of the last {} frames: {json}", report.frames);
+    if let Some(path) = profile_file(std::env::var_os(PROFILE_ENV).as_deref()) {
+        use std::io::Write;
+        let written = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+            .and_then(|mut file| writeln!(file, "{json}"));
+        if let Err(error) = written {
+            log::warn!("Failed to write the profile to {}: {error}", path.display());
+        }
     }
+}
+
+/// The file profiles are appended to: the value of [`PROFILE_ENV`], unless
+/// it is `1` or empty, which only turn profiling on.
+fn profile_file(value: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+    value
+        .filter(|value| !value.is_empty() && *value != "1")
+        .map(PathBuf::from)
 }
 
 /// Environment variable naming a scene the player opens in place of the
@@ -302,7 +326,8 @@ pub fn run_player(
 #[cfg(test)]
 mod tests {
     use super::{
-        native_options, player_scene, present_mode, renderer_options, ProjectRuntimeSettings,
+        native_options, player_scene, present_mode, profile_file, renderer_options,
+        ProjectRuntimeSettings,
     };
     use egui_wgpu::wgpu;
     use std::ffi::OsStr;
@@ -330,6 +355,17 @@ mod tests {
                 Some(OsStr::new("assets/game/scenes/arena.cxscene"))
             ),
             Some(project_directory().join("assets/game/scenes/arena.cxscene"))
+        );
+    }
+
+    #[test]
+    fn player_appends_profiles_to_the_file_the_environment_names() {
+        assert_eq!(profile_file(None), None);
+        assert_eq!(profile_file(Some(OsStr::new("1"))), None);
+        assert_eq!(profile_file(Some(OsStr::new(""))), None);
+        assert_eq!(
+            profile_file(Some(OsStr::new("logs/profile.jsonl"))),
+            Some(PathBuf::from("logs/profile.jsonl"))
         );
     }
 

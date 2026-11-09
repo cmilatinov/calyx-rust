@@ -269,9 +269,30 @@ pub(super) struct BoundaryCache {
     rays: Option<(FogOfWarSight, Vec<SightRays>)>,
 }
 
+/// How far, in metres, the floor or a block of cover moves before the map's
+/// outline is traced again. Cover that creeps by a fraction of a millimetre
+/// every frame, as a slowly scaled prop does, would otherwise retrace the
+/// whole outline every frame for a change no map pixel shows.
+const OUTLINE_TOLERANCE: f32 = 1e-3;
+
+/// Whether `a` and `b` lie within [`OUTLINE_TOLERANCE`] of each other.
+fn nearly_same(a: &GroundRect, b: &GroundRect) -> bool {
+    let near = |a: Vec2, b: Vec2| (a - b).abs().max() <= OUTLINE_TOLERANCE;
+    near(a.center, b.center)
+        && near(a.half_axes[0], b.half_axes[0])
+        && near(a.half_axes[1], b.half_axes[1])
+}
+
 impl BoundaryCache {
     fn edges(&mut self, floor: Option<GroundRect>, cover: &[GroundRect]) -> &[(Vec2, Vec2)] {
-        if self.floor != floor || self.cover != cover {
+        let same_floor = match (&self.floor, &floor) {
+            (Some(a), Some(b)) => nearly_same(a, b),
+            (None, None) => true,
+            _ => false,
+        };
+        let same_cover = self.cover.len() == cover.len()
+            && self.cover.iter().zip(cover).all(|(a, b)| nearly_same(a, b));
+        if !same_floor || !same_cover {
             self.edges = playable_boundary(floor, cover);
             self.floor = floor;
             self.cover.clear();
@@ -737,6 +758,25 @@ mod tests {
         cover[0].center.x = 4.0;
         assert_ne!(cache.edges(floor, &cover), original);
         assert_eq!(cache.edges(None, &[]).len(), 0);
+    }
+
+    #[test]
+    fn contour_cache_keeps_the_outline_while_cover_creeps_within_the_tolerance() {
+        let floor = Some(GroundRect::axis_aligned(vec2(0.0, 0.0), vec2(20.0, 20.0)));
+        let mut cover = [GroundRect::axis_aligned(vec2(2.0, 0.0), vec2(2.0, 2.0))];
+        let mut cache = BoundaryCache::default();
+        let original = cache.edges(floor, &cover).to_vec();
+        let allocation = cache.edges.as_ptr();
+        // A prop scaled a hair every frame keeps the traced outline...
+        for _ in 0..10 {
+            cover[0].half_axes[0].x -= OUTLINE_TOLERANCE / 20.0;
+            assert_eq!(cache.edges(floor, &cover), original);
+            assert_eq!(cache.edges.as_ptr(), allocation);
+        }
+        // ...until it has moved past the tolerance since it was traced.
+        cover[0].half_axes[0].x -= OUTLINE_TOLERANCE;
+        assert_eq!(cache.edges(floor, &cover), playable_boundary(floor, &cover));
+        assert_ne!(cache.edges(floor, &cover), original);
     }
 
     #[test]
