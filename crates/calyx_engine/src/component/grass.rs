@@ -54,8 +54,8 @@ impl Default for ComponentGrassField {
         Self {
             sway: 0.06,
             sway_speed: 1.7,
-            bend: 0.4,
-            height: 2.0,
+            bend: 0.18,
+            height: 3.4,
             benders: Vec::new(),
         }
     }

@@ -69,7 +69,7 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `lamp` | Post and framed warm lantern with pyramidal cap | Box around pole/base |
 | `berry_bush` | Low fused leaf clusters with visible red berries | Convex bush body |
 | `grass_tuft` | Five tapered leaves in a fan | Normally non-blocking; a bounds box is available if an interaction needs one |
-| `tall_grass` | Brush clump: six crossed, almost upright fan cards of five tapered blades, about 2.2 m tall, in the `tall_grass` and `tall_grass_light` roles, drawn with the grass shader | Non-blocking: the patch, not the clump, has volumes, `BRUSH`-group boxes that stop nothing (see Brush patches) |
+| `tall_grass` | Brush clump: five big plain blades, tapered straps 0.6 to 0.75 m wide and 3.4 to 3.9 m long leaning out 18 to 42 degrees, dark or mid bodies with light tips (`tall_grass`, `tall_grass_light`, `tall_grass_tip`), drawn with the grass shader | Non-blocking: the patch, not the clump, has volumes, `BRUSH`-group boxes that stop nothing (see Brush patches) |
 | `sandbag_stack` | Three staggered rows of soft bags, 1.27 m total height, with restrained seam bands | Box around the stack |
 | `pickup_yellow`, `pickup_blue` | Green and blue glowing orbs over octagonal pads; legacy yellow name retains stable IDs | Box around pad; collection trigger belongs to gameplay |
 | `sentry` | Anchored circular base with broad mounting pads and exposed yaw bearing; red player-2 head with clipped armor cheeks, pitch hubs, recoil sleeve, open muzzle, roof cooling banks and shaded optic | Cylinder around base, radius 0.57 m and height 0.15 m, plus a box around the solid head if cover collision is desired; visual integration preserves existing gameplay |
@@ -249,14 +249,17 @@ used.
 ## Brush patches
 
 Tall-grass brush (`sandbox/src/brush.rs`) is placed as patches: an object with
-the **Brush** component, a child box volume in the `BRUSH` collision groups
-(memberships 8, filter 0) that stops no tank, round or sight, 2 m high on the
-ground, and a **Foliage** component scattering `tall_grass` clumps over it at
-about 2.2 per square metre, 0.3 m inside the volume's edge, casting no shadow (the
-dense grass would shade mostly itself, at the cost of every blade in each
-shadow cascade), with random yaw
-and 0.85 to 1.15 scale. The clumps are instances, not game objects, so the
-patch's grass is a few instanced draws however dense it is. Any of the
+the **Brush** component and a child box volume in the `BRUSH` collision
+groups (memberships 8, filter 0) that stops no tank, round or sight, 2 m high
+on the ground. Its grass stands one `tall_grass` clump to each cell of an
+even grid of about 1.6 m over the volume, each cell a child with a
+**Foliage** of exactly one clump placed at random within the middle of the
+cell, with random yaw and 0.9 to 1.1 scale, casting no shadow (the grass
+would shade mostly itself, at the cost of every blade in each shadow
+cascade). The grid keeps the patch full to its edges without bunching, and
+the clumps are instances, not game objects, so a patch draws in a few
+instanced draws. Under the grass a `ground_grass_dark` tile, 1 m inside the
+volume's edge, darkens the ground the blades lean out over. Any of the
 primitive collider shapes works as a volume, and a patch may hold several.
 Brush stands on the open floor, clear of cover, so a tank can drive into it
 from any side.
@@ -266,7 +269,7 @@ shader reads; the brush hands it the tanks moving through the grass every
 frame.
 
 `remake_arena` places three test patches until the layout work places brush
-along the creek and the landmarks: `Arena Brush Centre` (6 x 4 m at local
-`(4, -11)`, ahead of the spawn), `Arena Brush East` (4 x 6 m at `(16, 4)`) and
-`Arena Brush North` (4 x 4 m at `(-4, 6)`), each clear of cover and of the
+along the creek and the landmarks: `Arena Brush Centre` (7 x 5 m at local
+`(3, -10)`, ahead of the spawn), `Arena Brush East` (5 x 6 m at `(13.5, 4)`) and
+`Arena Brush North` (5 x 5 m at `(-4, 6)`), each clear of cover and of the
 sentry's firing lane.

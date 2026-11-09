@@ -50,21 +50,26 @@ fn grass_displacement(field: GrassField, root: vec3f, world: vec3f) -> vec3f {
 }
 
 // How much the grass at `world` thins out around the benders that reveal: 0 outside their reveal
-// radius, rising over its outer half to the most it thins.
+// radius, easing up over its outer two thirds to the most it thins.
 fn grass_reveal(field: GrassField, world: vec3f) -> f32 {
     var reveal = 0.0;
     for (var i = 0u; i < min(field.bender_count, MAX_GRASS_BENDERS); i++) {
         let bender = field.benders[i];
         if bender.w > 0.0 {
             let distance = length(world.xz - bender.xy);
-            reveal = max(reveal, 1.0 - smoothstep(bender.w * 0.5, bender.w, distance));
+            reveal = max(reveal, 1.0 - smoothstep(bender.w * 0.35, bender.w, distance));
         }
     }
-    return reveal * 0.75;
+    return reveal * 0.8;
 }
 
-// Whether grass thinned by `reveal` leaves out the pixel at `pixel`, by the material's
-// screen-door pattern.
+// Whether grass thinned by `reveal` leaves out the pixel at `pixel`. Interleaved gradient noise
+// spreads the pixels left out finely and without the grid a small ordered pattern shows, so the
+// thinning reads as a soft fade once anti-aliased.
 fn grass_reveals(reveal: f32, pixel: vec2f) -> bool {
-    return screen_door_hides(reveal, pixel);
+    if reveal <= 0.0 {
+        return false;
+    }
+    let noise = fract(52.9829189 * fract(dot(floor(pixel), vec2f(0.06711056, 0.00583715))));
+    return noise < reveal;
 }

@@ -134,13 +134,15 @@ impl Author {
     /// grass a Foliage of the kit's `tall_grass` clumps packed over it. The
     /// Arena's Grass Field sways all of them and bends them around tanks.
     fn brush(&mut self) {
+        /// The side of the grid cells a patch's clumps stand in, in metres.
+        const GRASS_CELL: f32 = 1.6;
         let prefab = asset_id(&self.assets.join(format!(
             "generated/prefabs/{}/tall_grass.cxprefab",
             self.palette.folder()
         )));
         for (i, (name, x, z, width, depth)) in [
             ("Centre", 3.0, -10.0, 7.0, 5.0),
-            ("East", 16.0, 4.0, 5.0, 6.0),
+            ("East", 13.5, 4.0, 5.0, 6.0),
             ("North", -4.0, 6.0, 5.0, 5.0),
         ]
         .into_iter()
@@ -150,22 +152,59 @@ impl Author {
             let patch = self.object(&name, self.arena, vec3(x, 0.0, z));
             self.scene
                 .add_component(patch, sandbox::brush::ComponentBrush::default());
-            // The grass spills a little past the volume's edge, so a tank at
-            // the edge of the grass is already inside it.
-            self.scene.add_component(
+            // One clump to each cell of an even grid over the volume, placed
+            // at random within the middle of its cell, so the blades fill
+            // the patch to its edges without bunching or leaving holes.
+            let columns = (width / GRASS_CELL).round().max(1.0) as i32;
+            let rows = (depth / GRASS_CELL).round().max(1.0) as i32;
+            let (cell_width, cell_depth) = (width / columns as f32, depth / rows as f32);
+            for column in 0..columns {
+                for row in 0..rows {
+                    let cell = self.object(
+                        &format!("{name} Grass {column} {row}"),
+                        patch,
+                        vec3(
+                            (column as f32 + 0.5) * cell_width - width * 0.5,
+                            0.0,
+                            (row as f32 + 0.5) * cell_depth - depth * 0.5,
+                        ),
+                    );
+                    let area = vec2(cell_width * 0.7, cell_depth * 0.7);
+                    self.scene.add_component(
+                        cell,
+                        ComponentFoliage {
+                            prefabs: vec![AssetRef::from_id(prefab)],
+                            area,
+                            // Exactly one clump in the cell.
+                            density: 1.05 / (area.x * area.y),
+                            seed: 575 + (i as u32) * 97 + (column * rows + row) as u32,
+                            scale_range: vec2(0.9, 1.1),
+                            rotation_range: vec2(0.0, 360.0),
+                            // Shadow maps would draw every blade again in
+                            // each cascade, for shadows the grass mostly
+                            // falls on itself; SSAO still grounds it.
+                            cast_shadows: false,
+                        },
+                    );
+                }
+            }
+            // A darker ground under the patch, inside its edge, where the
+            // blades lean out over it, so no light ground shows between them.
+            let ground = self.kit_under(
                 patch,
-                ComponentFoliage {
-                    prefabs: vec![AssetRef::from_id(prefab)],
-                    area: vec2(width - 0.6, depth - 0.6),
-                    density: 2.2,
-                    seed: 575 + i as u32,
-                    scale_range: vec2(0.85, 1.15),
-                    rotation_range: vec2(0.0, 360.0),
-                    // Shadow maps would draw every blade again in each
-                    // cascade, for shadows the dense grass mostly falls on
-                    // itself; SSAO still grounds it.
-                    cast_shadows: false,
-                },
+                "ground_grass_dark",
+                &format!("{name} Ground"),
+                vec3(0.0, -0.085, 0.0),
+                0.0,
+            );
+            self.scene.set_transform(
+                ground,
+                &Transform::from_components(
+                    vec3(0.0, -0.085, 0.0),
+                    Default::default(),
+                    vec3(width - 2.0, 1.0, depth - 2.0),
+                )
+                .matrix(),
             );
             let volume = self.collider(
                 patch,

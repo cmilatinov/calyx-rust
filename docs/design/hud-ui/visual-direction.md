@@ -117,7 +117,7 @@ does. Firing from a patch reveals the shooter to everyone for the patch's
 reveal time (1.5 s by default), and sentries obey the same rule. Brush is
 not cover: it blocks no sight, shot or tank. The player's own tank shows
 translucent in brush, a half screen-door pattern without ink, and the grass
-thins in a soft circle around it, and around the tanks it sees in the same
+fades out in a soft circle, a fine noise dither, around it, and around the tanks it sees in the same
 patch, so they show through; the grass sways and bends away from the tanks
 the player sees, never from one fog hides. Fog is current vision only and changes
 nothing but what is drawn: hidden enemies still collide, shoot and take
