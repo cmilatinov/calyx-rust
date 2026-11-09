@@ -1,5 +1,6 @@
 # A dashed centre-line tile; use plain road tiles on both sides.
 [[parts]]
+cast_shadows = false
 name = "surface"
 kind = "box"
 role = "ground_asphalt"
@@ -8,6 +9,7 @@ bevel = 0.0
 segments = 1
 
 [[parts]]
+cast_shadows = false
 name = "marking"
 kind = "box"
 role = "ground_marking"
