@@ -168,8 +168,8 @@ writes. Three environment variables set it up:
   time is the player's own and not the display's refresh interval.
 - `CALYX_PROFILE=<file>`: profile every frame and append a `ProfileReport`,
   the JSON `profiler read` prints, to `<file>` every 600 frames, one per
-  line. `CALYX_PROFILE=1` only logs the reports, and the player's log does
-  not receive them today, so give a file.
+  line. `CALYX_PROFILE=1` only logs the reports, as `calyx_engine::runtime::player`
+  `info` records in the player's log (`logs/calyx_player_<timestamp>.log`).
 - `CALYX_WINDOW=<width>x<height>`: the window's inner size in physical
   pixels, in place of the project's window size in points, so the player
   renders `1920x1080` whatever the display's scale. Check it from another
@@ -287,10 +287,22 @@ has been delivered.
   project components; loading earlier silently drops those components.
 - **Scene paths**: `scene load` canonicalizes, but prefer paths relative to
   the repo root (the editor's working directory under `launch`).
-- **Logs**: the editor writes `logs/calyx_editor_<timestamp>.log` in its
-  working directory. `CALYX_LOG` (fallback `RUST_LOG`) filters, default
-  `calyx_engine=info,calyx_editor=info,sandbox=info`. Remote commands are logged
-  at debug level (`CALYX_LOG=calyx_editor=debug`).
+- **Logs**: the editor writes `logs/calyx_editor_<timestamp>.log` and the
+  player `logs/calyx_player_<timestamp>.log` in its working directory. Remote
+  commands are logged at debug level (`CALYX_LOG=calyx_editor=debug`). The
+  filter is built in layers, each taking precedence over the one before:
+  1. the defaults, `calyx_engine=info,calyx_editor=info,sandbox=info`;
+  2. `RUST_LOG`;
+  3. `CALYX_LOG`.
+
+  A directive naming a target (`calyx_engine=debug`) replaces the earlier
+  layers' directive for that target and leaves the other targets alone. A
+  bare level (`off`, `warn`) only sets the level of targets no directive
+  names, such as `wgpu_core`, so a machine-wide `RUST_LOG=off,...` set for
+  other tools does not hide engine records. To silence or quieten a Calyx
+  target, name it: `CALYX_LOG=calyx_engine=warn`. An empty variable adds
+  nothing; one that does not parse is ignored and logged as a warning. The
+  log's first lines name the variables applied.
 - **Worktrees on Windows**: building in a git worktree under
   `.claude/worktrees/` can push native build scratch paths past the Windows
   path limit. Set `CARGO_TARGET_DIR` to a short path whose last component is `target`
