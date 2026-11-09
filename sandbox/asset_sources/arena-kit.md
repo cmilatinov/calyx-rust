@@ -130,16 +130,20 @@ minimap bounds. Its `generate_on_start` is off: saved kit children and their
 colliders are the layout. Empty test arenas keep the simple grid generator by
 default; adding a decorative child does not disable it.
 
-One-metre grass, sand, dirt, paving and road tiles use flat clay materials
-without ink. Uniform surfaces share scaled tile instances on whole-metre
-rectangles; paving joints and marked road dashes stay on individual tiles.
-The tiles share one uninterrupted collision floor at y = 0, so seams and
-paving joints do not catch tank tracks. Ground tiles also cover a 200 by
+The ground is one surface, `Arena Ground`: a flat Terrain over a 200 by
 200 m apron around the pen, to fill the camera view at the walls even with
-maximum zoom-out and aim lead; the foundation, a backstop the camera never
-sees, lies 1.3 m under them so it clears the creek's water. Neither adds
-collision outside the closed playable pen. The ground materials and meshes are
-generated for all three palettes alongside the prop kit.
+maximum zoom-out and aim lead, dropped 1.3 m only under the creek. Its
+material blends grass, its darker and lighter patches, dirt, the sand lanes,
+gravel, fields and mud from two masks `remake_arena` paints, with ink detail
+textures (see Ground in `docs/design/art/tank-game-direction.md`). Only the
+spawn's paving and the road keep one-metre kit tiles, raised 3 cm off the
+ground; a plain road shares scaled instances on whole-metre rectangles, and
+paving joints and road dashes stay on individual tiles. Tanks drive on one
+uninterrupted collision floor at y = 0, the `Arena Floor` drive surface,
+which adds no collision outside the closed playable pen. The ground's masks,
+heightmap and per-palette materials are written to
+`assets/generated/ground/`; its detail textures there are drawn by
+`asset_sources/ground/ground_detail.py`.
 
 The two sand flank lanes stay clear for tanks. Staggered barriers, crates,
 sandbags and rocks break shots across the middle while leaving the player's
@@ -194,11 +198,15 @@ trunks, flag poles and lamp posts have collision; foliage, lifting loops and pai
 This uses the engine's existing primitive colliders. The minimap reads the
 authored cover colliders' current transforms, including scene edits.
 
-`cargo run -p sandbox --example remake_arena` rebuilds only the Arena object's
+`cargo run --release -p sandbox --example remake_arena` rebuilds only the Arena object's
 authored children with deterministic ids and engine-created prefab links.
 It assigns the explicit actor placements and initial Far camera above,
 preserving other component data and all actor ids/prefab links. Run
-the model generator first after changing a tile or kit parameter file.
+the model generator first after changing a tile or kit parameter file, and
+`python sandbox/asset_sources/ground/ground_detail.py sandbox/assets/generated/ground`
+after changing the ground's detail textures. Run it in release: it builds
+in seconds there, where a debug build takes minutes painting the ground's
+masks.
 
 ## Farmland front
 
@@ -210,10 +218,10 @@ module. It reads by detail rather than height:
   meanders in under the west wall, bends past the farm and leaves under the
   south wall, 5.5 to 8 m wide, continuing outside both walls. Its banks are
   the component's, in the generated `creek_bank` material (the dirt's
-  colours on the terrain's ink layer), with their lip 2 cm above the tiles.
-  The ground tiles leave out every cell that reaches into the trench, and
-  rotated grass strips along both banks cover the cells' steps under the
-  lip. Stones stand in the stream, with foam rings, and reeds on its banks.
+  colours on the terrain's ink layer), with their lip 2 cm above the ground.
+  The ground drops under the creek inside the bank wall, so the lip covers
+  the step, and its mud frays out from the banks. Stones stand in the
+  stream, with foam rings, and reeds on its banks.
 - **Collision.** `Arena Creek Blocker` boxes, 1.6 m pieces along the
   centreline as wide as the water plus 0.5 m a side and overlapping the
   next, are in the sandbox's `TANK_BLOCKER` collision groups: they stop
@@ -230,10 +238,10 @@ module. It reads by detail rather than height:
   pen's southwest corner, roof and all clear of both walls, its solid
   leaving a gap too narrow for a tank. Two `hedgerow`s are cover that stops rounds and, like crates,
   sight.
-- **Ground.** Two tilled fields with crop rows. The ground surface, track
-  marks and the creek's route are left to later work; the
-  `ground_grass_dark`, `ground_grass_light`, `ground_gravel` and
-  `ground_track` tiles are in the kit but not placed.
+- **Ground.** Two tilled fields with crop rows, the farmhouse's dirt yard,
+  gravel under the water tower and mud along the creek, all drawn by the
+  ground's material. Track marks are left to later work; the ground tiles
+  of the kit are no longer placed.
 - **Outside.** Fields with fences and copses of kit trees beyond the west
   and south walls, around the creek's continuation.
 

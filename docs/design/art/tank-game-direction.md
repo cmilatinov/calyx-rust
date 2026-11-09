@@ -181,7 +181,8 @@ Adding a player colour, or changing one:
 - Clay, everywhere: metalness 0; roughness 0.95–1.0 for the ground, walls
   and props, 0.9 for tank bodies. Only signal emissives and the sample
   "glazed" sphere are glossy (roughness 0.4).
-- Flat colour, no textures. Ambient occlusion multiplier 1.
+- Flat colour, no textures, except the ground's toon detail (see Ground).
+  Ambient occlusion multiplier 1.
 - Emissive only for gameplay signals: projectiles, muzzle flashes, lamps.
   Strength 30–40 on the day maps, the map's emissive colour.
 - Moonlit's signals are much weaker: against the dark ground the day
@@ -338,6 +339,54 @@ sandbox --example water_test`) shows it in each palette.
   The look-dev ground around the creek is inked on the same layer so the lip
   meets it without a line.
 
+## Ground
+
+The arena's ground is one surface, not tiles: a flat Terrain component over
+the 200 by 200 m apron, dropped only under the creek, inside the banks, so
+nothing lies coplanar with it and the floor never flickers. Its material,
+the `ground` shader (`assets/shaders/mesh/ground*.wgsl`), draws through the
+G-buffer like any clay surface, so SSAO, shadows and the light treat it as
+the rest of the scene. It draws no ink outline (style 0).
+
+- **Layers.** Grass, darker grass, lighter grass, dirt, the sand lanes,
+  gravel, tilled fields with crop rows, and mud along the creek, each in
+  the palette's ground role (the farmland roles above; the lanes take the
+  road role, mud is the creek bank's colour at 0.6). One set of textures
+  serves all three maps.
+- **Masks.** `remake_arena` paints two masks at 4 px a metre: the ground
+  kinds of the layout, grass broken into darker and lighter patches of mixed
+  sizes (a few metres to twenty), worn dirt in the pen, the farmhouse yard,
+  gravel under the water tower and around the spawn's paving, and mud
+  fraying 1.6 to 3.2 m past the creek's shore. Edges are softened about
+  0.6 m, then warped up to 0.9 m by world-space noise in the shader.
+- **Toon detail.** Each layer is cel-shaded clay: two tones about 6 %
+  either side of its colour, in patches of mixed sizes with crisp edges, and
+  a few crisp accents in a third tone: leaf clumps on the grass, dark
+  pebbles in the dirt, flat stones on the gravel, clods in the field soil
+  and puddles in the mud. The detail also acts as each layer's height, so
+  layers meet along its patch edges over a narrow band.
+- **Not camouflage.** Broad two-tone patches repeated over open ground read
+  as camo at the Far framing, which the style dropped for the tanks. So the
+  tones stay close, each tile's patches mix a broad and a smaller noise
+  scale, two samples of the 6 m tile at different sizes and turns are
+  picked between by world-space noise, and the grass's darker and lighter
+  patches in the masks vary from a few metres to twenty. Broad light and
+  shade (22 m, 3.5 %) only lifts and dips them.
+- **Fields.** Crisp: a field keeps its rectangle's edge, unwarped and
+  unblurred, and its crop rows are half a metre wide, a metre apart, along
+  the field's direction.
+- **Marks.** The material multiplies its colour by a world-space marks
+  texture over a world rectangle (`marks_texture`, `marks_rect`): white, the
+  default, leaves it as is. Tank tracks (#577) darken the ground through it.
+- **Paving and road.** The spawn's paving and the road keep their kit tiles,
+  raised 3 cm off the ground.
+
+The look-dev round that picked the toon detail over clay, ink and painted
+(CC0) sets is under
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-576/lookdev>;
+the arena before and after, in play in all three palettes, under
+<https://github.com/cmilatinov/calyx-rust/tree/pr-assets/et-576/final>.
+
 ## Silhouette and scale
 
 - Chunky, softly rounded shapes; generous bevels (0.12–0.35 m), no thin
@@ -398,7 +447,9 @@ sandbox --example water_test`) shows it in each palette.
   pen with repeated wall joins, cover clusters and the existing player tanks.
   [Arena kit layout and collider handoff](../../../sandbox/asset_sources/arena-kit.md)
   records the one-metre root placement grid and collider choices.
-- No textures are needed for the style itself.
+- No textures are needed for the style itself. The ground's toon detail
+  textures are ours, drawn by `sandbox/asset_sources/ground/ground_detail.py`
+  (see Ground); no third-party texture is used.
 - Combat rounds reuse the showcase sphere and signal material: a 0.4 m
   round head and a 0.18 m wide, 1.6 m long ellipsoid tail, centred 0.8 m
   behind the head. They have no shadow or outline. Their warm point light

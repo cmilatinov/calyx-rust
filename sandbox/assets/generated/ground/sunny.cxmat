@@ -1,0 +1,285 @@
+{
+  "shader": "4b57dd6c-3785-5e8d-96af-64f7ae2e5561",
+  "variables": [
+    {
+      "binding": 0,
+      "group": 3,
+      "name": "mask_a_texture",
+      "offset": null,
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Asset": "b0a24752-7f20-2ced-248b-fd4dec4713cc"
+        }
+      }
+    },
+    {
+      "binding": 3,
+      "group": 3,
+      "name": "mask_b_texture",
+      "offset": null,
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Asset": "b0a24752-8220-2ced-248b-fd4dec47177d"
+        }
+      }
+    },
+    {
+      "binding": 5,
+      "group": 3,
+      "name": "detail_a_texture",
+      "offset": null,
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Asset": "3f59dc12-7a25-581e-2389-71b7c5e18051"
+        }
+      }
+    },
+    {
+      "binding": 7,
+      "group": 3,
+      "name": "detail_b_texture",
+      "offset": null,
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Asset": "3f59dc12-7725-581e-2389-71b7c5e17ca0"
+        }
+      }
+    },
+    {
+      "binding": 9,
+      "group": 3,
+      "name": "marks_texture",
+      "offset": null,
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "grass_color",
+      "offset": 0,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.24228,
+          0.50289,
+          0.14996,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "grass_dark_color",
+      "offset": 16,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.16827,
+          0.39157,
+          0.10462,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "grass_light_color",
+      "offset": 32,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.33716,
+          0.5972,
+          0.20508,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "dirt_color",
+      "offset": 48,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.36131,
+          0.23455,
+          0.11193,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "sand_color",
+      "offset": 64,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.63076,
+          0.53948,
+          0.28744,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "gravel_color",
+      "offset": 80,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.48515,
+          0.45079,
+          0.36625,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "field_color",
+      "offset": 96,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.31399,
+          0.17789,
+          0.08022,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "crop_color",
+      "offset": 112,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.15896,
+          0.34191,
+          0.03689,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "mud_color",
+      "offset": 128,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.21678,
+          0.14073,
+          0.06716,
+          0.35
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "detail",
+      "offset": 144,
+      "span": 16,
+      "value": {
+        "Vec4": [
+          6.0,
+          1.5499999523162842,
+          22.0,
+          0.03500000014901161
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "blend",
+      "offset": 160,
+      "span": 16,
+      "value": {
+        "Vec4": [
+          0.9,
+          0.06,
+          0.5,
+          0.55
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "mask",
+      "offset": 176,
+      "span": 16,
+      "value": {
+        "Vec4": [
+          200.0,
+          200.0,
+          1.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "marks_rect",
+      "offset": 192,
+      "span": 16,
+      "value": {
+        "Vec4": [
+          0.0,
+          0.0,
+          0.0,
+          0.0
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "roughness",
+      "offset": 208,
+      "span": 4,
+      "value": {
+        "Float": 1.0
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "outline_style",
+      "offset": 212,
+      "span": 4,
+      "value": {
+        "Uint": 0
+      }
+    }
+  ]
+}
