@@ -8,6 +8,7 @@ use crate::assets::AssetId;
 use crate::component::{ComponentGrassField, MAX_GRASS_BENDERS};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
+use crate::profiler::PassScope;
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::water::WATER_SHADER;
 use crate::render::{
@@ -452,7 +453,13 @@ impl GBufferRenderer {
                         })
                         .clone()
                 });
-                (geometry.material_shader, pipeline, camera, field)
+                (
+                    geometry.material_shader,
+                    pipeline,
+                    camera,
+                    shader.name.clone(),
+                    field,
+                )
             })
             .collect();
 
@@ -485,10 +492,11 @@ impl GBufferRenderer {
             occlusion_query_set: None,
         });
         self.drawn_instances = 0;
-        for (material_shader, pipeline, camera_bind_group, field_bind_group) in &passes {
+        for (material_shader, pipeline, camera_bind_group, name, field_bind_group) in &passes {
             let Some(pipeline) = pipeline else {
                 continue;
             };
+            let timed = PassScope::begin(&mut pass, || name.clone());
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, camera_bind_group, &[]);
             if let Some(field_bind_group) = field_bind_group {
@@ -526,6 +534,7 @@ impl GBufferRenderer {
                 RenderUtils::draw_mesh_instanced(&mut pass, mesh, batch.instances.clone());
                 self.drawn_instances += batch.instances.len() as u32;
             }
+            timed.end(&mut pass);
         }
     }
 

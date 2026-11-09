@@ -28,6 +28,11 @@ struct GameApp {
     renderer: SceneRenderer,
     hud: SceneHud,
     frame_counter: FrameCounter,
+    /// The window's inner size in physical pixels from [`WINDOW_ENV`], set
+    /// on the first frame, once the display's scale is known.
+    window_pixels: Option<(u32, u32)>,
+    /// The render size last logged.
+    render_size: (u32, u32),
     #[allow(unused)]
     log: Log<DefaultLogger>,
 }
@@ -79,6 +84,8 @@ impl GameApp {
             )?,
             hud: SceneHud::default(),
             frame_counter: FrameCounter::default(),
+            window_pixels: window_pixels(std::env::var_os(WINDOW_ENV).as_deref()),
+            render_size: (0, 0),
             log: Log::new(
                 DefaultLogger::builder()
                     .app_vendor("Calyx")
@@ -114,6 +121,13 @@ impl eframe::App for GameApp {
         log_profile();
         crate::profile_scope!("Player update");
         profiler::time_ui_pass(ctx);
+        if let Some((width, height)) = self.window_pixels.take() {
+            let pixels_per_point = ctx.pixels_per_point();
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(
+                width as f32 / pixels_per_point,
+                height as f32 / pixels_per_point,
+            )));
+        }
         self.game.update();
 
         let texture_id = self
@@ -172,6 +186,10 @@ impl eframe::App for GameApp {
             let (width, height) = Self::physical_size(ctx, &rect);
             if width != 0 && height != 0 {
                 renderer.resize_textures(width, height);
+                if self.render_size != (width, height) {
+                    self.render_size = (width, height);
+                    log::info!("Rendering the game at {width}x{height}");
+                }
             }
             if let Some((game_object, c_camera)) = scene.main_camera() {
                 let transform = scene.world_transform(game_object);
@@ -236,6 +254,20 @@ fn profile_file(value: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
 /// so a scene other than the startup one can be measured in the player.
 const SCENE_ENV: &str = "CALYX_SCENE";
 
+/// Environment variable giving the window's inner size in physical pixels,
+/// as `WIDTH`x`HEIGHT` (`1920x1080`), in place of the project's window size
+/// in points, so a measurement renders the same number of pixels whatever
+/// the display's scale.
+const WINDOW_ENV: &str = "CALYX_WINDOW";
+
+/// The window size `value`, the value of [`WINDOW_ENV`], names: `None`
+/// unless it is two positive whole numbers joined by `x`.
+fn window_pixels(value: Option<&std::ffi::OsStr>) -> Option<(u32, u32)> {
+    let (width, height) = value?.to_str()?.split_once(['x', 'X'])?;
+    let size = (width.trim().parse().ok()?, height.trim().parse().ok()?);
+    (size.0 > 0 && size.1 > 0).then_some(size)
+}
+
 /// Environment variable that, set to `0`, presents frames without waiting
 /// for vertical sync, so a measured frame time is the player's own rather
 /// than the display's refresh interval.
@@ -267,7 +299,10 @@ fn present_mode(vsync: Option<&std::ffi::OsStr>) -> wgpu::PresentMode {
 /// the editor grid.
 fn renderer_options() -> SceneRendererOptions {
     SceneRendererOptions {
-        samples: 8,
+        // One sample, as the Game panel renders. The deferred lighting pass
+        // shades each pixel once and FXAA smooths the edges, so more samples
+        // only multiplied the lighting pass's writes and added a resolve.
+        samples: 1,
         // Lights that cast shadows keep them in the player, as in the
         // editor's game view.
         shadows: true,
@@ -328,7 +363,7 @@ pub fn run_player(
 #[cfg(test)]
 mod tests {
     use super::{
-        native_options, player_scene, present_mode, profile_file, renderer_options,
+        native_options, player_scene, present_mode, profile_file, renderer_options, window_pixels,
         ProjectRuntimeSettings,
     };
     use egui_wgpu::wgpu;
@@ -385,6 +420,19 @@ mod tests {
     }
 
     #[test]
+    fn player_sizes_its_window_in_pixels_the_environment_names() {
+        assert_eq!(window_pixels(None), None);
+        assert_eq!(
+            window_pixels(Some(OsStr::new("1920x1080"))),
+            Some((1920, 1080))
+        );
+        assert_eq!(window_pixels(Some(OsStr::new("800X600"))), Some((800, 600)));
+        for invalid in ["", "1920", "0x1080", "1920x", "wide x tall", "-1x5"] {
+            assert_eq!(window_pixels(Some(OsStr::new(invalid))), None, "{invalid}");
+        }
+    }
+
+    #[test]
     fn player_renders_without_the_editor_grid_or_gizmos() {
         let options = renderer_options();
         assert!(!options.grid);
@@ -394,6 +442,11 @@ mod tests {
     #[test]
     fn player_draws_no_object_ids() {
         assert!(!renderer_options().object_ids);
+    }
+
+    #[test]
+    fn player_renders_one_sample_per_pixel_as_the_game_panel_does() {
+        assert_eq!(renderer_options().samples, 1);
     }
 
     #[test]

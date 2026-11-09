@@ -3,6 +3,7 @@ use crate::assets::texture::Texture;
 use crate::assets::AssetId;
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
+use crate::profiler::PassScope;
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::render_utils::RenderUtils;
 use crate::render::{
@@ -388,6 +389,9 @@ impl MeshRenderer {
         });
 
         let mut last: (AssetId, AssetId, AssetId) = Default::default();
+        // Each shader's draws are timed apart, the draw list being sorted by
+        // shader.
+        let mut timed: Option<PassScope> = None;
         for &DrawBatch {
             shader_id,
             mat_id,
@@ -409,6 +413,10 @@ impl MeshRenderer {
                 let Some(pipeline) = shader.pipeline(pipeline_options) else {
                     continue;
                 };
+                if let Some(timed) = timed.take() {
+                    timed.end(&mut render_pass);
+                }
+                timed = Some(PassScope::begin(&mut render_pass, || shader.name.clone()));
                 render_pass.set_pipeline(&pipeline);
                 render_pass.set_bind_group(0, &lighting.scene, &[]);
                 render_pass.set_bind_group(2, &lighting.lights, &[]);
@@ -429,6 +437,9 @@ impl MeshRenderer {
             RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
             RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
             last = (shader_id, mat_id, mesh_id);
+        }
+        if let Some(timed) = timed {
+            timed.end(&mut render_pass);
         }
     }
 
