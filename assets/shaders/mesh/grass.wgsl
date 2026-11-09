@@ -72,7 +72,7 @@ fn vs_main(vertex: VertexIn) -> GrassVertexOut {
     let root = instance.transform[3].xyz;
     let rest = (instance.transform * local_position).xyz;
     out.world_position = rest + grass_displacement(field, root, rest);
-    out.normal = (instance.transform * local_normal).xyz;
+    out.normal = grass_normal((instance.transform * local_normal).xyz);
     out.tangent = vec4f((instance.transform * local_tangent).xyz, vertex.tangent.w);
     out.position = camera.projection * camera.view * vec4f(out.world_position, 1.0);
     out.uv = vertex.uv0;

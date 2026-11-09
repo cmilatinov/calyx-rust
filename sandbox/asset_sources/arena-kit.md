@@ -69,7 +69,7 @@ excluding grass, paint plates, lifting loops and other decorative appendages.
 | `lamp` | Post and framed warm lantern with pyramidal cap | Box around pole/base |
 | `berry_bush` | Low fused leaf clusters with visible red berries | Convex bush body |
 | `grass_tuft` | Five tapered leaves in a fan | Normally non-blocking; a bounds box is available if an interaction needs one |
-| `tall_grass` | Brush clump: five big plain blades, straps 0.6 to 0.75 m wide tapering gently to a rounded end, 3.4 to 3.9 m long, leaning out 18 to 42 degrees and bending in a smooth arc down and outward (four segments each), dark or mid green (`tall_grass`, `tall_grass_light`), drawn with the grass shader | Non-blocking: the patch, not the clump, has volumes, `BRUSH`-group boxes that stop nothing (see Brush patches) |
+| `tall_grass` | Brush clump: seven thin blades, straps 0.28 to 0.38 m wide tapering gently to a rounded end, 3.2 to 3.8 m long, rooted a little apart and each leaning 10 to 30 degrees its own way with a short arc, drooped by the grass shader, dark or mid green (`tall_grass`, `tall_grass_light`) | Non-blocking: the patch, not the clump, has volumes, `BRUSH`-group boxes that stop nothing (see Brush patches) |
 | `sandbag_stack` | Three staggered rows of soft bags, 1.27 m total height, with restrained seam bands | Box around the stack |
 | `pickup_yellow`, `pickup_blue` | Green and blue glowing orbs over octagonal pads; legacy yellow name retains stable IDs | Box around pad; collection trigger belongs to gameplay |
 | `sentry` | Anchored circular base with broad mounting pads and exposed yaw bearing; red player-2 head with clipped armor cheeks, pitch hubs, recoil sleeve, open muzzle, roof cooling banks and shaded optic | Cylinder around base, radius 0.57 m and height 0.15 m, plus a box around the solid head if cover collision is desired; visual integration preserves existing gameplay |
@@ -260,14 +260,15 @@ Tall-grass brush (`sandbox/src/brush.rs`) is placed as patches: an object with
 the **Brush** component and a child box volume in the `BRUSH` collision
 groups (memberships 8, filter 0) that stops no tank, round or sight, 2 m high
 on the ground. Its grass stands one `tall_grass` clump to each cell of an
-even grid of about 1.6 m over the volume, each cell a child with a
-**Foliage** of exactly one clump placed at random within the middle of the
-cell, with random yaw and 0.9 to 1.1 scale, casting no shadow (the grass
+even grid of about 1.1 m over the volume, each cell a child with a
+**Foliage** of exactly one clump placed at random anywhere in the cell,
+with random yaw and 0.9 to 1.1 scale, casting no shadow (the grass
 would shade mostly itself, at the cost of every blade in each shadow
-cascade). The grid keeps the patch full to its edges without bunching, and
-the clumps are instances, not game objects, so a patch draws in a few
-instanced draws. Under the grass a `ground_grass_dark` tile, 1 m inside the
-volume's edge, darkens the ground the blades lean out over. Any of the
+cascade). The grid keeps the patch full to its edges and its blades spread
+evenly, without a clump's centre or the grid showing, and the clumps are
+instances, not game objects, so a patch draws in a few instanced draws. The
+ground paints darker grass under each patch, to just inside its edge, where
+the blades lean out over it (`ground.rs`, from `BRUSH_PATCHES`). Any of the
 primitive collider shapes works as a volume, and a patch may hold several.
 Brush stands on the open floor, clear of cover, so a tank can drive into it
 from any side.

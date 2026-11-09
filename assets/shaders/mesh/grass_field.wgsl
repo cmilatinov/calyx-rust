@@ -67,6 +67,13 @@ fn grass_displacement(field: GrassField, root: vec3f, world: vec3f) -> vec3f {
     return offset;
 }
 
+// The shading normal of a grass blade whose face points along `normal`: bent most of the way up,
+// as foliage is lit, so a blade's underside and the faces turned from the sun are lit like the
+// sward round them rather than going black in the shade of the blades over them.
+fn grass_normal(normal: vec3f) -> vec3f {
+    return normalize(mix(normalize(normal), vec3f(0.0, 1.0, 0.0), 0.65));
+}
+
 // How far the grass at `world` fades towards `GRASS_REVEAL_ALPHA` around the benders that reveal,
 // from 0 outside their reveal radius, easing in over its outer two thirds, to 1.
 fn grass_reveal(field: GrassField, world: vec3f) -> f32 {
@@ -79,6 +86,18 @@ fn grass_reveal(field: GrassField, world: vec3f) -> f32 {
         }
     }
     return reveal;
+}
+
+// Whether the grass at `world` draws ink: not near a bender that reveals, out to a quarter past
+// its reveal radius, so where the opaque grass meets the faded grass no ink line cuts the blades.
+fn grass_inked(field: GrassField, world: vec3f) -> bool {
+    for (var i = 0u; i < min(field.bender_count, MAX_GRASS_BENDERS); i++) {
+        let bender = field.benders[i];
+        if bender.w > 0.0 && length(world.xz - bender.xy) < bender.w * 1.25 {
+            return false;
+        }
+    }
+    return true;
 }
 
 // The opacity of grass `reveal` has faded.

@@ -1,9 +1,9 @@
 {
-  "inner": [],
   "main": {
-    "display_name": "detail_b",
     "id": "3f59dc12-7725-581e-2389-71b7c5e17ca0",
     "name": "generated/ground/detail_b",
+    "display_name": "detail_b",
     "type_uuid": "8ba4ccec-85ab-45f5-b4ee-2e803ef548a2"
-  }
+  },
+  "inner": []
 }
