@@ -6,9 +6,9 @@
 //!
 //! - **Southwest, the farm**: the ruined farmhouse, the water tower, a field
 //!   and hedgerows, beside the creek's deep bend into the south half.
-//! - **Southeast, the supply depot**: a tractor yard behind a wall, past
-//!   the south branch, with a shed, a raised fuel tank, a parked tractor
-//!   and stacked crates round an open yard (see `depot.rs`).
+//! - **Southeast, the supply depot**: a tractor yard in the border's
+//!   south-east lobe, past the south branch, with a shed, a raised fuel
+//!   tank, a parked tractor and crates round an open yard (see `depot.rs`).
 //! - **Northwest, the orchard**: rows of trees broken by hedgerows and a
 //!   wall, with a windmill's footprint in the corner, dressed later by #580.
 //! - **Northeast, the barn yard**: the raised platform and an open yard
@@ -45,7 +45,7 @@ pub const FOOTPRINTS: [(&str, f32, f32, f32, f32); 5] = [
     ("Silo", 24.0, 12.0, 28.0, 17.0),
     ("Windmill", -27.0, 24.5, -22.0, 29.5),
     ("Orchard", -27.0, 12.0, -13.5, 29.0),
-    ("Depot", 19.5, -33.0, 32.5, -19.5),
+    ("Depot", 21.0, -37.0, 38.0, -20.0),
 ];
 
 /// The sand lanes, as points along their middles, each smoothed into a
@@ -118,9 +118,9 @@ const COVER: [(&str, &str, f32, f32, f32); 15] = [
     ("barrier_plain", "Creek Barrier", 15.0, -1.5, -35.0),
     ("crate_framed", "Creek Supply", 16.0, -6.0, 45.0),
     ("crate_large", "Creek Crate", 17.0, -7.0, 45.0),
-    ("crate_large", "Depot Stack Crate 0", 23.0, -23.4, 37.0),
-    ("crate_large", "Depot Stack Crate 1", 24.3, -24.4, 37.0),
-    ("crate_framed", "Depot Stack Crate 2", 31.6, -28.4, 42.0),
+    ("crate_large", "Depot Stack Crate 0", 24.8, -24.3, 37.0),
+    ("crate_large", "Depot Stack Crate 1", 26.1, -25.3, 37.0),
+    ("crate_framed", "Depot Stack Crate 2", 29.5, -24.5, 42.0),
     ("barrier_plain", "Orchard Barrier", -12.5, 4.5, -38.0),
     ("sandbag_stack", "Orchard Sandbags", -13.0, 6.5, -38.0),
     ("crate_large", "Barn Crate", 11.5, 17.0, 42.0),
