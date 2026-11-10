@@ -68,13 +68,17 @@ fn linear(color: Color32) -> ShaderVariableValue {
 }
 
 /// What the meshes are built from, bit for bit: the path's points, cell
-/// size and obstacles, and the bank profile.
+/// size, obstacles and openings, and the bank profile.
 fn mesh_key(path: &WaterPath, banks: &BankProfile) -> Vec<u32> {
     let mut key = vec![path.cell_size.to_bits(), path.points.len() as u32];
     for point in &path.points {
         key.extend([point.position.x, point.position.y, point.width].map(f32::to_bits));
     }
     for circle in &path.obstacles {
+        key.extend([circle.center.x, circle.center.y, circle.radius].map(f32::to_bits));
+    }
+    key.push(path.openings.len() as u32);
+    for circle in &path.openings {
         key.extend([circle.center.x, circle.center.y, circle.radius].map(f32::to_bits));
     }
     key.extend([banks.height, banks.depth, banks.run, banks.lip].map(f32::to_bits));

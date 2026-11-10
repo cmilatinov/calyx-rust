@@ -6968,6 +6968,7 @@
             "radius": 0.6000000238418579
           }
         ],
+        "openings": [],
         "outline_style": 0,
         "points": [
           {
@@ -10095,6 +10096,7 @@
             "radius": 0.6000000238418579
           }
         ],
+        "openings": [],
         "outline_style": 0,
         "points": [
           {
@@ -20724,6 +20726,7 @@
             "radius": 0.6000000238418579
           }
         ],
+        "openings": [],
         "outline_style": 0,
         "points": [
           {

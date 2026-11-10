@@ -137,6 +137,85 @@ fn every_primitive_volume_holds_what_stands_in_it() {
     assert!(BrushPatches::read(&scene).is_empty());
 }
 
+/// A patch of a shape no one volume makes, as the arena's are: an L of two
+/// turned boxes beside a crescent of upright capsules, all one patch. What
+/// stands in any of its volumes is in it; what stands in the L's notch or
+/// the crescent's hollow, inside their bounds but outside every volume,
+/// is not.
+#[test]
+fn a_patch_is_the_union_of_its_volumes_whatever_its_outline() {
+    let mut scene = test_scene();
+    let root = scene.create(None, None);
+    scene.add_component(root, ComponentBrush::default());
+    // Turned 30 degrees, so the L's arms run off the axes.
+    scene.set_world_transform(
+        root,
+        Transform::from_components(
+            vec3(0.0, 0.0, 0.0),
+            nalgebra::UnitQuaternion::from_euler_angles(0.0, 30f32.to_radians(), 0.0),
+            vec3(1.0, 1.0, 1.0),
+        )
+        .matrix(),
+    );
+    let mut part = |x: f32, z: f32, shape: ColliderShape| {
+        let volume = scene.create(None, Some(root));
+        scene.set_transform(volume, &Transform::from_xyz(x, 1.0, z).matrix());
+        scene.add_component(
+            volume,
+            ComponentCollider {
+                shape,
+                groups: crate::collision::BRUSH,
+                ..Default::default()
+            },
+        );
+    };
+    // The L: an arm 5 x 1.6 m along local X, and one 1.6 x 3.6 m along Z
+    // from its east end.
+    part(
+        0.0,
+        0.0,
+        ColliderShape::Cuboid {
+            half_extents: vec3(2.5, 1.0, 0.8),
+        },
+    );
+    part(
+        1.7,
+        -1.8,
+        ColliderShape::Cuboid {
+            half_extents: vec3(0.8, 1.0, 1.8),
+        },
+    );
+    // The crescent: circles round local (0, 8) from west through south to
+    // east, radius 2.5.
+    for angle in [180.0f32, 225.0, 270.0, 315.0, 360.0] {
+        let (sin, cos) = angle.to_radians().sin_cos();
+        part(
+            2.5 * cos,
+            8.0 + 2.5 * sin,
+            ColliderShape::Capsule {
+                orientation: Orientation::Y,
+                height: 1.0,
+                radius: 1.0,
+            },
+        );
+    }
+    let patches = BrushPatches::read(&scene);
+    let pose = scene.world_transform(root);
+    let inside = |x: f32, z: f32| {
+        let p = pose.transform_position(&vec3(x, 0.0, z));
+        patches.patch_at(vec3(p.x, 0.0, p.z)).is_some()
+    };
+    // In both arms of the L, and in the crescent's tips and its belly.
+    assert!(inside(-2.0, 0.0) && inside(1.7, -3.2));
+    assert!(inside(-2.5, 8.0) && inside(2.5, 8.0) && inside(0.0, 5.5));
+    // In the L's notch and the crescent's hollow; past the arms' ends.
+    assert!(!inside(-1.0, -2.0), "the L's notch");
+    assert!(!inside(0.0, 8.5), "the crescent's hollow");
+    assert!(!inside(-2.8, 0.0) && !inside(1.7, -3.9));
+    // One patch, however many volumes.
+    assert_eq!(patches.patches.len(), 1);
+}
+
 #[test]
 fn a_tank_in_brush_is_hidden_from_tanks_outside_it() {
     let mut scene = test_scene();

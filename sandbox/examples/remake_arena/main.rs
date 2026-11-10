@@ -7,18 +7,19 @@
 //! preview a palette; the arena itself is Sunny Battlefield's.
 #![recursion_limit = "256"]
 
+mod border;
 mod farmland;
 mod ground;
+mod layout;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
-use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
     ColliderShape, ComponentAmbientOcclusion, ComponentAntiAliasing, ComponentBloom,
-    ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentFoliage,
-    ComponentGrassField, ComponentID, ComponentRigidBody, ComponentSkyLight, ComponentTonemap,
-    ComponentTransform, ComponentVignette, FxaaQuality, TonemappingPreset,
+    ComponentCollider, ComponentColorGrading, ComponentDirectionalLight, ComponentID,
+    ComponentRigidBody, ComponentSkyLight, ComponentTonemap, ComponentTransform, ComponentVignette,
+    FxaaQuality, TonemappingPreset,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Prefab, Scene, SceneData};
@@ -62,15 +63,6 @@ fn component_text<'a>(text: &'a str, id: Uuid) -> &'a str {
     let end = start + text[start..].find("\n    }").unwrap() + "\n    }".len();
     &text[start..end]
 }
-
-/// The test patches of tall-grass brush, `(name, x, z, width, depth)` in
-/// the Arena's frame, until the layout work places brush along the creek
-/// and the landmarks. Each is clear of cover and of the sentry's lane.
-pub const BRUSH_PATCHES: [(&str, f32, f32, f32, f32); 3] = [
-    ("Centre", 3.0, -10.0, 7.0, 5.0),
-    ("East", 13.5, 4.0, 5.0, 6.0),
-    ("North", -4.0, 6.0, 5.0, 5.0),
-];
 
 struct Author {
     scene: Scene,
@@ -139,159 +131,33 @@ impl Author {
         );
     }
 
-    /// Test patches of tall-grass brush (`sandbox::brush`), until the layout
-    /// work places brush along the creek and the landmarks: each a Brush
-    /// with a box volume that stops nothing, 2 m high on the ground, and its
-    /// grass a Foliage of the kit's `tall_grass` clumps packed over it. The
-    /// Arena's Grass Field sways all of them and bends them around tanks.
-    /// The test patches: their volumes, the darker grass the ground paints
-    /// under them, and their clumps; see `BRUSH_PATCHES`.
-    fn brush(&mut self) {
-        // The kit's tall blades arc over by drooping in the grass shader.
-        let grass_field = || ComponentGrassField {
-            droop: 0.32,
-            ..Default::default()
-        };
-        /// The side of the grid cells a patch's clumps stand in, in metres.
-        const GRASS_CELL: f32 = 1.1;
-        let prefab = asset_id(&self.assets.join(format!(
-            "generated/prefabs/{}/tall_grass.cxprefab",
-            self.palette.folder()
-        )));
-        for (i, &(name, x, z, width, depth)) in BRUSH_PATCHES.iter().enumerate() {
-            let name = format!("Arena Brush {name}");
-            let patch = self.object(&name, self.arena, vec3(x, 0.0, z));
-            self.scene
-                .add_component(patch, sandbox::brush::ComponentBrush::default());
-            // One clump to each cell of an even grid over the volume, placed
-            // at random anywhere in its cell and turned at random, so the
-            // blades fill the patch evenly, to its edges, without showing the
-            // grid or a centre.
-            let columns = (width / GRASS_CELL).round().max(1.0) as i32;
-            let rows = (depth / GRASS_CELL).round().max(1.0) as i32;
-            let (cell_width, cell_depth) = (width / columns as f32, depth / rows as f32);
-            for column in 0..columns {
-                for row in 0..rows {
-                    let cell = self.object(
-                        &format!("{name} Grass {column} {row}"),
-                        patch,
-                        vec3(
-                            (column as f32 + 0.5) * cell_width - width * 0.5,
-                            0.0,
-                            (row as f32 + 0.5) * cell_depth - depth * 0.5,
-                        ),
-                    );
-                    let area = vec2(cell_width * 0.95, cell_depth * 0.95);
-                    self.scene.add_component(
-                        cell,
-                        ComponentFoliage {
-                            prefabs: vec![AssetRef::from_id(prefab)],
-                            area,
-                            // Exactly one clump in the cell.
-                            density: 1.05 / (area.x * area.y),
-                            seed: 575 + (i as u32) * 97 + (column * rows + row) as u32,
-                            scale_range: vec2(0.9, 1.1),
-                            rotation_range: vec2(0.0, 360.0),
-                            // Shadow maps would draw every blade again in
-                            // each cascade, for shadows the grass mostly
-                            // falls on itself; SSAO still grounds it.
-                            cast_shadows: false,
-                        },
-                    );
-                }
-            }
-            let volume = self.collider(
-                patch,
-                &format!("{name} Volume"),
-                vec3(0.0, 1.0, 0.0),
-                vec3(width, 2.0, depth),
-            );
-            self.scene
-                .write_component::<ComponentCollider, _>(volume, |collider| {
-                    collider.groups = sandbox::collision::BRUSH;
-                });
-        }
-        if self
-            .scene
-            .write_component::<ComponentGrassField, _>(self.arena, |field| {
-                *field = grass_field();
-            })
-            .is_none()
-        {
-            self.scene.add_component(self.arena, grass_field());
-        }
-    }
-
-    /// The walls inside the pen. A corner shields the spawn from the east
-    /// sand lane (the farmland's farmhouse, hedgerow and water tower shield
-    /// it from the west), a run across the west middle splits the lane from
-    /// the centre,
-    /// a corner in the northwest faces the raised area across the north,
-    /// and a run in the east middle screens the west ramp's approach from
-    /// the centre. Sight between these opens and closes as tanks move. Each
-    /// leaves the sand lanes, the ramps' feet and the spawn's first six
-    /// metres clear, and keeps a gap wider than a tank, at least 2.8 m, to
-    /// other obstacles and 4.8 m to the perimeter, so no tank wedges beside
-    /// one.
-    fn interior_walls(&mut self) {
-        let run = |from: (f32, f32), to: (f32, f32)| (vec2(from.0, from.1), vec2(to.0, to.1));
-        // Corner posts sit at the inner angle; their arms reach 3 m along
-        // local +X and +Z, and an end cap closes on its local -X.
-        self.interior_wall(
-            "Southeast Corner",
-            &[
-                ("wall_corner", 16.0, -25.0, -90.0),
-                ("wall_long", 16.0, -20.0, 90.0),
-                ("wall_end", 16.0, -17.0, 90.0),
-                ("wall_end", 12.0, -25.0, 0.0),
-            ],
-            &[
-                run((16.0, -25.6), (16.0, -16.4)),
-                run((11.4, -25.0), (16.6, -25.0)),
-            ],
-        );
-        self.interior_wall(
-            "West Middle",
-            &[
-                ("wall_end", -16.0, 11.0, 0.0),
-                ("wall_long", -13.0, 11.0, 0.0),
-                ("wall_end", -10.0, 11.0, 180.0),
-            ],
-            &[run((-16.6, 11.0), (-9.4, 11.0))],
-        );
-        self.interior_wall(
-            "Northwest Corner",
-            &[
-                ("wall_corner", -6.0, 25.0, 180.0),
-                ("wall_short", -6.0, 21.0, 90.0),
-                ("wall_end", -6.0, 19.0, -90.0),
-                ("wall_long", -11.0, 25.0, 0.0),
-                ("wall_end", -14.0, 25.0, 0.0),
-            ],
-            &[
-                run((-6.0, 18.4), (-6.0, 25.6)),
-                run((-14.6, 25.0), (-5.4, 25.0)),
-            ],
-        );
-        self.interior_wall(
-            "East Middle",
-            &[
-                ("wall_end", 10.0, 11.0, -90.0),
-                ("wall_long", 10.0, 14.0, 90.0),
-                ("wall_end", 10.0, 17.0, 90.0),
-            ],
-            &[run((10.0, 10.4), (10.0, 17.6))],
-        );
-    }
-
     /// An interior wall, `Arena Wall {name}`: the kit's wall modules joined
     /// at their connection ports, and one continuous solid along each
     /// straight run, from `from` to `to` on its centre line, so a tank
     /// sliding along it meets no seam between modules. Like every wall solid
-    /// it blocks sight and rises to the shell-blocking top.
-    fn interior_wall(&mut self, name: &str, pieces: &[WallPiece], runs: &[(Vec2, Vec2)]) {
+    /// it blocks sight and rises to the shell-blocking top. Its pieces and
+    /// runs are in a frame at `origin` turned `yaw` degrees, so the wall may
+    /// run at any angle to the arena's axes.
+    fn interior_wall_at(
+        &mut self,
+        name: &str,
+        origin: Vec2,
+        yaw: f32,
+        pieces: &[WallPiece],
+        runs: &[(Vec2, Vec2)],
+    ) {
         let name = format!("Arena Wall {name}");
-        let wall = self.object(&name, self.arena, Vec3::zeros());
+        let position = vec3(origin.x, 0.0, origin.y);
+        let wall = self.object(&name, self.arena, position);
+        self.scene.set_transform(
+            wall,
+            &Transform::from_components(
+                position,
+                UnitQuaternion::from_euler_angles(0.0, yaw.to_radians(), 0.0),
+                vec3(1.0, 1.0, 1.0),
+            )
+            .matrix(),
+        );
         for (i, &(model, x, z, yaw)) in pieces.iter().enumerate() {
             self.kit_under(wall, model, &format!("{name} {i}"), vec3(x, 0.0, z), yaw);
         }
@@ -788,9 +654,9 @@ fn main() {
     // transforms change; model scales, ids and gameplay settings survive.
     for (name, x, z) in [
         ("Arena", 0.0, 22.0),
-        ("Target A", -6.0, 24.0),
-        ("Target B", 6.0, 32.0),
-        ("Sentry", 16.0, 32.0),
+        ("Target A", -8.0, 34.5),
+        ("Target B", 28.0, 23.0),
+        ("Sentry", 20.0, 23.5),
     ] {
         let object = scene.objects().find(|o| scene.name(*o) == name).unwrap();
         let mut pose = scene.transform(object);
@@ -828,6 +694,37 @@ fn main() {
         );
         scene.add_component(state, ComponentGameState::default());
     }
+    // The north team's spawn, on the far bank from the Player Spawn's, which
+    // the player's side (team 0, and tanks of no team) spawns at.
+    let existing = scene.objects().find(|o| scene.name(*o) == "North Spawn");
+    let north_spawn = existing.unwrap_or_else(|| {
+        let spawn = scene.create(
+            Some(ComponentID {
+                id: stable("North Spawn"),
+                name: "North Spawn".into(),
+                ..Default::default()
+            }),
+            None,
+        );
+        scene.add_component(
+            spawn,
+            sandbox::spawn::ComponentSpawnPoint {
+                team: 1,
+                ..Default::default()
+            },
+        );
+        spawn
+    });
+    scene.set_transform(
+        north_spawn,
+        &Transform::from_components(
+            vec3(layout::NORTH_SPAWN.x, 0.0, layout::NORTH_SPAWN.y + 22.0),
+            UnitQuaternion::from_euler_angles(0.0, std::f32::consts::PI, 0.0),
+            vec3(1.0, 1.0, 1.0),
+        )
+        .matrix(),
+    );
+    edited.insert(scene.uuid(north_spawn));
     let children: Vec<_> = scene.children(arena).collect();
     for child in children {
         scene.delete(child);
@@ -843,31 +740,40 @@ fn main() {
         names: Default::default(),
     };
 
-    // One uninterrupted collision floor at the ground's level, y = 0: the
-    // ground is drawn by one terrain (`ground.rs`), which tanks never touch.
+    let creek = farmland::Creek::new(&author.assets, palette);
+    // The Arena's extent is the border's bounding rectangle, in whole
+    // two-metre cells, which the minimap fits and the camera checks cover.
+    let (low, high) = border::bounds();
+    let half = vec2(low.x.abs().max(high.x), low.y.abs().max(high.y));
+    let (columns, rows) = ((half.x).ceil() as u32, (half.y).ceil() as u32);
+    author
+        .scene
+        .write_component::<ComponentArena, _>(arena, |arena| {
+            arena.columns = columns;
+            arena.rows = rows;
+        });
+    // One uninterrupted collision floor at the ground's level, y = 0, under
+    // the whole border: the ground is drawn by one terrain (`ground.rs`),
+    // which tanks never touch.
     author.drive_surface(
         arena,
         "Arena Floor",
         vec3(0.0, -0.5, 0.0),
-        vec3(60.0, 1.0, 64.0),
+        vec3(columns as f32 * 2.0, 1.0, rows as f32 * 2.0),
         UnitQuaternion::identity(),
     );
-    let creek = farmland::Creek::new(&author.assets, palette);
+    let lanes: Vec<_> = layout::LANES
+        .iter()
+        .map(|lane| layout::lane_curve(lane))
+        .collect();
+    // The spawn's paving and the sand lanes; the ground paints the rest.
     let pen_kind = |x: i32, z: i32| {
         if (-3..3).contains(&x) && (-26..-20).contains(&z) {
             "paving"
-        } else if (-1..2).contains(&x) && (6..18).contains(&z) {
-            if x == 0 {
-                "road_marked"
-            } else {
-                "road"
-            }
-        } else if (((-22..-18).contains(&x) || (18..22).contains(&x)) && (-27..27).contains(&z))
-            || ((-22..22).contains(&x) && (-5..-2).contains(&z))
+        } else if layout::lane_distance(&lanes, vec2(x as f32 + 0.5, z as f32 + 0.5))
+            < layout::LANE_HALF_WIDTH
         {
             "sand"
-        } else if (x <= -24 || x >= 24) && (z <= -18 || z >= 20) {
-            "dirt"
         } else {
             "grass"
         }
@@ -878,7 +784,7 @@ fn main() {
         if creek.carves(x, z) {
             return None;
         }
-        let inside = (-30..30).contains(&x) && (-32..32).contains(&z);
+        let inside = border::inside(vec2(x as f32 + 0.5, z as f32 + 0.5));
         Some(farmland::farm_ground(x, z).unwrap_or_else(|| {
             if inside {
                 pen_kind(x, z)
@@ -957,124 +863,46 @@ fn main() {
     }
     author.ground(&creek, &ground_kind);
 
-    for (name, x, z, yaw) in [
-        ("SW", -29.0, -31.0, 0.0),
-        ("SE", 29.0, -31.0, -90.0),
-        ("NW", -29.0, 31.0, 90.0),
-        ("NE", 29.0, 31.0, 180.0),
-    ] {
-        author.kit(
-            "wall_corner",
-            &format!("Arena Wall {name}"),
-            vec3(x, 0.0, z),
-            yaw,
-        );
-    }
-    for (side, z) in [("South", -31.0), ("North", 31.0)] {
-        for x in (-24..=24).step_by(4) {
-            author.kit(
-                "wall_long",
-                &format!("Arena Wall {side} {x}"),
-                vec3(x as f32, 0.0, z),
-                0.0,
-            );
-        }
-    }
-    for (side, x) in [("West", -29.0), ("East", 29.0)] {
-        for z in (-26..=26).step_by(4) {
-            author.kit(
-                "wall_long",
-                &format!("Arena Wall {side} {z}"),
-                vec3(x, 0.0, z as f32),
-                90.0,
-            );
-        }
-    }
-
-    // Straight continuous collision strips follow the modular silhouettes
-    // without internal coplanar seams that can catch a sliding tank.
-    for (name, center, size) in [
-        ("West", vec3(-29.0, 0.8, 0.0), vec3(1.2, 1.6, 63.2)),
-        ("East", vec3(29.0, 0.8, 0.0), vec3(1.2, 1.6, 63.2)),
-        ("South", vec3(0.0, 0.8, -31.0), vec3(59.2, 1.6, 1.2)),
-        ("North", vec3(0.0, 0.8, 31.0), vec3(59.2, 1.6, 1.2)),
-    ] {
-        let (center, size) = blocking_shells(center, size);
-        author.collider(arena, &format!("Arena Wall {name} collision"), center, size);
-    }
-
-    // Three staggered clusters interrupt direct shots without sealing off
-    // either flank; the spawn has a clear first six metres ahead of it.
-    for (model, name, x, z, yaw) in [
-        ("barrier_hazard", "Left Barrier", -6.0, -3.0, 0.0),
-        ("barrier_plain", "Centre Barrier", 0.0, -1.0, 0.0),
-        ("sandbag_stack", "Right Sandbags", 5.0, -2.0, 90.0),
-        ("crate_large", "Left Crate", -7.0, 2.0, 0.0),
-        ("crate_framed", "Left Supply", -5.0, 3.0, 0.0),
-        ("crate_framed", "Right Supply", 5.0, 3.0, 0.0),
-        ("barrier_hazard", "Rear Barrier", -5.0, 8.0, 0.0),
-        ("crate_large", "Rear Crate", 0.0, 11.0, 0.0),
-        ("rock_large", "West Boulder", -12.0, -3.0, 25.0),
-        ("rock_small", "West Stone", -12.0, -1.0, 0.0),
-        ("rock_medium", "East Rock", 12.0, 0.0, -20.0),
-        ("rock_small", "East Stone", 12.0, 2.0, 0.0),
-    ] {
-        author.prop(model, &format!("Arena Cover {name}"), x * 2.0, z * 2.0, yaw);
-    }
-    // Companion cover makes clusters at the larger spacing, with clear
-    // four-metre sand lanes at X +/-20 and a clear spawn approach. The
-    // farmland covers the spawn's west side.
-    for (model, name, x, z, yaw) in [
-        ("crate_large", "Spawn Right Crate", 7.0, -14.0, 0.0),
-        ("crate_framed", "Left Forward Crate", -14.0, -5.0, 0.0),
-        ("barrier_plain", "Centre Wing Barrier", -4.0, -3.0, 20.0),
-        ("crate_large", "Right Forward Crate", 12.0, -5.0, 0.0),
-        ("sandbag_stack", "Left Rear Sandbags", -13.0, 17.0, 0.0),
-        ("crate_framed", "Rear Supply", 3.0, 22.0, 0.0),
-        ("crate_large", "West Middle Crate", -25.0, 7.0, 0.0),
-        ("crate_framed", "East Middle Crate", 25.0, 8.0, 0.0),
-    ] {
-        author.prop(model, &format!("Arena Cover {name}"), x, z, yaw);
-    }
+    author.border(&creek);
     author.raised_area();
-    author.interior_walls();
-    author.brush();
+    author.layout();
     author.farmland(&creek);
+    // The spawns' flags and lamps: the south's either side of its paving,
+    // the north's by its gravel pad.
     for (model, name, x, z, yaw) in [
-        ("tree_small", "Spawn East Tree", 6.0, -8.0, -20.0),
-        ("tree_small", "West Tree", -12.0, 5.0, 30.0),
-        ("tree_large", "Northwest Tree", -11.0, 12.0, 0.0),
-        ("tree", "Southeast Tree", 11.8, -12.5, 45.0),
-        ("berry_bush", "Northwest Bush", -9.0, 13.0, 0.0),
-        ("flag", "Spawn Flag", -3.5, -11.5, 0.0),
-        ("lamp", "Spawn Lamp", 3.5, -10.5, 0.0),
+        ("flag", "Spawn Flag", -5.0, -27.5, 0.0),
+        ("lamp", "Spawn Lamp", 5.0, -25.5, 0.0),
+        ("flag", "North Spawn Flag", -15.5, 20.5, 0.0),
+        ("lamp", "North Spawn Lamp", -6.5, 26.5, 0.0),
     ] {
-        author.prop(model, &format!("Arena Prop {name}"), x * 2.0, z * 2.0, yaw);
+        author.prop(model, &format!("Arena Prop {name}"), x, z, yaw);
     }
+    // Tufts scattered over the open grass, unevenly.
     for (i, (x, z)) in [
-        (-12.0, -13.0),
-        (-10.0, -9.0),
-        (12.0, -9.0),
-        (10.0, -13.0),
-        (-12.0, 9.0),
-        (-8.0, 13.0),
-        (-9.0, 4.0),
-        (-4.0, 5.0),
-        (6.0, -5.0),
-        (3.0, 1.0),
-        (-4.0, -5.0),
-        (12.0, 5.0),
+        (-15.0, -1.5),
+        (-13.5, 1.0),
+        (5.5, -24.5),
+        (17.0, -10.5),
+        (15.5, -6.0),
+        (-4.0, 6.0),
+        (8.0, 21.5),
+        (24.0, 20.5),
+        (-25.0, 10.0),
+        (-9.5, 15.5),
     ]
     .into_iter()
     .enumerate()
-    // The farmland's ground replaces the tufts in the southwest quadrant.
-    .filter(|(_, (x, z))| *x >= 0.0 || *z >= 0.0)
     {
+        // On dry ground inside the border: no blades over the water.
+        assert!(
+            creek.beyond(vec2(x, z)) > 1.0 && border::beyond(vec2(x, z)) < -2.0,
+            "tuft {i} at ({x}, {z}) is in the creek or past the border"
+        );
         author.prop(
             "grass_tuft",
             &format!("Arena Grass {i}"),
-            x * 2.0,
-            z * 2.0,
+            x,
+            z,
             (i * 37) as f32,
         );
     }

@@ -597,3 +597,59 @@ fn impacts_out_of_sight_stay_hidden_the_frame_they_spawn() {
         assert!(!scene.is_component_enabled::<ComponentParticleSystem>(impact));
     }
 }
+
+/// The arena's border, of whatever it is built along each run, stops sight
+/// as its walls do and bounds the minimap: every segment's solid is a sight
+/// blocker, so a line from 3 m inside it to 3 m outside it is blocked, and
+/// the floor's rectangle, which the border does not follow, is no edge.
+#[test]
+fn the_arena_border_blocks_sight_along_its_whole_length() {
+    let copy = calyx_engine::test_support::TestAssets::game();
+    let assets = copy.asset_context();
+    crate::plugin_main(&mut assets.registries.types.write());
+    assets
+        .registries
+        .components
+        .write()
+        .refresh_class_lists(&assets.registries.types.read());
+    let scene = assets
+        .registries
+        .assets
+        .read()
+        .reload_by_path::<Scene>(&copy.sandbox_root().join("game/scenes/arena.cxscene"))
+        .expect("the arena should load")
+        .read()
+        .clone();
+    let geometry = arena_geometry(&scene).expect("the arena has geometry");
+    assert!(
+        !geometry.floor_is_edge,
+        "the border, not the floor, is the edge"
+    );
+    let sight = FogOfWarSight {
+        viewers: Vec::new(),
+        blockers: geometry
+            .sight_blockers
+            .iter()
+            .map(|rect| FogOfWarBlocker {
+                center: rect.center,
+                half_axes: rect.half_axes,
+            })
+            .collect(),
+    };
+    let mut segments = 0;
+    for object in scene.objects() {
+        let name = scene.name(object);
+        if !(name.contains(" Border ") && name.ends_with(" collision")) {
+            continue;
+        }
+        let pose = scene.world_transform(object);
+        let across = ground(pose.rotation * vec3(0.0, 0.0, 3.0));
+        let center = ground(pose.position);
+        assert!(
+            !sight.clear_line(center - across, center + across),
+            "sight crosses {name}"
+        );
+        segments += 1;
+    }
+    assert!(segments >= 15, "{segments} border segments");
+}

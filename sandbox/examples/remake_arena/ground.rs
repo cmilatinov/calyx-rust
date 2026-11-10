@@ -183,7 +183,8 @@ impl Weights {
 /// creek's trench).
 fn paint(p: Vec2, kind: Option<&str>, rows_along_x: Option<bool>, shore: &Shore) -> Weights {
     let mut w = Weights::default();
-    let inside = p.x.abs() < 30.0 && p.y.abs() < 32.0;
+    let border = super::border::beyond(p);
+    let inside = border < 0.0;
     match kind {
         Some("dirt") => w.0[DIRT] = 1.0,
         Some("sand") => w.0[SAND] = 1.0,
@@ -204,11 +205,18 @@ fn paint(p: Vec2, kind: Option<&str>, rows_along_x: Option<bool>, shore: &Shore)
             }
         }
     }
+    // Outside the border the grass grows rank: an uncut verge of darker
+    // grass along the wall's outer face, fraying out into the meadow, so
+    // the edge reads as a boundary from above, not only by its wall.
+    if kind == Some("grass") && border > 0.0 {
+        let reach = 2.2 + 2.4 * noise(p + vec2(17.0, 5.0), 3.5, 14);
+        w.over(DARK, smoothstep(reach, reach - 1.2, border));
+    }
     if let Some(along_x) = rows_along_x {
         w.0[ROWS_ALONG_X] = if along_x { 1.0 } else { 0.0 };
     }
     // The farmhouse's yard: dirt, gravelled by the door.
-    let yard = (p - vec2(-11.0, -13.0)).abs();
+    let yard = (p - vec2(-11.0, -13.0) - farmland::FARMHOUSE).abs();
     if yard.x < 4.2 && yard.y < 4.2 {
         let edge = 4.2 - yard.x.max(yard.y);
         w.over(
@@ -221,7 +229,8 @@ fn paint(p: Vec2, kind: Option<&str>, rows_along_x: Option<bool>, shore: &Shore)
         );
     }
     // A gravel pad under the water tower.
-    let tower = (p - vec2(-26.0, -28.0)).norm() + (noise(p, 2.0, 5) - 0.5) * 1.2;
+    let tower =
+        (p - vec2(farmland::TOWER.x, farmland::TOWER.z)).norm() + (noise(p, 2.0, 5) - 0.5) * 1.2;
     w.over(GRAVEL, smoothstep(3.8, 3.0, tower));
     // Gravel shoulders along the spawn's paving.
     let pad = vec2((p.x).abs() - 3.0, (p.y + 23.0).abs() - 3.0);
@@ -229,15 +238,29 @@ fn paint(p: Vec2, kind: Option<&str>, rows_along_x: Option<bool>, shore: &Shore)
     if kind != Some("paving") {
         w.over(GRAVEL, smoothstep(1.4, 0.4, pad + (noise(p, 1.5, 6) - 0.5)));
     }
+    // The corners' yards, whose edges fray into the grass: worn dirt in
+    // the barn yard and round the windmill, gravel under the silo and the
+    // supply depot.
+    for &(name, x0, z0, x1, z1) in super::layout::FOOTPRINTS.iter() {
+        let layer = match name {
+            "Barn" | "Windmill" => DIRT,
+            "Silo" | "Depot" => GRAVEL,
+            _ => continue,
+        };
+        let edge = (p.x - x0).min(x1 - p.x).min(p.y - z0).min(z1 - p.y);
+        w.over(
+            layer,
+            smoothstep(0.0, 1.2, edge + (noise(p, 2.5, 12) - 0.5) * 1.6),
+        );
+    }
+    // A gravel pad at the north spawn, rounder than the south's paving.
+    let pad = (p - super::layout::NORTH_SPAWN).norm() + (noise(p, 2.0, 13) - 0.5) * 1.4;
+    w.over(GRAVEL, smoothstep(3.8, 3.0, pad));
     // Darker grass under each patch of brush, to just inside its edge,
     // where the blades lean out over it, so no light ground shows between
     // them.
-    for &(_, x, z, width, depth) in super::BRUSH_PATCHES.iter() {
-        let edge = vec2(
-            (p.x - x).abs() - (width * 0.5 - 0.6),
-            (p.y - z).abs() - (depth * 0.5 - 0.6),
-        );
-        let outside = edge.x.max(edge.y) + (noise(p, 1.5, 11) - 0.5) * 0.5;
+    for patch in super::layout::BRUSH_PATCHES.iter() {
+        let outside = patch.beyond(p) + 0.6 + (noise(p, 1.5, 11) - 0.5) * 0.5;
         w.over(DARK, smoothstep(0.5, -0.2, outside));
     }
     // Mud along the creek's banks, fraying into the ground.

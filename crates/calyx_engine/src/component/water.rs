@@ -55,6 +55,11 @@ pub struct ComponentWater {
     pub shading: WaterShading,
     /// What stands in the water, which the foam rings.
     pub obstacles: Vec<WaterObstacle>,
+    /// Where the river opens into other water, such as where a branch
+    /// joins it: inside these circles no bank is drawn along the shore, and
+    /// the shore draws no shallows or foam band, so two waters meet without
+    /// a wall between them.
+    pub openings: Vec<WaterObstacle>,
     /// Height of the wave crests above the rest surface, in local units.
     #[reflect_attr(min = 0.0, speed = 0.005)]
     pub wave_amplitude: f32,
@@ -206,6 +211,7 @@ impl Default for ComponentWater {
             cell_size: 0.8,
             shading: WaterShading::Smooth,
             obstacles: Vec::new(),
+            openings: Vec::new(),
             wave_amplitude: 0.22,
             wave_length: 5.0,
             flow_speed: 1.2,
@@ -286,6 +292,14 @@ impl ComponentWater {
                     radius: obstacle.radius,
                 })
                 .collect(),
+            openings: self
+                .openings
+                .iter()
+                .map(|opening| WaterCircle {
+                    center: opening.position,
+                    radius: opening.radius,
+                })
+                .collect(),
         }
     }
 
@@ -333,6 +347,10 @@ mod tests {
             obstacles: vec![WaterObstacle {
                 position: vec2(2.0, 4.0),
                 radius: 0.75,
+            }],
+            openings: vec![WaterObstacle {
+                position: vec2(4.0, 9.0),
+                radius: 2.5,
             }],
             wave_amplitude: 0.2,
             wave_length: 4.5,
@@ -390,6 +408,7 @@ mod tests {
                 "cell_size",
                 "shading",
                 "obstacles",
+                "openings",
                 "wave_amplitude",
                 "wave_length",
                 "flow_speed",

@@ -53,8 +53,9 @@ The tank's `Camera` object carries it as a Tank Camera component
 (`sandbox/src/tank_camera.rs`), which also leads the view towards the aim
 point and zooms in with the scroll wheel to 0.6 of the Far framing.
 
-Kit prop scales stay the same as the showcase; the playable arena is 60 by
-64 m, with a larger visible ground apron beyond its walls.
+Kit prop scales stay the same as the showcase; the playable arena sits
+inside an irregular border about 82 by 81 m across, a dry-stone wall that
+turns every few metres, with a larger visible ground apron beyond it.
 
 ## Colour convention
 
@@ -299,7 +300,9 @@ and read from the Far framing by shape, colour and motion: a river that
 meanders between carved banks, its surface rolling with waves that run
 downstream, shallow colour at the banks running to deep in the
 middle, and hard-edged foam along the shores, around rocks and drifting with
-the flow. Never a straight channel: a river bends, and its width changes. The arena's farmland quadrant has one
+the flow. Never a straight channel: a river bends, and its width changes. The arena's creek is one,
+and it forks: a branch joins it as a second water whose shores open into
+the creek's where they meet, with no bank or foam line across the mouth
 (`sandbox/asset_sources/arena-kit.md`, Farmland front). The
 creek in `sandbox/assets/lookdev/water_test.cxscene` (built by `cargo run -p
 sandbox --example water_test`) shows it in each palette.
@@ -390,8 +393,8 @@ the rest of the scene. It draws no ink outline (style 0).
   evenly to nothing over 25 s. Prints are part of the ground, so they never
   flicker or show on bridges, water or props, and a tank fog of war hides
   prints nothing.
-- **Paving and road.** The spawn's paving and the road keep their kit tiles,
-  raised 3 cm off the ground.
+- **Paving.** The south spawn's paving keeps its kit tiles, raised 3 cm off
+  the ground.
 
 The look-dev round that picked the toon detail over clay, ink and painted
 (CC0) sets is under
