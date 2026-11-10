@@ -6,8 +6,8 @@ use crate::profiler;
 use crate::reflect::type_registry::TypeRegistry;
 use crate::render::{SceneRenderer, SceneRendererOptions};
 use crate::runtime::{
-    initial_render_size, wgpu_configuration, FrameCounter, HostCommand, ProjectRuntimeSettings,
-    WindowSettings,
+    initial_render_size, player_icon, set_window_icons, wgpu_configuration, FrameCounter,
+    HostCommand, ProjectRuntimeSettings,
 };
 use crate::scene::{Scene, SceneHud};
 use crate::ui::{UiInput, UiPoint};
@@ -16,6 +16,7 @@ use egui::load::SizedTexture;
 use egui::{Context, Direction, Image, ImageSource, InnerResponse, Layout, Rect, Sense};
 use egui_wgpu::wgpu;
 use std::path::PathBuf;
+use std::sync::Arc;
 #[cfg(windows)]
 use winit::platform::windows::EventLoopBuilderExtWindows;
 // winit's default features enable X11 on Linux. Dependency features are not
@@ -42,6 +43,7 @@ impl GameApp {
         cc: &eframe::CreationContext,
         settings: &ProjectRuntimeSettings,
         plugin_main: extern "C" fn(&mut TypeRegistry),
+        log: Log<DefaultLogger>,
     ) -> Result<Self, Box<DynError>> {
         let startup_scene = player_scene(settings, std::env::var_os(SCENE_ENV).as_deref())
             .ok_or("the project does not configure a startup scene")?;
@@ -86,12 +88,7 @@ impl GameApp {
             frame_counter: FrameCounter::default(),
             window_pixels: window_pixels(std::env::var_os(WINDOW_ENV).as_deref()),
             render_size: (0, 0),
-            log: Log::new(
-                DefaultLogger::builder()
-                    .app_vendor("Calyx")
-                    .app_name("Player")
-                    .build(),
-            ),
+            log,
         })
     }
 
@@ -316,7 +313,10 @@ fn renderer_options() -> SceneRendererOptions {
 /// Storage id the player's window and egui state persist under.
 const PLAYER_APP_ID: &str = "calyx-player";
 
-fn native_options(window: &WindowSettings) -> NativeOptions {
+/// The player's window options: the project's window size, and `icon`, the
+/// [`player_icon`] of the project.
+fn native_options(settings: &ProjectRuntimeSettings, icon: Arc<egui::IconData>) -> NativeOptions {
+    let window = settings.window();
     NativeOptions {
         viewport: egui::ViewportBuilder {
             // eframe restores a window saved under the app id before applying
@@ -325,6 +325,7 @@ fn native_options(window: &WindowSettings) -> NativeOptions {
             app_id: Some(PLAYER_APP_ID.to_string()),
             inner_size: Some(window.inner_size()),
             decorations: Some(true),
+            icon: Some(icon),
             ..Default::default()
         },
         // The project's window size decides the opening size, so the player
@@ -351,20 +352,31 @@ pub fn run_player(
     project_directory: impl Into<PathBuf>,
     plugin_main: extern "C" fn(&mut TypeRegistry),
 ) -> eframe::Result<()> {
+    // Logging starts first, so a project icon that fails to load is logged.
+    let log = Log::new(
+        DefaultLogger::builder()
+            .app_vendor("Calyx")
+            .app_name("Player")
+            .build(),
+    );
     let settings =
         ProjectRuntimeSettings::load(project_directory).map_err(eframe::Error::AppCreation)?;
+    let icon = player_icon(&settings);
     eframe::run_native(
         "Calyx",
-        native_options(settings.window()),
-        Box::new(move |cc| Ok(GameApp::new(cc, &settings, plugin_main).map(Box::new)?)),
+        native_options(&settings, icon.clone()),
+        Box::new(move |cc| {
+            set_window_icons(cc, &icon);
+            Ok(GameApp::new(cc, &settings, plugin_main, log).map(Box::new)?)
+        }),
     )
 }
 
 #[cfg(test)]
 mod tests {
     use super::{
-        native_options, player_scene, present_mode, profile_file, renderer_options, window_pixels,
-        ProjectRuntimeSettings,
+        native_options, player_icon, player_scene, present_mode, profile_file, renderer_options,
+        window_pixels, ProjectRuntimeSettings,
     };
     use egui_wgpu::wgpu;
     use std::ffi::OsStr;
@@ -465,7 +477,7 @@ mod tests {
         );
         assert!(startup_scene.is_file(), "{}", startup_scene.display());
 
-        let options = native_options(settings.window());
+        let options = native_options(&settings, player_icon(&settings));
         assert_eq!(
             options.viewport.inner_size,
             Some(egui::vec2(
@@ -478,6 +490,12 @@ mod tests {
             options.viewport.app_id.as_deref(),
             Some(super::PLAYER_APP_ID)
         );
+        assert_eq!(
+            settings.window().icon,
+            None,
+            "the sandbox uses the Calyx icon"
+        );
+        assert_eq!(options.viewport.icon, Some(crate::runtime::calyx_icon()));
     }
 
     #[test]
@@ -490,7 +508,9 @@ mod tests {
         assert_eq!(startup_scene, root.join("assets/rpg_poly/rpg_poly.cxscene"));
         assert!(startup_scene.is_file(), "{}", startup_scene.display());
         assert_eq!(
-            native_options(settings.window()).viewport.inner_size,
+            native_options(&settings, player_icon(&settings))
+                .viewport
+                .inner_size,
             Some(settings.window().inner_size())
         );
     }
