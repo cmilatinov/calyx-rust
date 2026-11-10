@@ -3,9 +3,13 @@
 //! bookkeeping. [`run_player`] hosts a linked project in the standalone player.
 
 mod host_command;
+mod icon;
 mod player;
 
 pub use host_command::{HostCommand, HostCommands};
+pub use icon::{
+    calyx_icon, decode_icon, player_icon, set_window_icons, CALYX_ICON_PNG, CALYX_ICON_SIZE,
+};
 pub use player::run_player;
 
 use std::fs;
@@ -31,12 +35,17 @@ pub struct RuntimeSettings {
     pub window: WindowSettings,
 }
 
-/// Window size, in logical points, that the game opens at.
+/// The game's window: its size, in logical points, and its icon.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct WindowSettings {
     pub width: u32,
     pub height: u32,
+    /// An image file for the window's icon, relative to the project root. The
+    /// player shows the Calyx icon when it is unset or cannot be loaded (see
+    /// [`player_icon`]).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub icon: Option<PathBuf>,
 }
 
 impl Default for WindowSettings {
@@ -44,6 +53,7 @@ impl Default for WindowSettings {
         Self {
             width: 1280,
             height: 720,
+            icon: None,
         }
     }
 }
@@ -299,6 +309,7 @@ mod tests {
                 window: WindowSettings {
                     width: 1024,
                     height: 768,
+                    icon: None,
                 },
             }
         );
@@ -339,6 +350,7 @@ mod tests {
         let window = WindowSettings {
             width: 0,
             height: 720,
+            icon: None,
         };
 
         assert_eq!(window.non_zero_size(), None);
@@ -349,6 +361,7 @@ mod tests {
         let window = WindowSettings {
             width: 1024,
             height: 0,
+            icon: None,
         };
 
         assert_eq!(window.inner_size(), WindowSettings::default().inner_size());

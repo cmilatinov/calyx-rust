@@ -32,7 +32,10 @@ use calyx_engine::render::{
     DrawCollection, GizmoOptions, ParticleSimulation, SceneRenderer, SceneRendererError,
     SceneRendererOptions,
 };
-use calyx_engine::runtime::{initial_render_size, wgpu_configuration, FrameCounter, HostCommand};
+use calyx_engine::runtime::{
+    calyx_icon, initial_render_size, set_window_icons, wgpu_configuration, FrameCounter,
+    HostCommand,
+};
 use calyx_engine::scene::{Scene, SceneManager};
 use calyx_engine::{profile_scope, profiler};
 use eframe::{wgpu, NativeOptions};
@@ -1122,13 +1125,15 @@ impl EditorApp {
             std::process::exit(1);
         };
 
+        let icon = calyx_icon();
         let options = NativeOptions {
             viewport: egui::ViewportBuilder {
                 inner_size: Some(egui::vec2(1600.0, 900.0)),
                 min_inner_size: Some(egui::vec2(1600.0, 900.0)),
                 decorations: Some(true),
                 ..Default::default()
-            },
+            }
+            .with_icon(icon.clone()),
             persist_window: true,
             renderer: eframe::Renderer::Wgpu,
             wgpu_options: wgpu_configuration(),
@@ -1141,7 +1146,10 @@ impl EditorApp {
         eframe::run_native(
             "Calyx",
             options,
-            Box::new(move |cc| Ok(Box::new(EditorApp::new(cc, project_path, log)?))),
+            Box::new(move |cc| {
+                set_window_icons(cc, &icon);
+                Ok(Box::new(EditorApp::new(cc, project_path, log)?))
+            }),
         )
     }
 }
