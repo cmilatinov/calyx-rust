@@ -394,9 +394,9 @@ fn drive_from(start: Vec3, yaw: f32, fps: usize, seconds: f32) -> Vec3 {
 
 #[test]
 fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
-    // Facing 45 degrees into the arena's +X perimeter wall, whose face is at
-    // x = 28.4, in the lane between it and the cover.
-    let start = vec3(26.0, 0.0, 0.0);
+    // Facing 45 degrees into the depot's border of barriers, whose face is
+    // at x = 32.44, in the lane between it and the cover.
+    let start = vec3(29.5, 0.0, 0.0);
     let yaw = std::f32::consts::FRAC_PI_4;
     let slow = drive_from(start, yaw, 30, 1.5);
     let fast = drive_from(start, yaw, 144, 1.5);
@@ -550,31 +550,32 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
             .unwrap_or_else(|| panic!("missing collider from {origin:?} toward {direction:?}"))
             .toi
     };
-    // Probe every one-metre wall join from immediately inside the pen.
-    for x in -26..=26 {
-        for (z, direction) in [(-8.0, -1.0), (52.0, 1.0)] {
-            let distance = hit_distance(vec3(x as f32, 0.8, z), vec3(0.0, 0.0, direction), 1.0);
-            assert!(
-                (distance - 0.4).abs() < 0.005,
-                "wall at x={x}, z={z}: {distance}"
-            );
-        }
-    }
-    for z in -5..=49 {
-        for side in [-1.0, 1.0] {
-            let distance =
-                hit_distance(vec3(side * 28.3, 0.8, z as f32), vec3(side, 0.0, 0.0), 1.0);
-            assert!((distance - 0.1).abs() < 0.005, "wall at z={z}: {distance}");
-        }
-    }
+    // The border is closed: with only a 0.4 m round's half width of
+    // clearance, no drive from outside it reaches the spawn, so no seam
+    // between its segments, or between it and the creek's blockers where
+    // the creek leaves, lets anything through.
+    let grid = DriveGrid::with_clearance(runner.scene(), &[], 0.4);
+    let outside = grid.drives_from(grid.cell(0));
+    assert!(
+        outside[grid.index(ground_of(runner.scene(), "Player Spawn"))].is_infinite(),
+        "the border leaks"
+    );
     // Every solid rises to the shell-blocking top, so the barrier's widest
-    // foot band now meets a shot at gun height first.
-    let distance = hit_distance(vec3(0.0, 0.8, 16.0), vec3(0.0, 0.0, 1.0), 6.0);
-    assert!((distance - 3.44).abs() < 0.01, "centre barrier: {distance}");
+    // foot band now meets a shot at gun height first: 4 m in front of the
+    // turned barrier, square to it.
+    let barrier = runner
+        .scene()
+        .world_transform(object_named(runner.scene(), "Arena Cover Spawn Barrier"));
+    let distance = hit_distance(
+        barrier.transform_position(&vec3(0.0, 0.8, -4.0)),
+        barrier.rotation * vec3(0.0, 0.0, 1.0),
+        6.0,
+    );
+    assert!((distance - 3.44).abs() < 0.01, "spawn barrier: {distance}");
     // The rotated sandbag stack is a thin pile, not a full-depth
     // rectangular block. A shot meets the bottom row, risen to the
     // shell-blocking top, but air beside the pile must stay clear.
-    let sandbags = object_named(runner.scene(), "Arena Cover Right Sandbags");
+    let sandbags = object_named(runner.scene(), "Arena Cover Orchard Sandbags");
     let sandbag_pose = runner.scene().world_transform(sandbags);
     let point = |p: Vec3| (sandbag_pose.matrix() * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz();
     let direction = |d| sandbag_pose.rotation * d;
@@ -592,7 +593,7 @@ fn authored_arena_colliders_close_wall_joins_and_stop_shots_at_cover() {
             .cast_ray(
                 beside,
                 direction(vec3(-1.0, 0.0, 0.0)),
-                4.0,
+                3.5,
                 true,
                 QueryFilter::only_fixed()
             )
@@ -615,7 +616,7 @@ fn authored_rock_shoulders_stop_shells_and_crowns_leave_air() {
     use rapier3d::pipeline::QueryFilter;
     let (copy, assets) = sandbox_assets();
     let scene = load_sandbox_scene(&copy, &assets);
-    let boulder = object_named(&scene, "Arena Cover West Boulder");
+    let boulder = object_named(&scene, "Arena Cover Spawn Boulder");
     let transform = scene.world_transform(boulder);
     let point = |p: Vec3| (transform.matrix() * nalgebra_glm::vec4(p.x, p.y, p.z, 1.0)).xyz();
     let direction = transform.rotation * vec3(0.0, 0.0, 1.0);
@@ -746,17 +747,25 @@ fn player_rounds_destroy_a_sentry_on_the_ground() {
     }
 }
 
+/// Tanks cross the creek on both bridges, square over the deck from one
+/// bank to the other, staying between the rails, 0.75 m clear of the hull
+/// either side.
 #[test]
-fn both_authored_flank_lanes_are_driveable() {
-    for x in [-20.0, 20.0] {
-        let final_position = drive_from(vec3(x, 0.0, 0.0), 0.0, 60, 6.0);
+fn tanks_cross_the_creek_on_both_bridges() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    for name in ["Arena Prop Bridge West", "Arena Prop Bridge East"] {
+        let bridge = scene.world_transform(object_named(&scene, name));
+        let along = bridge.rotation * vec3(0.0, 0.0, 1.0);
+        let yaw = along.x.atan2(along.z);
+        let start = bridge.position - along * 7.0;
+        let end = drive_from(vec3(start.x, 0.0, start.z), yaw, 60, 3.0);
+        let travelled = (end - start).dot(&along);
+        assert!(travelled > 12.0, "{name}: stopped at {end:?}");
+        let off_line = (end - start - along * travelled).xz().norm();
         assert!(
-            final_position.z > 37.0,
-            "flank x={x} blocked at {final_position:?}"
-        );
-        assert!(
-            (final_position.x - x).abs() < 0.1,
-            "unexpected deflection: {final_position:?}"
+            off_line < 0.5,
+            "{name}: deflected {off_line} m to {end:?} from {start:?}"
         );
     }
 }
@@ -1581,39 +1590,50 @@ fn fog_sight(scene: &Scene) -> calyx_engine::component::FogOfWarSight {
         .expect("the arena's fog of war shows the side's sight")
 }
 
-// The interior wall in the east middle: a run along Z at world x = 10, from
-// z = 32.4 to 39.6, 1.2 m thick.
+// The interior wall in the barn yard, turned 43 degrees: a 7.2 m run along
+// its local X, 1.2 m thick, that screens the west ramp from the west bridge.
 #[test]
 fn interior_walls_stop_rounds_and_block_sight() {
     let ground = |p: Vec3| nalgebra_glm::vec2(p.x, p.z);
-    // West of the wall, facing east across it.
-    let (mut runner, tank) =
-        raised_area_runner(vec3(4.0, 0.0, 36.0), std::f32::consts::FRAC_PI_2, 60);
+    let (copy, assets) = sandbox_assets();
+    let wall = load_sandbox_scene(&copy, &assets);
+    let wall = wall.world_transform(object_named(&wall, "Arena Wall Barn Yard"));
+    // A point in the wall's frame: along it from its first end piece's
+    // root (its run spans -0.6 to 6.6) and out from its centre line.
+    let at = |along: f32, out: f32| {
+        let p = wall.transform_position(&vec3(along, 0.0, out));
+        vec3(p.x, 0.0, p.z)
+    };
+    let normal = wall.rotation * vec3(0.0, 0.0, 1.0);
+    // In front of the wall's middle, facing across it.
+    let start = at(3.0, -5.0);
+    let (mut runner, tank) = raised_area_runner(start, normal.x.atan2(normal.z), 60);
     let target = object_named(runner.scene(), "Target A");
-    let place = |runner: &mut HeadlessSceneRunner, x: f32, z: f32| {
+    let place = |runner: &mut HeadlessSceneRunner, p: Vec3| {
         let mut pose = runner.scene().world_transform(target);
-        pose.position = vec3(x, pose.position.y, z);
+        pose.position = vec3(p.x, pose.position.y, p.z);
         runner
             .scene_mut()
             .set_world_transform(target, pose.matrix());
     };
     // Behind the wall, well within the tank's vision range.
-    place(&mut runner, 15.0, 36.0);
+    let behind = at(3.0, 3.5);
+    place(&mut runner, behind);
     hold(&mut runner, None, 1.0, 60);
-    let behind = runner.scene().world_transform(target).position;
     let from = ground(runner.scene().world_transform(tank).position);
     assert!(
         !runner.scene().is_visible(target),
         "fog hides the target behind the wall"
     );
     // The wall casts a fog shadow over the ground behind it, and only
-    // behind it: the ground the same distance away past its end is lit.
+    // behind it: the ground about as far away past its end is lit.
+    let past_end = at(-4.5, 1.5);
     let sight = fog_sight(runner.scene());
     assert!(!sight.clear_line(from, ground(behind)));
-    assert!(sight.clear_line(from, nalgebra_glm::vec2(12.0, 28.0)));
+    assert!(sight.clear_line(from, ground(past_end)));
 
     // Rounds fired at the target stop at the wall's near face.
-    aim_at(&mut runner, vec3(behind.x, 0.0, behind.z));
+    aim_at(&mut runner, behind);
     let full_health = current_health(runner.scene(), target);
     runner.press_key(egui::Key::Space);
     let mut rounds = 0;
@@ -1627,20 +1647,24 @@ fn interior_walls_stop_rounds_and_block_sight() {
                 .is_some()
             {
                 rounds += 1;
-                farthest = farthest.max(scene.world_transform(object).position.x);
+                let out = (scene.world_transform(object).position - wall.position).dot(&normal);
+                farthest = farthest.max(out);
             }
         }
     }
     runner.release_key(egui::Key::Space);
     assert!(rounds > 0, "the tank fired");
-    assert!(farthest < 9.4, "a round reached x = {farthest}");
+    assert!(
+        farthest < -0.6,
+        "a round reached {farthest} m out from the wall"
+    );
     assert_eq!(current_health(runner.scene(), target), full_health);
 
     // Past the wall's end, the same tank sees the target and hits it.
-    place(&mut runner, 12.0, 28.0);
+    place(&mut runner, past_end);
     hold(&mut runner, None, 1.0, 60);
     assert!(runner.scene().is_visible(target), "the target is in sight");
-    aim_at(&mut runner, vec3(12.0, 0.0, 28.0));
+    aim_at(&mut runner, past_end);
     fire_until_hit(&mut runner, target);
 }
 
@@ -1703,91 +1727,172 @@ fn distance_to_hull(point: nalgebra_glm::Vec2, hull: &[nalgebra_glm::Vec2]) -> f
     }
 }
 
-/// With the interior walls among the ramps, the platform and the cover,
-/// every patch of ground a tank fits on is one drive from the spawn: no
-/// wall closes off a pocket a tank could reach some other way, or strands
-/// it, and the feet of both ramps and every unit stay reachable.
-#[test]
-fn the_whole_pen_is_one_drive_from_the_spawn() {
-    use calyx_engine::component::{ColliderShape, ComponentCollider};
-    use sandbox::terrain::ComponentDriveSurface;
-    let (copy, assets) = sandbox_assets();
-    let scene = load_sandbox_scene(&copy, &assets);
-    let arena = object_named(&scene, "Arena");
-    // Everything in the pen that stops a tank on the ground: every solid
-    // but the drive surfaces, which tanks ride.
-    let obstacles: Vec<_> = scene
-        .descendants(arena)
-        .filter(|&object| {
-            scene
-                .read_component::<ComponentDriveSurface, _, _>(object, |_| ())
-                .is_none()
-        })
-        .filter_map(|object| {
-            let shape = scene
-                .read_component::<ComponentCollider, _, _>(object, |collider| collider.shape)?;
-            let ColliderShape::Cuboid { half_extents } = shape else {
-                panic!("{} is not a box", scene.name(object));
-            };
-            Some(footprint(&scene.world_transform(object), half_extents))
-        })
-        .collect();
-    assert!(
-        scene.descendants(arena).any(|object| scene
-            .name(object)
-            .starts_with("Arena Wall West Middle collision")),
-        "the arena has interior walls"
-    );
-    // A tank fits where its hull's half width clears every obstacle.
-    let clearance = 1.2;
-    let step = 0.25;
-    let (min_x, max_x, min_z, max_z) = (-28.4, 28.4, -8.4, 52.4);
-    let columns = ((max_x - min_x) / step) as usize;
-    let rows = ((max_z - min_z) / step) as usize;
-    let cell = |c: usize, r: usize| {
+/// Where a tank fits in the pen, on a grid: every cell whose centre its
+/// hull's half width keeps clear of each solid that stops tanks on the
+/// ground (every arena collider but the drive surfaces, which tanks ride,
+/// and the brush, which stops nothing), the creek's blockers and the
+/// bridges' rails included.
+struct DriveGrid {
+    free: Vec<bool>,
+    columns: usize,
+    rows: usize,
+}
+
+impl DriveGrid {
+    const STEP: f32 = 0.25;
+    // Round the border's outer faces, with a free margin outside it.
+    const MIN_X: f32 = -36.0;
+    const MAX_X: f32 = 36.0;
+    const MIN_Z: f32 = -15.0;
+    const MAX_Z: f32 = 59.0;
+
+    /// The pen's grid, with `extra` footprints closed as well.
+    fn new(scene: &Scene, extra: &[Vec<nalgebra_glm::Vec2>]) -> Self {
+        Self::with_clearance(scene, extra, 1.2)
+    }
+
+    /// The grid for a body `clearance` metres wide either side.
+    fn with_clearance(scene: &Scene, extra: &[Vec<nalgebra_glm::Vec2>], clearance: f32) -> Self {
+        use calyx_engine::component::{ColliderShape, ComponentCollider};
+        use sandbox::terrain::ComponentDriveSurface;
+        let arena = object_named(scene, "Arena");
+        let mut obstacles: Vec<_> = scene
+            .descendants(arena)
+            .filter(|&object| {
+                scene
+                    .read_component::<ComponentDriveSurface, _, _>(object, |_| ())
+                    .is_none()
+                    && scene
+                        .ancestor_with::<sandbox::brush::ComponentBrush>(object)
+                        .is_none()
+            })
+            .filter_map(|object| {
+                let shape = scene
+                    .read_component::<ComponentCollider, _, _>(object, |collider| collider.shape)?;
+                let ColliderShape::Cuboid { half_extents } = shape else {
+                    panic!("{} is not a box", scene.name(object));
+                };
+                Some(footprint(&scene.world_transform(object), half_extents))
+            })
+            .collect();
+        obstacles.extend(extra.iter().cloned());
+        // A tank fits where its hull's half width clears every obstacle.
+        let columns = ((Self::MAX_X - Self::MIN_X) / Self::STEP) as usize;
+        let rows = ((Self::MAX_Z - Self::MIN_Z) / Self::STEP) as usize;
+        let mut grid = Self {
+            free: Vec::new(),
+            columns,
+            rows,
+        };
+        grid.free = (0..rows * columns)
+            .map(|i| {
+                let p = grid.cell(i);
+                obstacles
+                    .iter()
+                    .all(|hull| distance_to_hull(p, hull) > clearance)
+            })
+            .collect();
+        grid
+    }
+
+    fn cell(&self, i: usize) -> nalgebra_glm::Vec2 {
         nalgebra_glm::vec2(
-            min_x + (c as f32 + 0.5) * step,
-            min_z + (r as f32 + 0.5) * step,
+            Self::MIN_X + ((i % self.columns) as f32 + 0.5) * Self::STEP,
+            Self::MIN_Z + ((i / self.columns) as f32 + 0.5) * Self::STEP,
         )
-    };
-    let free: Vec<bool> = (0..rows)
-        .flat_map(|r| (0..columns).map(move |c| (c, r)))
-        .map(|(c, r)| {
-            obstacles
-                .iter()
-                .all(|hull| distance_to_hull(cell(c, r), hull) > clearance)
-        })
-        .collect();
-    let index = |p: nalgebra_glm::Vec2| {
-        let c = ((p.x - min_x) / step) as usize;
-        let r = ((p.y - min_z) / step) as usize;
-        r * columns + c
-    };
-    let spawn = scene
-        .world_transform(object_named(&scene, "Player Spawn"))
-        .position;
-    let mut reached = vec![false; free.len()];
-    let mut queue = vec![index(nalgebra_glm::vec2(spawn.x, spawn.z))];
-    assert!(free[queue[0]], "a tank fits at the spawn");
-    reached[queue[0]] = true;
-    while let Some(i) = queue.pop() {
-        let (c, r) = (i % columns, i / columns);
-        let neighbours = [
-            (c > 0).then(|| i - 1),
-            (c + 1 < columns).then(|| i + 1),
-            (r > 0).then(|| i - columns),
-            (r + 1 < rows).then(|| i + columns),
-        ];
-        for next in neighbours.into_iter().flatten() {
-            if free[next] && !reached[next] {
-                reached[next] = true;
-                queue.push(next);
+    }
+
+    fn index(&self, p: nalgebra_glm::Vec2) -> usize {
+        let c = ((p.x - Self::MIN_X) / Self::STEP) as usize;
+        let r = ((p.y - Self::MIN_Z) / Self::STEP) as usize;
+        r * self.columns + c
+    }
+
+    /// The shortest drive, in metres, from `start` to every cell: moving
+    /// between neighbouring free cells, diagonally only where both cells
+    /// beside the diagonal are free. Infinite where no drive reaches.
+    fn drives_from(&self, start: nalgebra_glm::Vec2) -> Vec<f32> {
+        use std::cmp::Reverse;
+        use std::collections::BinaryHeap;
+        let mut distance = vec![f32::INFINITY; self.free.len()];
+        let first = self.index(start);
+        assert!(self.free[first], "a tank fits at {start:?}");
+        distance[first] = 0.0;
+        // Distances in micrometres, so the heap orders whole numbers.
+        let mut queue = BinaryHeap::from([Reverse((0u64, first))]);
+        let (columns, rows) = (self.columns as isize, self.rows as isize);
+        while let Some(Reverse((_, i))) = queue.pop() {
+            let (c, r) = ((i % self.columns) as isize, (i / self.columns) as isize);
+            for (dc, dr) in [
+                (-1, 0),
+                (1, 0),
+                (0, -1),
+                (0, 1),
+                (-1, -1),
+                (1, -1),
+                (-1, 1),
+                (1, 1),
+            ] {
+                let (nc, nr) = (c + dc, r + dr);
+                if nc < 0 || nr < 0 || nc >= columns || nr >= rows {
+                    continue;
+                }
+                let next = (nr * columns + nc) as usize;
+                let diagonal = dc != 0 && dr != 0;
+                if !self.free[next]
+                    || (diagonal
+                        && !(self.free[(r * columns + nc) as usize]
+                            && self.free[(nr * columns + c) as usize]))
+                {
+                    continue;
+                }
+                let step = if diagonal {
+                    Self::STEP * std::f32::consts::SQRT_2
+                } else {
+                    Self::STEP
+                };
+                let d = distance[i] + step;
+                if d < distance[next] {
+                    distance[next] = d;
+                    queue.push(Reverse(((d * 1e6) as u64, next)));
+                }
             }
         }
+        distance
     }
-    let stranded: Vec<_> = (0..free.len())
-        .filter(|&i| free[i] && !reached[i])
-        .map(|i| cell(i % columns, i / columns))
+}
+
+fn ground_of(scene: &Scene, name: &str) -> nalgebra_glm::Vec2 {
+    scene
+        .world_transform(object_named(scene, name))
+        .position
+        .xz()
+}
+
+/// With the interior walls among the ramps, the platform, the cover and
+/// the creek, every patch of ground a tank fits on is one drive from the
+/// spawn: no wall closes off a pocket a tank could reach some other way,
+/// or strands it, and the feet of both ramps, both spawns and every unit
+/// stay reachable.
+#[test]
+fn the_whole_pen_is_one_drive_from_the_spawn() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    assert!(
+        scene
+            .descendants(object_named(&scene, "Arena"))
+            .any(|object| scene
+                .name(object)
+                .starts_with("Arena Wall Barn Yard collision")),
+        "the arena has interior walls"
+    );
+    let grid = DriveGrid::new(&scene, &[]);
+    let drives = grid.drives_from(ground_of(&scene, "Player Spawn"));
+    // Outside the border: what a drive from the grid's corner reaches.
+    let outside = grid.drives_from(grid.cell(0));
+    let stranded: Vec<_> = (0..grid.free.len())
+        .filter(|&i| grid.free[i] && drives[i].is_infinite() && outside[i].is_infinite())
+        .map(|i| grid.cell(i))
         .collect();
     assert!(
         stranded.is_empty(),
@@ -1795,16 +1900,90 @@ fn the_whole_pen_is_one_drive_from_the_spawn() {
         stranded.len(),
         stranded.first()
     );
-    // The feet of both ramps, and every unit.
+    // The feet of both ramps, the north spawn, and every unit.
     for (name, x, z) in [("south ramp", 20.0, 32.0), ("west ramp", 6.0, 46.0)] {
         assert!(
-            reached[index(nalgebra_glm::vec2(x, z))],
+            drives[grid.index(nalgebra_glm::vec2(x, z))].is_finite(),
             "the {name}'s foot"
         );
     }
-    for name in ["Target A", "Target B", "Sentry"] {
-        let p = scene.world_transform(object_named(&scene, name)).position;
-        assert!(reached[index(nalgebra_glm::vec2(p.x, p.z))], "{name}");
+    for name in ["North Spawn", "Target A", "Target B", "Sentry"] {
+        let p = ground_of(&scene, name);
+        assert!(drives[grid.index(p)].is_finite(), "{name}");
+    }
+}
+
+/// The creek splits the pen between the teams: the two spawns stand on
+/// opposite banks, and with the bridges' decks closed no drive joins them,
+/// so no gap between the creek's blockers lets a tank ford it.
+#[test]
+fn the_creek_splits_the_spawns_and_only_the_bridges_cross_it() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let decks: Vec<_> = ["West", "East"]
+        .iter()
+        .map(|name| {
+            let deck =
+                scene.world_transform(object_named(&scene, &format!("Arena Prop Bridge {name}")));
+            footprint(&deck, vec3(2.0, 0.5, 4.5))
+        })
+        .collect();
+    let grid = DriveGrid::new(&scene, &decks);
+    let drives = grid.drives_from(ground_of(&scene, "Player Spawn"));
+    assert!(
+        drives[grid.index(ground_of(&scene, "North Spawn"))].is_infinite(),
+        "a drive crosses the creek off the bridges"
+    );
+    let open = DriveGrid::new(&scene, &[]).drives_from(ground_of(&scene, "Player Spawn"));
+    assert!(open[grid.index(ground_of(&scene, "North Spawn"))].is_finite());
+}
+
+/// The map is fair to both spawns although nothing on it is mirrored: each
+/// team's drive from its spawn to its nearest bridge, and to the map's
+/// centre (the nearest ground a tank fits on within 6 m of it, on its own
+/// bank, since the creek runs through it), takes within 15 % as long as the
+/// other team's. A drive's time is its length at the tank's top speed.
+#[test]
+fn both_teams_reach_their_nearest_crossing_and_the_centre_equally_fast() {
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let speed = scene
+        .read_component::<ComponentTankController, _, _>(object_named(&scene, "Tank"), |c| {
+            c.move_speed
+        })
+        .unwrap();
+    let grid = DriveGrid::new(&scene, &[]);
+    let centre = scene
+        .world_transform(object_named(&scene, "Arena"))
+        .position
+        .xz();
+    let bridges: Vec<_> = ["West", "East"]
+        .iter()
+        .map(|name| ground_of(&scene, &format!("Arena Prop Bridge {name}")))
+        .collect();
+    let times = |spawn: &str| {
+        let drives = grid.drives_from(ground_of(&scene, spawn));
+        let crossing = bridges
+            .iter()
+            .map(|&bridge| drives[grid.index(bridge)])
+            .fold(f32::INFINITY, f32::min);
+        let to_centre = (0..drives.len())
+            .filter(|&i| (grid.cell(i) - centre).norm() <= 6.0)
+            .map(|i| drives[i])
+            .fold(f32::INFINITY, f32::min);
+        (crossing / speed, to_centre / speed)
+    };
+    let (south, north) = (times("Player Spawn"), times("North Spawn"));
+    println!("south (crossing, centre) {south:?} s, north {north:?} s");
+    for (what, a, b) in [
+        ("nearest crossing", south.0, north.0),
+        ("centre", south.1, north.1),
+    ] {
+        assert!(a.is_finite() && b.is_finite(), "{what}: {a} s, {b} s");
+        assert!(
+            (a - b).abs() <= 0.15 * a.min(b),
+            "{what}: the south takes {a} s, the north {b} s"
+        );
     }
 }
 
@@ -1860,8 +2039,10 @@ fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
             "{name} draws outline styles {found:?}, not {expected}"
         );
     }
+    // The terrain layer: the border's stone segments, the interior walls,
+    // the platform and its ramps.
     assert!(
-        terrain > 50 && props > 30,
+        terrain > 12 && props > 30,
         "{terrain} terrain, {props} props"
     );
 
@@ -1877,46 +2058,106 @@ fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
     }
 }
 
-/// The farmland's creek stops tanks at its bank, but rounds fly over it and
-/// sight crosses it: a tank driving south at it from the field west of the
-/// lane stops short of the water, then sees and hits a target on the far
-/// bank.
+/// The creek stops tanks at its bank, but rounds fly over it and sight
+/// crosses it: a tank driving south at it between the bridges stops short
+/// of the water, then sees and hits a target on the far bank.
 #[test]
 fn the_creek_stops_tanks_but_not_rounds_or_sight() {
     // North of the creek, facing south across it; its north shore here is
-    // at about z = 4.8.
-    let (mut runner, tank) = raised_area_runner(vec3(-26.0, 0.0, 10.0), std::f32::consts::PI, 60);
+    // at about z = 27.2.
+    let (mut runner, tank) = raised_area_runner(vec3(15.5, 0.0, 34.0), std::f32::consts::PI, 60);
     hold(&mut runner, Some(egui::Key::W), 3.0, 60);
     let stopped = runner.scene().world_transform(tank).position;
     assert!(
-        stopped.z < 8.0,
+        stopped.z < 32.0,
         "the tank drove towards the creek: {stopped:?}"
     );
     assert!(
-        stopped.z > 4.8,
+        stopped.z > 27.2,
         "the tank drove into the creek: {stopped:?}"
     );
     // On the far bank, south of the water.
     let target = object_named(runner.scene(), "Target A");
     let mut pose = runner.scene().world_transform(target);
-    pose.position = vec3(-25.0, pose.position.y, -4.5);
+    pose.position = vec3(10.5, pose.position.y, 19.0);
     runner
         .scene_mut()
         .set_world_transform(target, pose.matrix());
     hold(&mut runner, None, 1.0, 60);
     assert!(runner.scene().is_visible(target), "sight crosses the creek");
-    aim_at(&mut runner, vec3(-25.0, 0.0, -4.5));
+    aim_at(&mut runner, vec3(10.5, 0.0, 19.0));
     fire_until_hit(&mut runner, target);
 }
 
-/// The bridge carries the west sand lane over the creek: a tank at the
-/// lane's south end, past the creek, drives north over it to the field.
+/// Every patch of brush is the union of its volumes, of whatever outline,
+/// and its grass grows only inside it: the area each clump of a patch may
+/// stand in lies wholly inside the patch's volumes, so a tank among the
+/// visible blades is in the brush. The arena's patches are not all
+/// rectangles.
 #[test]
-fn tanks_cross_the_creek_on_the_bridge() {
-    let end = drive_from(vec3(-20.0, 0.0, -5.0), 0.0, 60, 3.0);
+fn brush_grass_grows_only_inside_its_patchs_outline() {
+    use calyx_engine::component::{ColliderShape, ComponentCollider, ComponentFoliage};
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let mut patches = 0;
+    let mut clumps = 0;
+    let mut round = 0;
+    for root in scene.objects() {
+        if scene
+            .read_component::<sandbox::brush::ComponentBrush, _, _>(root, |_| ())
+            .is_none()
+        {
+            continue;
+        }
+        patches += 1;
+        let volumes: Vec<_> = scene
+            .descendants(root)
+            .filter_map(|part| {
+                let shape = scene
+                    .read_component::<ComponentCollider, _, _>(part, |collider| collider.shape)?;
+                Some((scene.world_transform(part), shape))
+            })
+            .collect();
+        round += volumes
+            .iter()
+            .filter(|(_, shape)| matches!(shape, ColliderShape::Capsule { .. }))
+            .count();
+        let inside = |p: Vec3| {
+            volumes.iter().any(|(pose, shape)| {
+                let local = pose.inverse_transform_position(&p);
+                match *shape {
+                    ColliderShape::Cuboid { half_extents } => {
+                        local.x.abs() <= half_extents.x + 1e-4
+                            && local.z.abs() <= half_extents.z + 1e-4
+                    }
+                    ColliderShape::Capsule { radius, .. } => local.xz().norm() <= radius + 1e-4,
+                    _ => panic!("{} has an unexpected volume", scene.name(root)),
+                }
+            })
+        };
+        for cell in scene.descendants(root) {
+            let Some(area) =
+                scene.read_component::<ComponentFoliage, _, _>(cell, |foliage| foliage.area)
+            else {
+                continue;
+            };
+            clumps += 1;
+            let pose = scene.world_transform(cell);
+            for (x, z) in [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)] {
+                let corner =
+                    pose.transform_position(&vec3(x * area.x * 0.5, 0.0, z * area.y * 0.5));
+                assert!(
+                    inside(corner),
+                    "{}'s grass reaches {corner:?}, outside the patch",
+                    scene.name(cell)
+                );
+            }
+        }
+    }
+    println!("{patches} patches, {clumps} clumps");
     assert!(
-        end.z > 8.0,
-        "the tank stopped at {end:?}, short of the far bank"
+        patches >= 6 && clumps > 60,
+        "{patches} patches, {clumps} clumps"
     );
-    assert!((end.x + 20.0).abs() < 0.1, "unexpected deflection: {end:?}");
+    assert!(round > 0, "some patches have rounded outlines");
 }

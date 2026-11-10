@@ -114,7 +114,9 @@ pub(crate) struct MinimapBlip {
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct MinimapState {
     pub view: MinimapView,
-    /// The arena floor, walls included, when there is one.
+    /// The arena floor, walls included, when there is one and its
+    /// rectangle is the playable area's edge; an arena bounded by a border
+    /// of another shape has none, and the border's cover outlines it.
     pub floor: Option<GroundRect>,
     /// Each wall-height block of cover.
     pub cover: Vec<GroundRect>,
@@ -148,7 +150,7 @@ pub(crate) fn minimap_state_from(
     let (view, floor, cover) = match &frame.arena {
         Some(arena) => (
             MinimapView::fitting(arena.floor, right),
-            Some(arena.floor),
+            arena.floor_is_edge.then_some(arena.floor),
             arena.cover.clone(),
         ),
         None => (

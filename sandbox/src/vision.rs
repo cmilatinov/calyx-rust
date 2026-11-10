@@ -117,12 +117,14 @@ pub(crate) fn cover_entry(start: Vec2, end: Vec2, cover: GroundRect) -> Option<f
 }
 
 /// Whether an authored arena collider named `name` blocks sight: the walls,
-/// the boxes (crates and supply crates) and the hedgerows' dense leaves.
+/// the border, whatever it is built of, the boxes (crates and supply
+/// crates) and the hedgerows' dense leaves.
 /// Low cover such as barriers, sandbags and rocks stops rounds but not
 /// sight. A collider outside [`crate::collision::SIGHT_GROUP`] never blocks
 /// sight, whatever its name.
 fn blocks_sight(name: &str) -> bool {
     name.starts_with("Arena Wall")
+        || name.starts_with("Arena Cover Border")
         || (name.starts_with("Arena Cover")
             && (name.contains("Crate") || name.contains("Supply") || name.contains("Hedgerow")))
 }
@@ -136,6 +138,11 @@ pub(crate) struct ArenaGeometry {
     pub cover: Vec<GroundRect>,
     /// The walls and the cover that blocks sight; see [`blocks_sight`].
     pub sight_blockers: Vec<GroundRect>,
+    /// Whether the floor's rectangle is the playable area's edge, as a
+    /// generated arena's and a walled rectangle's is. An authored arena
+    /// whose border is not a rectangle nests its border's solids as cover,
+    /// and their outline is the edge.
+    pub floor_is_edge: bool,
 }
 
 /// Reads the first arena's ground geometry from its live cover objects.
@@ -181,6 +188,7 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
                 floor,
                 sight_blockers: cover.clone(),
                 cover,
+                floor_is_edge: true,
             });
         }
         // Generated cover is one unit cube per cell; follow its live pose
@@ -205,12 +213,14 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
                 .filter(|(_, blocks)| *blocks)
                 .map(|(rect, _)| *rect)
                 .collect(),
+            floor_is_edge: true,
         });
     }
     // Authored kit instances have independent collider children; read their
     // actual pose, including edits.
     let mut cover = Vec::new();
     let mut sight_blockers = Vec::new();
+    let mut perimeter_strips = false;
     for child in scene.descendants(object) {
         let (is_cover, blocks_by_name) = scene
             .read_component::<ComponentID, _, _>(child, |id| {
@@ -230,6 +240,7 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
         else {
             continue;
         };
+        perimeter_strips |= blocks_by_name && scene.parent(child) == Some(object);
         let rect = GroundRect::placed(
             &scene.world_transform(child),
             Vec3::zeros(),
@@ -246,6 +257,8 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
         floor,
         cover,
         sight_blockers,
+        // Without perimeter strips, the border's nested solids bound it.
+        floor_is_edge: perimeter_strips,
     })
 }
 

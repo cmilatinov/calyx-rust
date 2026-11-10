@@ -1,8 +1,8 @@
-//! The southwest quadrant as a farmland front: a sunken creek that comes in
-//! under the west wall, bends past the farm and leaves under the south
-//! wall, crossed by a bridge on the west sand lane; a ruined farmhouse, a
-//! water tower, hedgerows and fields of crop rows; and fields, fences and
-//! trees outside the walls.
+//! The farmland: a sunken creek that comes in under the west wall, bends
+//! deep into the south half past the farm, then runs straighter through the
+//! north half and leaves under the east wall, crossed by two bridges at
+//! uneven positions; the ruined farmhouse, a water tower and fields of crop
+//! rows in the southwest; and fields, fences and trees outside the walls.
 //!
 //! Every position is in the Arena's frame, where the pen spans x -30..30
 //! and z -32..32 and the spawn is at (0, -22).
@@ -43,26 +43,39 @@ const BLOCKER_BOTTOM: f32 = WATER_Y;
 const BLOCKER_TOP: f32 = 1.4;
 
 /// The creek's centreline, from upstream (west, outside the pen) to
-/// downstream (south, outside the pen), and its width at each point: 6 to
-/// 8 m, with bends about 15 to 20 m apart.
-const CREEK: [(f32, f32, f32); 12] = [
-    (-60.0, -26.0, 7.0),
-    (-46.0, -16.0, 8.0),
-    (-34.0, -17.0, 7.5),
-    (-26.0, -20.5, 6.5),
-    (-20.0, -21.5, 5.5),
-    (-14.0, -23.0, 6.5),
-    (-10.5, -26.0, 6.5),
-    (-11.0, -29.5, 6.5),
-    (-13.5, -33.0, 6.5),
-    (-10.0, -42.0, 8.0),
-    (-16.0, -54.0, 7.5),
-    (-12.0, -66.0, 7.0),
+/// downstream (east, outside the pen), and its width at each point: 6 to
+/// 8 m. Inside the pen it bends deep into the south half past the farm,
+/// crosses the middle on a diagonal and runs straighter through the north
+/// half to the east wall; outside, it keeps meandering to the apron's edge.
+const CREEK: [(f32, f32, f32); 20] = [
+    (-95.0, 13.0, 8.0),
+    (-74.0, 8.0, 7.5),
+    (-55.0, 11.0, 8.0),
+    (-40.0, 6.5, 7.0),
+    (-30.0, 1.5, 6.5),
+    (-23.5, -4.5, 6.5),
+    (-17.5, -8.0, 7.0),
+    (-11.5, -6.0, 6.5),
+    (-7.0, -2.8, 6.0),
+    (-2.0, -0.4, 6.5),
+    (4.0, 1.0, 7.0),
+    (10.5, 1.5, 7.0),
+    (16.0, 2.0, 6.5),
+    (21.0, 2.5, 6.0),
+    (26.0, 3.5, 6.5),
+    (32.0, 6.5, 7.0),
+    (42.0, 10.0, 7.5),
+    (56.0, 7.0, 8.0),
+    (73.0, 12.0, 7.5),
+    (95.0, 9.0, 8.0),
 ];
 
-/// The bridge carries the west sand lane, centred on this x, over the creek.
-pub const BRIDGE_X: f32 = -20.0;
-/// Half the clear width between the bridge's rails, and their thickness.
+/// The bridges, `(name, x)`: each stands on the creek where its centreline
+/// crosses `x`, its deck square across the water. The west one crosses
+/// the diagonal run near the centre in the open, the east one the straight
+/// run far east, at the foot of the platform's south ramp.
+pub const BRIDGES: [(&str, f32); 2] = [("West", -5.0), ("East", 20.0)];
+/// Half the clear width between a bridge's rails, and their thickness.
 const BRIDGE_HALF_WIDTH: f32 = 1.9;
 const RAIL_THICKNESS: f32 = 0.3;
 const BRIDGE_LENGTH: f32 = 9.0;
@@ -94,29 +107,33 @@ struct Field {
     rows_along_x: bool,
 }
 
-const FIELDS: [Field; 5] = [
-    // Beside the farmhouse, north of the spawn.
+const FIELDS: [Field; 6] = [
+    // The farm's field, between the water tower and the creek.
     Field {
-        rect: Rect::new(-6, -17, -2, -7),
+        rect: Rect::new(-27, -23, -23, -15),
         rows_along_x: false,
     },
-    // West of the lane, north of the creek.
+    // Outside, beyond the west wall, the south wall, the north wall and
+    // the east wall.
     Field {
-        rect: Rect::new(-28, -14, -23, -7),
-        rows_along_x: true,
-    },
-    // Outside, beyond the west wall and the south wall.
-    Field {
-        rect: Rect::new(-46, -9, -33, 6),
+        rect: Rect::new(-46, -17, -33, -3),
         rows_along_x: false,
     },
     Field {
-        rect: Rect::new(-44, -46, -21, -35),
+        rect: Rect::new(-44, -48, -21, -38),
         rows_along_x: true,
     },
     Field {
         rect: Rect::new(-2, -47, 14, -35),
         rows_along_x: true,
+    },
+    Field {
+        rect: Rect::new(-22, 35, -4, 45),
+        rows_along_x: true,
+    },
+    Field {
+        rect: Rect::new(34, -24, 46, -8),
+        rows_along_x: false,
     },
 ];
 
@@ -127,14 +144,47 @@ const TOWER: Vec3 = Vec3::new(-26.0, 0.0, -28.0);
 /// included, leaving a gap too narrow for a tank.
 pub const TOWER_SOLID: f32 = 3.0;
 
-/// The creek's water and cross-sections, and the bridge over it.
+/// The creek's water and cross-sections, and the bridges over it.
 pub struct Creek {
     pub water: ComponentWater,
     sections: Vec<WaterSection>,
-    /// The section under the middle of the bridge.
-    bridge: WaterSection,
-    /// The z where the bridge's deck is centred.
-    bridge_z: f32,
+    /// The section under the middle of each bridge, in [`BRIDGES`] order.
+    pub bridges: Vec<WaterSection>,
+}
+
+/// A bridge's frame on the ground: centred on its deck, turned `yaw`
+/// degrees so its local Z, the deck's length, runs along the water's
+/// normal and its local X across the deck.
+struct BridgeFrame {
+    section: WaterSection,
+    center: Vec2,
+    yaw: f32,
+    x_axis: Vec2,
+    z_axis: Vec2,
+}
+
+impl BridgeFrame {
+    fn new(section: &WaterSection) -> Self {
+        let z_axis = section.normal;
+        Self {
+            section: *section,
+            center: section.center,
+            yaw: z_axis.x.atan2(z_axis.y).to_degrees(),
+            x_axis: vec2(z_axis.y, -z_axis.x),
+            z_axis,
+        }
+    }
+
+    /// `p` in the bridge's frame: across its deck (x) and along it (y).
+    fn local(&self, p: Vec2) -> Vec2 {
+        let d = p - self.center;
+        vec2(d.dot(&self.x_axis), d.dot(&self.z_axis))
+    }
+
+    /// The ground point at `local` in the bridge's frame.
+    fn world(&self, local: Vec2) -> Vec2 {
+        self.center + self.x_axis * local.x + self.z_axis * local.y
+    }
 }
 
 impl Creek {
@@ -188,20 +238,12 @@ impl Creek {
             ..Default::default()
         };
         let sections = water.path().sections().expect("the creek meshes");
-        let bridge = *sections
-            .iter()
-            .min_by(|a, b| {
-                (a.center.x - BRIDGE_X)
-                    .abs()
-                    .total_cmp(&(b.center.x - BRIDGE_X).abs())
-            })
-            .unwrap();
-        let bridge_z = bridge.center.y;
+        let bridges = BRIDGES.iter().map(|&(_, x)| at_x(&sections, x)).collect();
         // Foam rings the stones standing in the stream.
         water.obstacles = STREAM_ROCKS
             .iter()
-            .map(|&(s, across, scale)| {
-                let (position, _) = along(&sections, s, across);
+            .map(|&(x, across, scale)| {
+                let (position, _) = along(&sections, x, across);
                 WaterObstacle {
                     position,
                     radius: 0.55 * scale,
@@ -211,8 +253,7 @@ impl Creek {
         Self {
             water,
             sections,
-            bridge,
-            bridge_z,
+            bridges,
         }
     }
 
@@ -237,23 +278,31 @@ impl Creek {
     }
 }
 
-/// Stones standing in the stream: distance along the creek, share of its
-/// half width across it (left positive) and scale: two west of the bridge,
-/// one on the bend past the farm and one outside the south wall.
-const STREAM_ROCKS: [(f32, f32, f32); 4] = [
-    (24.0, 0.45, 1.0),
-    (31.0, -0.5, 1.3),
-    (51.0, 0.55, 1.1),
-    (76.0, 0.4, 1.2),
+/// Stones standing in the stream: the x where the creek's centreline
+/// crosses, share of its half width across it (left positive) and scale:
+/// one outside the west wall, two on the bend past the farm, one between
+/// the bridges and one outside the east wall.
+const STREAM_ROCKS: [(f32, f32, f32); 5] = [
+    (-36.0, 0.45, 1.0),
+    (-21.0, -0.5, 1.3),
+    (-14.0, 0.55, 1.1),
+    (9.0, -0.45, 1.0),
+    (38.0, 0.4, 1.2),
 ];
 
-/// The point `s` along the creek and `across` its half width to the left,
-/// and the flow's yaw there in degrees.
-fn along(sections: &[WaterSection], s: f32, across: f32) -> (Vec2, f32) {
-    let section = sections
+/// The creek's section where its centreline crosses `x`: the creek runs
+/// west to east without turning back, so each x has one.
+fn at_x(sections: &[WaterSection], x: f32) -> WaterSection {
+    *sections
         .iter()
-        .min_by(|a, b| (a.s - s).abs().total_cmp(&(b.s - s).abs()))
-        .unwrap();
+        .min_by(|a, b| (a.center.x - x).abs().total_cmp(&(b.center.x - x).abs()))
+        .unwrap()
+}
+
+/// The point where the creek crosses `x`, `across` its half width to the
+/// left, and the flow's yaw there in degrees.
+fn along(sections: &[WaterSection], x: f32, across: f32) -> (Vec2, f32) {
+    let section = at_x(sections, x);
     (
         section.center + section.normal * section.half_width * across,
         section.tangent.x.atan2(section.tangent.y).to_degrees(),
@@ -270,24 +319,12 @@ pub fn field_rows_along_x(x: i32, z: i32) -> Option<bool> {
 }
 
 /// The ground kind of the one-metre cell at `x`, `z` in the farmland, or
-/// `None` where the farmland leaves the cell as it was.
+/// `None` where the farmland leaves the cell as it was: the fields.
 pub fn farm_ground(x: i32, z: i32) -> Option<&'static str> {
-    let outside = !(-30..30).contains(&x) || !(-32..32).contains(&z);
-    if FIELDS.iter().any(|field| field.rect.contains(x, z)) {
-        return Some("field");
-    }
-    if outside {
-        return None;
-    }
-    // The farmland is the southwest quadrant, and its sand lanes stay sand.
-    if x >= 0 || z >= 0 {
-        return None;
-    }
-    let lane = (-22..-18).contains(&x) && z >= -27 || (-5..-2).contains(&z) && x >= -22;
-    if lane || ((-3..3).contains(&x) && (-26..-20).contains(&z)) {
-        return None;
-    }
-    Some("grass")
+    FIELDS
+        .iter()
+        .any(|field| field.rect.contains(x, z))
+        .then_some("field")
 }
 
 impl Author {
@@ -297,15 +334,11 @@ impl Author {
     /// and the mud along the banks.
     pub fn farmland(&mut self, creek: &Creek) {
         self.creek(creek);
-        self.bridge(creek);
+        for (&(name, _), section) in BRIDGES.iter().zip(&creek.bridges) {
+            self.bridge(name, section);
+        }
         self.farmhouse();
         self.prop_at("water_tower", "Arena Prop Farm Water Tower", TOWER, 0.0);
-        for (name, x, z, yaw) in [
-            ("Field Hedgerow", -5.0, -18.5, 0.0),
-            ("West Field Hedgerow", -23.0, -12.0, 90.0),
-        ] {
-            self.prop("hedgerow", &format!("Arena Cover {name}"), x, z, yaw);
-        }
         // Round bales against the farmhouse's east wall.
         for (i, z) in [-12.0, -10.76].into_iter().enumerate() {
             self.prop(
@@ -338,19 +371,22 @@ impl Author {
             );
             self.scale(rock, scale);
         }
-        let (bridge_lo, bridge_hi) = (
-            BRIDGE_X - BRIDGE_HALF_WIDTH - RAIL_THICKNESS,
-            BRIDGE_X + BRIDGE_HALF_WIDTH + RAIL_THICKNESS,
-        );
-        let in_pen = |p: Vec2| p.x.abs() < 29.5 && p.y.abs() < 31.5;
+        // Inside the border, and just past it where the creek leaves through
+        // its gaps on the west and the east.
+        let in_pen = |p: Vec2| p.x.abs() < 30.2 && p.y.abs() < 35.0;
         // A section's blocker reaches this far either side of its centre.
         let reach = |section: &WaterSection| section.half_width + BLOCKER_MARGIN;
+        let frames: Vec<BridgeFrame> = creek.bridges.iter().map(BridgeFrame::new).collect();
+        // The rails' outer faces, across a bridge's deck.
+        let rail = BRIDGE_HALF_WIDTH + RAIL_THICKNESS;
         let on_bridge = |section: &WaterSection| {
-            [-1.0, 1.0].iter().any(|side| {
-                let edge = section.center + section.normal * reach(section) * *side;
-                let lo = section.center.x.min(edge.x) - 0.5;
-                let hi = section.center.x.max(edge.x) + 0.5;
-                hi > bridge_lo && lo < bridge_hi
+            frames.iter().any(|frame| {
+                (section.s - frame.section.s).abs() < BRIDGE_LENGTH
+                    && [-1.0, 1.0].iter().any(|side| {
+                        let edge = section.center + section.normal * reach(section) * *side;
+                        let (a, b) = (frame.local(section.center).x, frame.local(edge).x);
+                        a.max(b) + 0.5 > -rail && a.min(b) - 0.5 < rail
+                    })
             })
         };
         let mut chunks: Vec<Vec<WaterSection>> = vec![Vec::new()];
@@ -390,47 +426,52 @@ impl Author {
                 block.yaw,
             );
         }
-        // Either side of the bridge, a block closes the creek from the last
-        // blocker to the rail, whatever angle the water crosses the lane at.
-        for (side, lo, hi) in [
-            ("West", bridge_lo - 2.4, bridge_lo),
-            ("East", bridge_hi, bridge_hi + 2.4),
-        ] {
-            let ends: Vec<f32> = creek
-                .sections
-                .iter()
-                .filter(|section| {
-                    (lo..=hi).contains(&section.center.x)
-                        && (section.s - creek.bridge.s).abs() < 6.0
-                })
-                .flat_map(|section| {
-                    [-1.0, 1.0].map(|s| (section.center + section.normal * reach(section) * s).y)
-                })
-                .collect();
-            let z0 = ends.iter().copied().fold(f32::MAX, f32::min);
-            let z1 = ends.iter().copied().fold(f32::MIN, f32::max);
-            let (x0, x1) = if side == "West" {
-                (bridge_lo - 2.4, bridge_lo + RAIL_THICKNESS)
-            } else {
-                (bridge_hi - RAIL_THICKNESS, bridge_hi + 2.4)
-            };
-            self.tank_blocker(
-                &format!("Arena Creek Blocker Bridge {side}"),
-                vec2((x0 + x1) * 0.5, (z0 + z1) * 0.5),
-                vec2(x1 - x0, z1 - z0),
-                0.0,
-            );
+        // Either side of each bridge, in its frame, a block closes the creek
+        // from the last blocker to the rail, whatever angle the water
+        // crosses the deck at.
+        for (&(name, _), frame) in BRIDGES.iter().zip(&frames) {
+            for (side, lo, hi) in [
+                ("West", -rail - 2.4, -rail + RAIL_THICKNESS),
+                ("East", rail - RAIL_THICKNESS, rail + 2.4),
+            ] {
+                let ends: Vec<f32> = creek
+                    .sections
+                    .iter()
+                    .filter(|section| {
+                        (lo - 0.6..=hi + 0.6).contains(&frame.local(section.center).x)
+                            && (section.s - frame.section.s).abs() < 6.0
+                    })
+                    .flat_map(|section| {
+                        [-1.0, 1.0].map(|s| {
+                            frame
+                                .local(section.center + section.normal * reach(section) * s)
+                                .y
+                        })
+                    })
+                    .collect();
+                let z0 = ends.iter().copied().fold(f32::MAX, f32::min);
+                let z1 = ends.iter().copied().fold(f32::MIN, f32::max);
+                self.tank_blocker(
+                    &format!("Arena Creek Blocker Bridge {name} {side}"),
+                    frame.world(vec2((lo + hi) * 0.5, (z0 + z1) * 0.5)),
+                    vec2(hi - lo, z1 - z0),
+                    frame.yaw,
+                );
+            }
         }
-        // Reeds along the banks, on the lip at the water's edge.
-        for (i, &(s, side)) in [(27.5, -1.0), (46.5, -1.0), (60.0, -1.0), (70.0, 1.0)]
-            .iter()
-            .enumerate()
+        // Reeds along the banks, on the lip at the water's edge: where the
+        // creek crosses x, on its north (1) or south (-1) bank.
+        for (i, &(x, side)) in [
+            (-27.0, 1.0),
+            (-19.5, -1.0),
+            (2.0, 1.0),
+            (14.0, -1.0),
+            (24.5, 1.0),
+        ]
+        .iter()
+        .enumerate()
         {
-            let section = creek
-                .sections
-                .iter()
-                .min_by(|a, b| (a.s - s).abs().total_cmp(&(b.s - s).abs()))
-                .unwrap();
+            let section = at_x(&creek.sections, x);
             let at = section.center + section.normal * side * (section.half_width + 0.45);
             self.kit(
                 "grass_tuft",
@@ -441,25 +482,23 @@ impl Author {
         }
     }
 
-    /// The bridge on the west sand lane, and its rails, which stop tanks
-    /// but let rounds and sight across.
-    fn bridge(&mut self, creek: &Creek) {
-        let z = creek.bridge_z;
+    /// A bridge, `Arena Prop Bridge {name}`, square across the creek at
+    /// `section`, and its rails, which stop tanks but let rounds and sight
+    /// across.
+    fn bridge(&mut self, name: &str, section: &WaterSection) {
+        let frame = BridgeFrame::new(section);
         self.kit(
             "bridge",
-            "Arena Prop Farm Bridge",
-            vec3(BRIDGE_X, 0.0, z),
-            0.0,
+            &format!("Arena Prop Bridge {name}"),
+            vec3(frame.center.x, 0.0, frame.center.y),
+            frame.yaw,
         );
         for (i, side) in [-1.0, 1.0].into_iter().enumerate() {
             self.tank_blocker(
-                &format!("Arena Bridge Rail {i}"),
-                vec2(
-                    BRIDGE_X + side * (BRIDGE_HALF_WIDTH + RAIL_THICKNESS * 0.5),
-                    z,
-                ),
+                &format!("Arena Bridge Rail {name} {i}"),
+                frame.world(vec2(side * (BRIDGE_HALF_WIDTH + RAIL_THICKNESS * 0.5), 0.0)),
                 vec2(RAIL_THICKNESS, BRIDGE_LENGTH),
-                0.0,
+                frame.yaw,
             );
         }
     }
@@ -509,15 +548,15 @@ impl Author {
     }
 
     /// Outside the walls: fences along the fields, and trees in copses
-    /// along the creek and at the fields' corners.
+    /// along the creek, at the fields' corners and off the corners.
     fn outside(&mut self, creek: &Creek) {
         for (i, (x, z, yaw)) in [
+            (-33.0, -15.0, 90.0),
+            (-33.0, -11.0, 90.0),
             (-33.0, -7.0, 90.0),
-            (-33.0, -3.0, 90.0),
-            (-33.0, 1.0, 90.0),
-            (-34.0, -34.5, 0.0),
-            (-30.0, -34.5, 0.0),
-            (-26.0, -34.5, 0.0),
+            (-34.0, -37.0, 0.0),
+            (-30.0, -37.0, 0.0),
+            (-26.0, -37.0, 0.0),
             (-3.0, -34.5, 0.0),
             (1.0, -34.5, 0.0),
         ]
@@ -533,13 +572,18 @@ impl Author {
         }
         let trees = [
             ("tree_large", -37.0, -23.5),
-            ("tree_large", -33.5, -26.5),
+            ("tree_large", -37.5, -32.0),
             ("tree", -36.5, -29.0),
             ("tree", -40.5, -25.5),
             ("tree_large", -21.0, -37.5),
             ("tree", -19.0, -40.5),
             ("tree_small", -4.0, -37.5),
             ("tree_large", 17.0, -38.5),
+            ("tree_large", 36.5, -29.0),
+            ("tree", 36.5, 24.0),
+            ("tree_small", 1.5, 37.5),
+            ("tree_large", -27.0, 36.5),
+            ("tree", -31.0, 39.5),
         ];
         for (i, (model, x, z)) in trees.into_iter().enumerate() {
             assert!(
