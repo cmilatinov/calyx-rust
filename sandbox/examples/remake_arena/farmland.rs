@@ -165,7 +165,7 @@ const FIELDS: [Field; 7] = [
         rows_along_x: false,
     },
     Field {
-        rect: Rect::new(38, 31, 48, 41),
+        rect: Rect::new(43, 37, 53, 47),
         rows_along_x: false,
     },
 ];
@@ -679,9 +679,9 @@ impl Author {
             ("tree_large", 39.0, -18.0),
             ("tree", 47.0, 0.0),
             ("tree_large", 41.0, 15.0),
-            ("tree", 38.0, 27.0),
-            ("tree_small", 28.0, 38.0),
-            ("tree_large", 16.0, 43.5),
+            ("tree", 45.5, 26.0),
+            ("tree_small", 30.0, 45.5),
+            ("tree_large", 14.5, 47.0),
             ("tree", -12.0, 45.0),
             ("tree_large", -24.0, 38.5),
             ("tree", -42.0, 30.0),

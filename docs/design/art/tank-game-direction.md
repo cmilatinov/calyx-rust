@@ -120,6 +120,9 @@ ground roles draw no ink, the creek bank draws the terrain's:
 | Worn tank tracks | `#7D6B50` | `#8E7B62` | `#33414A` |
 | Creek bank | as dirt `#A2855E` | `#968267` | `#4C5D62` |
 | Roof tiles | `#B4553D` | `#AF5E42` | slate `#55687A` |
+| Barn boards | barn red `#9C4A36` | faded red `#A2583F` | plum-grey `#6B4C4E` |
+| Barn trim | cream `#E8DFC8` | bone `#DED3BC` | pale steel `#A9B4BC` |
+| Barn roof | stained timber `#7B5235` | sun-bleached timber `#8A6446` | grey-brown `#4E4B52` |
 
 Roads must stay clearly lighter or darker than the ground; Sunbaked's road is
 one step darker than the sand, Sunny Battlefield's sand road is lighter than
