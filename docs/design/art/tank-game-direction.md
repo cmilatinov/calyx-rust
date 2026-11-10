@@ -412,6 +412,11 @@ the arena before and after, in play in all three palettes, under
   about 1–1.3 m, so tanks behind cover stay visible from above.
 - Lollipop or blob trees about 2.9 m tall; perimeter walls 1.2 m thick and
   1.6 m high with rounded tops.
+- Orchard fruit trees are lower and broader, about 2.7 m tall, a two-tier
+  crown hung with red fruit (the `berries` role), so their rows read apart
+  from the woodland trees; the orchard's windmill, about 11.9 m to its top
+  sail, is the arena's tallest landmark (`sandbox/asset_sources/arena-kit.md`,
+  Orchard).
 - Lay arenas out with open lanes and a central cover line, as in the
   look-dev scenario.
 

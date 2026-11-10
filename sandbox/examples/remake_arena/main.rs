@@ -11,6 +11,7 @@ mod border;
 mod farmland;
 mod ground;
 mod layout;
+mod orchard;
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -906,6 +907,10 @@ fn main() {
             (i * 37) as f32,
         );
     }
+
+    // The north-west corner's orchard and windmill, checked against every
+    // solid placed above.
+    author.orchard(&creek);
 
     // Preserve actors outside the explicit placement/camera edits; kit instances receive
     // deterministic ids, so rerunning this authoring recipe is a no-op.

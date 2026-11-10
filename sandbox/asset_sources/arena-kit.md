@@ -160,10 +160,10 @@ corner has its own character:
 - **Southeast, the supply depot**: a walled yard of stacked crates in the
   corner past the south branch (footprint `Depot`, local x 18.5..28,
   z -29..-17), dressed by #581.
-- **Northwest, the orchard**: rows of kit trees at 37 degrees broken by
+- **Northwest, the orchard**: rows of fruit trees at 37 degrees broken by
   hedgerows, a wall and brush (footprint `Orchard`, x -27..-13.5,
-  z 12..29), with the windmill's footprint in the corner (`Windmill`,
-  x -27..-22, z 24.5..29.5), dressed by #580.
+  z 12..29, and the border's lobe round it), with the windmill in the
+  corner (`Windmill`, x -27..-22, z 24.5..29.5); see Orchard below.
 - **Northeast, the barn yard**: the raised platform and an open yard past
   the north branch, the barn's and silo's footprints (`Barn`, x 9..16.5,
   z 10..15.5; `Silo`, x 24..28, z 12..17) left clear for #579.
@@ -317,6 +317,48 @@ tiles `ground_grass_dark`, `ground_grass_light`, `ground_gravel`,
 `ground_grass_light`, `ground_gravel`, `ground_field`, `ground_crop`,
 `ground_track`, `creek_bank` and `roof_tiles`. No third-party assets are
 used.
+
+## Orchard
+
+The north-west corner is the orchard, built by `remake_arena`'s `orchard`
+module (#580):
+
+- **Windmill.** `Arena Cover Windmill`, a generated `windmill` about 11.9 m
+  tall at its top sail's tip: an eight-sided, tapering pale stone tower on
+  a rubble plinth, a timber gallery, a red cap and four lattice sails with
+  canvas, its door and sails turned south-south-east towards the gameplay
+  camera, the windshaft tilted 15 degrees up so the sails read from above.
+  It stands at local `(-24.5, 27)` in its footprint, with one 3.9 m square
+  solid round its plinth that stops tanks, rounds and sight (the tower is
+  named among the sight blockers in `sandbox/src/vision.rs`). Sacks of
+  flour (`sandbag_stack`) stand by its door and two hay bales against its
+  side.
+- **Rows.** Generated `orchard_tree`s, low broad fruit trees about 2.7 m
+  high hung with red fruit (the `berries` role), in rows at 37 degrees,
+  2.7 m apart along a row, so no tank slips between two neighbours, the
+  rows 4 m apart, so the lanes between them are wider than a tank. Every
+  fifth tree in a row is left out, staggered from row to row, where tanks
+  cross the rows. Each tree is scaled 0.88 to 1.12 and turned at random;
+  inside the border its trunk has a 0.5 m solid, its crown is decoration.
+  The rows keep clear of the north spawn and its lanes, the layout's cover,
+  hedgerow, wall and brush, and the remake checks every tree against the
+  arena's solids. Under each row the ground is darker, uncut grass.
+- **Track and clearing.** A worn dirt track runs from the windmill's door
+  down the alley between two rows towards the north spawn, and a clearing
+  of open ground, 3 m in radius round local `(-19.3, 23.1)`, is left in the
+  windmill's yard beside it, free of trees and cover, for objectives.
+- **Crates.** Two stacks of crates of picked fruit (`Arena Cover Orchard
+  Crate ...`: a large crate, a framed one on top and one at its foot) stand
+  in the lanes, in the lobe and to the north, cover that stops rounds and
+  sight.
+- **Outside.** Past the border's hedgerow the rows run on up to 18 m round
+  the lobe and behind the north spawn, clear of the creek, the fields and
+  the outside copses, so the corner is framed as the edge of a larger
+  orchard.
+
+The orchard's two models are generated in all three palettes like the kit,
+from `models/windmill.toml` and `models/orchard_tree.toml`, in existing
+roles; no third-party assets are used.
 
 ## Brush patches
 

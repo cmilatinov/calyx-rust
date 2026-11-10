@@ -253,6 +253,10 @@ fn paint(p: Vec2, kind: Option<&str>, rows_along_x: Option<bool>, shore: &Shore)
             smoothstep(0.0, 1.2, edge + (noise(p, 2.5, 12) - 0.5) * 1.6),
         );
     }
+    // The orchard's rows of uncut grass and the windmill's track.
+    let (rows, track) = super::orchard::ground(p, shore.creek);
+    w.over(DARK, rows);
+    w.over(DIRT, track);
     // A gravel pad at the north spawn, rounder than the south's paving.
     let pad = (p - super::layout::NORTH_SPAWN).norm() + (noise(p, 2.0, 13) - 0.5) * 1.4;
     w.over(GRAVEL, smoothstep(3.8, 3.0, pad));
