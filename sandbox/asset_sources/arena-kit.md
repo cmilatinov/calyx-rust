@@ -349,8 +349,12 @@ module (#580):
   windmill's yard beside it, free of trees and cover, for objectives.
 - **Crates.** Two stacks of crates of picked fruit (`Arena Cover Orchard
   Crate ...`: a large crate, a framed one on top and one at its foot) stand
-  in the lanes, in the lobe and to the north, cover that stops rounds and
-  sight.
+  in the lanes, in the lobe and to the north, each crate its own object,
+  stopping rounds and sight. They are dressing rather than the corner's
+  essential cover: the crates, the windmill's hay bales and its sacks are
+  expected to become loose physical objects that tanks shove and shots
+  knock over, so they stand in open ground clear of the north spawn's exits,
+  and no crossing of the rows depends on them.
 - **Outside.** Past the border's hedgerow the rows run on up to 18 m round
   the lobe and behind the north spawn, clear of the creek, the fields and
   the outside copses, so the corner is framed as the edge of a larger

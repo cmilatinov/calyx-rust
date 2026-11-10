@@ -70,8 +70,12 @@ const KEEP_CLEAR: [(f32, f32, f32); 7] = [
 ];
 
 /// Stacks of crates of picked fruit standing in the lanes, `(name, x, z,
-/// yaw)`: a large crate with a framed one on it and one at its foot,
-/// cover that stops rounds and sight in the middle of a lane.
+/// yaw)`: a large crate with a framed one on it and one at its foot, each
+/// its own object. They stop rounds and sight for now, but are dressing,
+/// not the corner's essential cover: crates are to become loose objects
+/// tanks shove and shots knock over, so they stand in open lanes, away from
+/// the north spawn's exits, with room round them to scatter, and the rows'
+/// crossings never depend on them.
 const CRATES: [(&str, f32, f32, f32); 2] = [
     ("Lobe", -31.5, 22.0, ROW_YAW + 8.0),
     ("North", -17.2, 30.0, ROW_YAW - 6.0),
