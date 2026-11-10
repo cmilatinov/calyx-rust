@@ -17,8 +17,11 @@ pub const MAX_GRASS_BENDERS: usize = 16;
 ///
 /// The shader moves a vertex by its height above its mesh's origin, so a
 /// grass model stands on its origin with its blades rising along +Y: the
-/// higher a vertex, the further it sways and bends. Shadows are cast from
-/// the grass at rest.
+/// higher a vertex, the further it sways and bends. Each blade is its own
+/// mesh, modelled lying flat: its outline in XZ, its length running along
+/// -Z from its root at the mesh's origin, its thickness rising along +Y from
+/// 0. The shader thins a blade towards its tip from that layout, so the tip
+/// ends in a thin edge. Shadows are cast from the grass at rest.
 ///
 /// What moves through the grass is game state: game code hands it to the
 /// grass in [`Self::benders`] every frame.

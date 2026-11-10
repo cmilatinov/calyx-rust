@@ -1,16 +1,15 @@
-//! The north-west corner, the orchard (#580): short rows of fruit trees at
-//! the layout's 37 degrees in the orchard's footprint and round the
-//! border's lobe, a windmill standing over them in its footprint, its cart
-//! track running down an alley towards the north spawn, an open clearing in
-//! the lobe where two tanks can fight, and stacks of picked fruit's crates
-//! in open ground. Past the border's hedgerow the rows run on, so the corner
-//! reads as the edge of a larger orchard.
+//! The north-west corner, the orchard (#580): a windmill standing in the
+//! middle of the corner, the centrepiece, in a wide clearing tanks can
+//! circle and fight across, its cart track, stacks of picked fruit's
+//! crates at the clearing's edge, and rows of fruit trees at the layout's
+//! 37 degrees. Most rows stand past the border's hedgerow, framing the
+//! corner as the edge of a larger orchard; inside it only a few trees stand
+//! at the corner's edges.
 //!
-//! The corner is kept open: the trees stand `TREE_SPACING` apart along a
-//! row, the rows `ROW_GAP` apart, so the lanes between them are wide
-//! enough for two tanks. Every fifth tree in a row is left out, staggered
-//! from row to row, so tanks cross the rows there and every lane has more
-//! than one way in and out.
+//! The rows' trees stand `TREE_SPACING` apart along a row, the rows
+//! `ROW_GAP` apart, and every fifth tree in a row is left out, staggered
+//! from row to row, so the few rows inside leave wide lanes and more than
+//! one way in and out.
 //!
 //! Positions are in the Arena's frame, where the north spawn is at
 //! [`layout::NORTH_SPAWN`].
@@ -24,11 +23,12 @@ use sandbox::terrain::ComponentDriveSurface;
 use super::layout::{self, beyond_rect};
 use super::{border, farmland::Creek, Author};
 
-/// The windmill: its tower's centre, in the layout's `Windmill` footprint,
-/// and its yaw, which turns its door and sails (its local +Z) to face
-/// south-south-east, towards the gameplay camera and down its track.
-pub const WINDMILL: Vec2 = Vec2::new(-24.5, 27.0);
-const WINDMILL_YAW: f32 = 150.0;
+/// The windmill: its tower's centre, in the layout's `Windmill` footprint
+/// in the middle of the corner, at least 9 m from the border, and its yaw,
+/// which turns its door and sails (its local +Z) to face south-east,
+/// towards the gameplay camera and down its track.
+pub const WINDMILL: Vec2 = Vec2::new(-27.0, 22.0);
+const WINDMILL_YAW: f32 = 140.0;
 /// The windmill's solid: a square about its plinth, rising to the
 /// shell-blocking top; its sails and cap stand far above it.
 const WINDMILL_SOLID: f32 = 3.9;
@@ -42,15 +42,14 @@ const ROW_GAP: f32 = 6.0;
 /// Where the rows' grid sits, along and across them, from the windmill.
 const PHASE: (f32, f32) = (1.5, 4.0);
 
-/// The windmill's cart track: from its door down the alley between two
-/// rows, towards the north spawn.
-const TRACK_LENGTH: f32 = 13.0;
+/// The windmill's cart track: from its door out across the clearing.
+const TRACK_LENGTH: f32 = 9.0;
 const TRACK_CLEAR: f32 = 1.6;
-/// The clearing: open ground filling the border's lobe, 11 m across, room
-/// for two tanks to fight and manoeuvre, kept free of trees and cover for
+/// The clearing: open ground round the windmill, 20 m across, room for
+/// tanks to circle it and fight and manoeuvre, kept free of trees for
 /// whatever the game puts there.
-pub const CLEARING: Vec2 = Vec2::new(-34.0, 23.0);
-pub const CLEARING_RADIUS: f32 = 5.5;
+pub const CLEARING: Vec2 = WINDMILL;
+pub const CLEARING_RADIUS: f32 = 10.0;
 
 /// Ground the rows keep clear of, `(x, z, radius)`: the layout's cover in
 /// the corner, the orchard's hedgerow and wall, its boulder and the north
@@ -77,9 +76,10 @@ const KEEP_CLEAR: [(f32, f32, f32); 7] = [
 /// tanks shove and shots knock over, so they stand in open ground, away from
 /// the north spawn's exits, with room round them to scatter, and the rows'
 /// crossings never depend on them.
-const CRATES: [(&str, f32, f32, f32); 2] = [
-    ("Yard", -22.5, 19.5, ROW_YAW + 8.0),
-    ("North", -17.2, 30.0, ROW_YAW - 6.0),
+const CRATES: [(&str, f32, f32, f32); 3] = [
+    ("Yard", -19.5, 27.5, ROW_YAW + 8.0),
+    ("Lobe", -35.0, 25.0, ROW_YAW - 14.0),
+    ("South", -23.5, 14.0, ROW_YAW - 6.0),
 ];
 
 /// The side of a tree's trunk solid at scale 1, which turns and scales
@@ -104,8 +104,8 @@ fn segment_distance(p: Vec2, a: Vec2, b: Vec2) -> f32 {
 
 /// The windmill's track, from its door to its end.
 fn track() -> (Vec2, Vec2) {
-    let (along, _) = axes();
-    (WINDMILL, WINDMILL + along * TRACK_LENGTH)
+    let (sin, cos) = WINDMILL_YAW.to_radians().sin_cos();
+    (WINDMILL, WINDMILL + vec2(sin, cos) * TRACK_LENGTH)
 }
 
 /// The windmill's yard: `(model, name, where, yaw)`, sacks of flour by its
@@ -176,7 +176,7 @@ pub fn trees(creek: &Creek) -> &'static [Tree] {
                 let clear = creek.beyond(at) > 3.0
                     && (at - WINDMILL).norm() > 4.0
                     && segment_distance(at, track_start, track_end) > TRACK_CLEAR
-                    && (at - CLEARING).norm() > CLEARING_RADIUS + 1.2
+                    && (at - CLEARING).norm() > CLEARING_RADIUS + 1.0
                     && KEEP_CLEAR
                         .iter()
                         .all(|&(x, z, r)| (at - vec2(x, z)).norm() > r)
@@ -217,9 +217,10 @@ pub fn trees(creek: &Creek) -> &'static [Tree] {
 }
 
 /// The orchard's paint on the ground at `p`: `(dark, dirt)`, the weights
-/// of darker, uncut grass along the tree rows, under the trees, and of
-/// the windmill track's worn dirt. A strip stays where the remake leaves a
-/// tree out to open a pocket, as a gap in the row.
+/// of darker, uncut grass along the rows outside the border, under the
+/// trees, and of the windmill track's worn dirt. Inside the border, where
+/// the remake may leave a tree out to open a pocket, no strip is painted,
+/// so none marks a missing tree.
 pub fn ground(p: Vec2, creek: &Creek) -> (f32, f32) {
     let smoothstep = |e0: f32, e1: f32, x: f32| {
         let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
@@ -228,7 +229,7 @@ pub fn ground(p: Vec2, creek: &Creek) -> (f32, f32) {
     // Each tree's strip of its row, reaching half the spacing either way.
     let (along, across) = axes();
     let mut dark: f32 = 0.0;
-    for tree in trees(creek) {
+    for tree in trees(creek).iter().filter(|tree| !tree.inside) {
         let d = p - tree.at;
         if d.x.abs() > 3.0 || d.y.abs() > 3.0 {
             continue;

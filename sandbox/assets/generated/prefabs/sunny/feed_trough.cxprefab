@@ -1,0 +1,169 @@
+{
+  "data": {
+    "components": {
+      "53245d57-b57a-5269-9b0f-db46c2133e4a": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "53245d57-b57a-5269-9b0f-db46c2133e4a",
+          "name": "leg_0",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "23b0c9cf-a1da-5fd3-a6bd-caf845625be6",
+          "mesh": "686330f5-4d28-5c87-bf11-c15b40de053e"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              -1.05,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "5fb44339-41e4-5a69-8704-fbc8f6f16cbe": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "5fb44339-41e4-5a69-8704-fbc8f6f16cbe",
+          "name": "leg_1",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "23b0c9cf-a1da-5fd3-a6bd-caf845625be6",
+          "mesh": "4a789a0a-bd10-5f05-ab4a-4970c7aef834"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              1.05,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "cea6e592-8382-5969-b56b-63b58bf84249": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "cea6e592-8382-5969-b56b-63b58bf84249",
+          "name": "feed_trough",
+          "visible": true
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.0,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "e940a30a-4704-5d74-a0cb-c3a4a0112bac": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "e940a30a-4704-5d74-a0cb-c3a4a0112bac",
+          "name": "hay",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "57bbb258-08d7-552c-8f45-59f6ab24514d",
+          "mesh": "9965e539-4031-5262-b9bf-b027140bac4b"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.66,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      },
+      "f90c4579-cba2-517a-9448-8fe9ca6b04ef": {
+        "02289c92-3412-406e-a7e5-3bbb15d7041e": {
+          "id": "f90c4579-cba2-517a-9448-8fe9ca6b04ef",
+          "name": "trough",
+          "visible": true
+        },
+        "93fd32b1-7127-4c88-8e89-893512af58de": {
+          "material": "56dad8f9-0bbd-5d3a-8b6a-fc3e892f0a80",
+          "mesh": "1220591a-aa02-537e-9172-7ca7db92fd9b"
+        },
+        "c5b3b71f-1f14-4b5b-9881-436118684d29": {
+          "transform": {
+            "position": [
+              0.0,
+              0.22,
+              0.0
+            ],
+            "rotation": [
+              0.0,
+              0.0,
+              0.0,
+              1.0
+            ],
+            "scale": [
+              1.0,
+              1.0,
+              1.0
+            ]
+          }
+        }
+      }
+    },
+    "hierarchy": {
+      "cea6e592-8382-5969-b56b-63b58bf84249": [
+        "f90c4579-cba2-517a-9448-8fe9ca6b04ef",
+        "e940a30a-4704-5d74-a0cb-c3a4a0112bac",
+        "53245d57-b57a-5269-9b0f-db46c2133e4a",
+        "5fb44339-41e4-5a69-8704-fbc8f6f16cbe"
+      ]
+    },
+    "roots": [
+      "cea6e592-8382-5969-b56b-63b58bf84249"
+    ]
+  },
+  "root": "cea6e592-8382-5969-b56b-63b58bf84249"
+}

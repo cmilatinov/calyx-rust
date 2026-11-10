@@ -23,8 +23,10 @@
 //!
 //! The grass fades around the local player's tank while it is in brush, and
 //! around the tanks the player sees in the same patch, to a translucent
-//! green, truly alpha blended, so the tanks read clearly through it. A tank
-//! fog hides neither bends nor fades the grass, which would give it away.
+//! green, truly alpha blended, and most of the way over the tank itself.
+//! Only the nearest faded blade blends over each pixel, so stacked blades
+//! never tint a tank green and it reads in its own colours. A tank fog hides
+//! neither bends nor fades the grass, which would give it away.
 
 use crate::combat::is_tank_combatant;
 use crate::hud::ComponentTankHud;

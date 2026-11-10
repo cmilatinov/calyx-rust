@@ -120,6 +120,15 @@ pub const ROLES: &[Role] = &[
     role("sentry_optic", "#88DBE3", "#79D0D8", "#9CDAE8", 0.95),
     // The farm's red roof tiles; Moonlit's are cool slate.
     role("roof_tiles", "#B4553D", "#AF5E42", "#55687A", 0.95),
+    // The barn's weathered red boards, browner and darker than the roof
+    // tiles and the red player, and its cream trim; Moonlit's boards are a
+    // dim plum-grey, its trim pale steel.
+    role("barn_boards", "#9C4A36", "#A2583F", "#6B4C4E", 0.95),
+    role("barn_trim", "#E8DFC8", "#DED3BC", "#A9B4BC", 0.95),
+    // The barn's stained timber roof, a weathered brown darker than the
+    // crates' timber, which its shingle battens take; Moonlit's is a dim
+    // grey-brown.
+    role("barn_roof", "#7B5235", "#8A6446", "#4E4B52", 0.95),
     role("reticle_light", "#FCF9F3", "#F3F3F3", "#F3F3F3", 1.0),
     role("reticle_dark", "#243647", "#303030", "#3D3630", 1.0),
     Role {

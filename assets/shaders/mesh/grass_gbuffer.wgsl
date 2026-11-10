@@ -6,10 +6,11 @@
 //#include "shaders/mesh/grass_field.wgsl"
 
 // Tall grass's geometry pass: writes it into the G-buffer as `shaders/mesh/gbuffer.wgsl` writes
-// a PBR surface, from the same material, with two differences: the vertex stage droops and sways
-// the grass in the wind and bends it away from the scene's grass benders (`grass_displacement`),
-// and the fragment stage leaves out the grass fading around the benders that reveal, which
-// `shaders/mesh/grass.wgsl` draws instead, alpha blended over the lit scene.
+// a PBR surface, from the same material, with three differences: the vertex stage thins the
+// blades towards their tips (`grass_taper`), droops and sways the grass in the wind and bends it
+// away from the scene's grass benders (`grass_displacement`); the fragment stage darkens each
+// blade towards its root (`grass_shade`); and it leaves out the grass fading around the benders
+// that reveal, which `shaders/mesh/grass.wgsl` draws instead, alpha blended over the lit scene.
 //
 // Group 2 is the material's own bind group, built for group 3 of `shaders/mesh/grass.wgsl`,
 // which declares it as `shaders/mesh/pbr.wgsl` does; group 3 is the grass field.
@@ -56,18 +57,22 @@ struct PbrVertexOut {
     @location(1) normal: vec3f,
     @location(2) uv: vec2f,
     @location(3) tangent: vec4f,
+    // How far up its blade the vertex is (`grass_rise`).
+    @location(4) rise: f32,
 };
 
 @vertex
 fn vs_main(vertex: VertexIn) -> PbrVertexOut {
     let instance = mesh.instances[vertex.instance];
     var out: PbrVertexOut;
-    let local_position = skinned_local(vertex, instance, vec4f(vertex.position, 1.0));
+    let local_position =
+        skinned_local(vertex, instance, vec4f(grass_taper(field, vertex.position), 1.0));
     let local_normal = skinned_local(vertex, instance, vec4f(vertex.normal, 0.0));
     let local_tangent = skinned_local(vertex, instance, vec4f(vertex.tangent.xyz, 0.0));
     let root = instance.transform[3].xyz;
     let rest = (instance.transform * local_position).xyz;
     out.world_position = rest + grass_displacement(field, root, rest);
+    out.rise = grass_rise(field, root, rest);
     out.normal = grass_normal((instance.transform * local_normal).xyz);
     out.tangent = vec4f((instance.transform * local_tangent).xyz, vertex.tangent.w);
     out.position = camera.projection * camera.view * vec4f(out.world_position, 1.0);
@@ -108,11 +113,11 @@ fn fs_main(in: PbrVertexOut) -> GBufferOut {
         discard;
     }
     // Grass fading around a bender that reveals is drawn by the transparent pass, blended.
-    if grass_reveal(field, in.world_position) > 0.0 {
+    if grass_alpha(field, in.world_position) < 1.0 {
         discard;
     }
     var out: GBufferOut;
-    out.albedo = vec4f(surface.albedo.rgb, 1.0);
+    out.albedo = vec4f(grass_shade(surface.albedo.rgb, in.rise), 1.0);
     out.normals = vec4f(
         gbuffer_encode_normal(view_normal(surface.normal)),
         gbuffer_encode_normal(view_normal(surface.geometric_normal)),

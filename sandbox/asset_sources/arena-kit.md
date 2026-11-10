@@ -160,16 +160,18 @@ corner has its own character:
 - **Southeast, the supply depot**: a walled yard of stacked crates in the
   corner past the south branch (footprint `Depot`, local x 18.5..28,
   z -29..-17), dressed by #581.
-- **Northwest, the orchard**: rows of fruit trees at 37 degrees broken by
-  hedgerows, a wall and brush (footprint `Orchard`, x -27..-13.5,
-  z 12..29, and the border's lobe round it), with the windmill in the
-  corner (`Windmill`, x -27..-22, z 24.5..29.5); see Orchard below.
-- **Northeast, the barn yard**: the raised platform and an open yard past
-  the north branch, the barn's and silo's footprints (`Barn`, x 9..16.5,
-  z 10..15.5; `Silo`, x 24..28, z 12..17) left clear for #579.
+- **Northwest, the orchard**: an open orchard round a windmill standing in
+  the middle of the corner (`Windmill`, x -29.5..-24.5, z 19.5..24.5), its
+  rows mostly past the hedgerow; see Orchard below.
+- **Northeast, the barn yard**: the raised platform, a red barn against
+  its south ramp, a tall silo in the east cove, an open feed yard at the
+  ramp's foot (`Barn`, x 12.5..21.5, z 6..12.5), and a stable and a fenced
+  paddock in the wide lobe north of the platform, past the north branch
+  (see Barn yard).
 
-The footprints are `layout::FOOTPRINTS`; the ground paints the barn yard
-and the windmill's ground worn dirt and the silo's and the depot's gravel.
+The footprints are `layout::FOOTPRINTS`; the ground paints the barn's feed
+yard and the windmill's ground worn dirt and the silo's pad (`Silo`) and
+the depot's gravel.
 Sand lanes, painted on the ground and smoothed into curves, run from the
 south spawn over the west bridge to the north spawn, from the south spawn
 over the south bridge through the east to the south ramp, and from the
@@ -200,7 +202,7 @@ every wall they block sight and cast fog shadows; the minimap outlines
 their solids as it does cover.
 
 The border (`remake_arena`'s `border` module) is an irregular outline of
-56 short stretches, no two alike and none longer than about 11 m, turning
+57 short stretches, no two alike and none longer than about 11 m, turning
 every which way: lobes push out round the orchard in the northwest, the
 barn yard in the northeast, the middle of the east and the farm in the
 southwest; peninsulas reach north behind the north spawn and south behind
@@ -315,55 +317,103 @@ tiles `ground_grass_dark`, `ground_grass_light`, `ground_gravel`,
 `ground_field`, `ground_crop`, `ground_track` and `creek_bank`, `hedgerow`, `water_tower`, `bridge`, `chimney`,
 `roof_ruin`, `hay_bale` and `fence`, with the new roles `ground_grass_dark`,
 `ground_grass_light`, `ground_gravel`, `ground_field`, `ground_crop`,
-`ground_track`, `creek_bank` and `roof_tiles`. No third-party assets are
-used.
+`ground_track`, `creek_bank` and `roof_tiles`; and for the barn yard
+`barn`, `silo` and `feed_trough`, with the roles `barn_boards`,
+`barn_trim` and `barn_roof`. No third-party assets are used.
+
+## Barn yard
+
+The northeast corner is dressed by `remake_arena`'s `barn_yard` module as
+a barn and silo, a fairly open yard with long sightlines, distinct from the
+other corners. Its border is pushed out round it: the lobe north of the
+platform reaches about 16 m past the platform's north rim, and the wall
+east of the platform about 15 m past its east rim, so the way round the
+platform and the paddock have room. Positions are local, in the Arena's
+frame.
+
+- **Barn** (`barn`, `Arena Prop Barn`, at `(14.9, 13.8)` turned 90
+  degrees): red board walls 6.6 by 4.6 m and 3.2 m to the eaves under a
+  pitched stained timber roof (`barn_roof`, with shingle battens in the crates' timber,
+  `crate_frame`), 6.5 m to its cupola, cream corner boards and window
+  frames (`barn_trim`), a braced sliding door under a hayloft door in the
+  gable that faces south over the feed yard, another hayloft door in the
+  back gable. Its ridge runs north to south; its east wall meets the south
+  ramp's kerb, so tanks pass it on the creek's side, a lane about 5 m wide
+  from the fork to the north bridge's foot. Its solid is the walls' box,
+  risen to the shell-blocking top like any cover; the roof is decoration.
+- **Stable** (the `barn` model at 0.62 scale, `Arena Prop Stable`, at
+  `(31, 34)`, not turned): in the lobe, its ridge running east to west,
+  square to the barn's, as buildings in a corner stand at 90 degrees to
+  each other. Its solid is its scaled walls' box.
+- **Silo** (`silo`, `Arena Prop Silo`, at `(31, 15)`): a concrete stave
+  tower (`barriers`) 3.4 m across and 9.6 m high on a stone footing, five
+  steel hoops, a galvanised dome and vent cap, a ladder up the yard side;
+  11.8 m high, the corner's tall landmark, taller than the farm's water
+  tower. Its back meets the cove's wall, on a gravel pad; it leaves a lane
+  over 6 m wide to the south ramp's kerb. With the lobe's west end closed
+  by the creek and the west ramp, that lane and the way round the
+  platform's east side are how tanks reach the lobe. Its solid is an
+  octagon of four crossed boxes, 1.8 m from its centre to each side.
+- **Feed yard**: worn dirt in front of the barn's door at the ramp's foot,
+  left open as a clearing.
+- **Paddock**: under the lobe's north wall, two runs of rail fence (the
+  kit's `fence`, stretched) at 39 and 38 degrees, the wall closing the
+  paddock behind them, with a gate between them about 5 m wide, and a
+  `feed_trough` inside. The fence's solids, `Arena Paddock Fence ...`, are
+  in the `TANK_BLOCKER` groups like the bridges' rails: they stop tanks,
+  but rounds and sight cross them, so the lobe keeps its sightlines.
+- **Loose furniture**: the paddock's trough, the `Lobe Hay Bale` east of
+  the stable and the `Barn Crate` north of the platform are expected to
+  become physical objects. Each stands alone in open ground, at least a
+  tank's width clear of everything, so no lane or cover depends on it and
+  pushing it about jams nothing. The `Barn Barrier`, east of the platform,
+  is fixed cover.
+- **Outside**: beyond the lobe's wall, paddock fences run along it, with a
+  stack of three bales and two loose bales, among the copses and the field
+  to the east, so the corner reads as a farm beyond its wall too.
 
 ## Orchard
 
 The north-west corner is the orchard, built by `remake_arena`'s `orchard`
 module (#580). It is kept open: the border's lobe was pushed out west and
-north for it, the lanes between the rows are wide enough for two tanks,
-the lobe is a clearing, and the north spawn's exits stay clear.
+north for it, the windmill stands in the middle of the corner in a wide
+clearing, most of the orchard's rows stand past the hedgerow, and the
+north spawn's exits stay clear.
 
 - **Windmill.** `Arena Cover Windmill`, a generated `windmill` about 11.9 m
   tall at its top sail's tip: an eight-sided, tapering pale stone tower on
   a rubble plinth, a timber gallery, a red cap and four lattice sails with
-  canvas, its door and sails turned south-south-east towards the gameplay
+  canvas, its door and sails turned south-east towards the gameplay
   camera, the windshaft tilted 15 degrees up so the sails read from above.
-  It stands at local `(-24.5, 27)` in its footprint, with one 3.9 m square
-  solid round its plinth that stops tanks, rounds and sight (the tower is
-  named among the sight blockers in `sandbox/src/vision.rs`). Sacks of
-  flour (`sandbag_stack`) stand by its door and two hay bales against its
-  side.
+  It stands at local `(-27, 22)`, the middle of its footprint and of the
+  corner, at least 9 m from the border, with one 3.9 m square solid round
+  its plinth that stops tanks, rounds and sight (the tower is named among
+  the sight blockers in `sandbox/src/vision.rs`). Sacks of flour
+  (`sandbag_stack`) stand by its door and two hay bales against its side.
+- **Clearing.** Open ground 10 m in radius round the windmill, free of
+  trees, where tanks circle it and fight and manoeuvre, and where the game
+  may put objectives. A worn dirt track runs 9 m from the windmill's door.
 - **Rows.** Generated `orchard_tree`s, low broad fruit trees about 2.7 m
   high hung with red fruit (the `berries` role), in rows at 37 degrees,
-  3 m apart along a row, the rows 6 m apart, so the lanes between them
-  leave 5.5 m of clear ground. Every fifth tree in a row is left out,
-  staggered from row to row, where tanks cross the rows, so every lane has
-  more than one way in and out. Each tree is scaled 0.88 to 1.12 and turned at random;
-  inside the border its trunk has a 0.5 m solid, its crown is decoration.
-  The rows keep clear of the north spawn and its lanes, the layout's cover,
-  hedgerow, wall and brush, and the remake checks every tree against the
-  arena's solids; a flood fill on the reachability test's grid (0.25 m,
-  1.2 m clearance) then leaves out any trunk that would close off ground
-  a tank fits on. Under each row the ground is darker, uncut grass.
-- **Track and clearing.** A worn dirt track runs from the windmill's door
-  down an alley towards the north spawn. The clearing fills the border's
-  lobe, 5.5 m in radius round local `(-34, 23)`, open ground where two
-  tanks can fight and manoeuvre, free of trees and cover, for objectives.
-- **Crates.** Two stacks of crates of picked fruit (`Arena Cover Orchard
-  Crate ...`: a large crate, a framed one on top and one at its foot) stand
-  in open ground, by the windmill's track and to the north, each crate its
-  own object,
-  stopping rounds and sight. They are dressing rather than the corner's
-  essential cover: the crates, the windmill's hay bales and its sacks are
-  expected to become loose physical objects that tanks shove and shots
-  knock over, so they stand in open ground clear of the north spawn's exits,
-  and no crossing of the rows depends on them.
-- **Outside.** Past the border's hedgerow the rows run on up to 18 m round
-  the lobe and behind the north spawn, clear of the creek, the fields and
-  the outside copses, so the corner is framed as the edge of a larger
-  orchard.
+  3 m apart along a row, the rows 6 m apart, every fifth tree in a row
+  left out, staggered from row to row. Each tree is scaled 0.88 to 1.12
+  and turned at random. Past the border's hedgerow the rows run on up to
+  18 m round the lobe and behind the north spawn, clear of the creek, the
+  fields and the outside copses, so the corner is framed as the edge of a
+  larger orchard, with darker, uncut grass along each row. Inside the
+  border only the rare tree at the corner's edge, beyond the clearing,
+  stands; its trunk has a solid, its crown is decoration. The remake
+  checks every tree against the arena's solids, and a flood fill on the
+  reachability test's grid (0.25 m, 1.2 m clearance) leaves out any trunk
+  that would close off ground a tank fits on.
+- **Crates.** Three stacks of crates of picked fruit (`Arena Cover Orchard
+  Crate ...`: a large crate, a framed one on top and one at its foot)
+  stand round the clearing's edge, each crate its own object, stopping
+  rounds and sight. They are dressing rather than the corner's essential
+  cover: the crates, the windmill's hay bales and its sacks are expected
+  to become loose physical objects that tanks shove and shots knock over,
+  so they stand in open ground clear of the north spawn's exits, with room
+  to scatter.
 
 The orchard's two models are generated in all three palettes like the kit,
 from `models/windmill.toml` and `models/orchard_tree.toml`, in existing

@@ -7,6 +7,7 @@
 //! preview a palette; the arena itself is Sunny Battlefield's.
 #![recursion_limit = "256"]
 
+mod barn_yard;
 mod border;
 mod farmland;
 mod ground;
@@ -867,6 +868,7 @@ fn main() {
     author.border(&creek);
     author.raised_area();
     author.layout();
+    author.barn_yard(&creek);
     author.farmland(&creek);
     // The spawns' flags and lamps: the south's either side of its paving,
     // the north's by its gravel pad.

@@ -24,9 +24,22 @@ struct GrassField {
     benders: array<vec4f, MAX_GRASS_BENDERS>,
 };
 
-// The least opacity grass fades to around a bender that reveals: enough to still read as grass
-// while what stands in it reads clearly through it.
-const GRASS_REVEAL_ALPHA: f32 = 0.35;
+// The opacity the grass fades to around a bender that reveals: `GRASS_REVEAL_ALPHA` in the ring
+// round it, enough to still read as grass, and `GRASS_CORE_ALPHA` over the tank itself, so it
+// reads clearly through the grass in its own colours. The transparent pass blends only the
+// nearest faded blade over each pixel, so these are the whole of the grass's tint, however many
+// blades stack there.
+const GRASS_REVEAL_ALPHA: f32 = 0.55;
+const GRASS_CORE_ALPHA: f32 = 0.15;
+
+// How thick a blade stays at its tip, as a fraction of its modelled thickness, and how far along
+// its length, as a fraction of the field's height, it starts thinning towards it.
+const GRASS_TIP_THICKNESS: f32 = 0.08;
+const GRASS_TAPER_START: f32 = 0.35;
+
+// How dark a blade is at its root, as a fraction of its colour, brightening to the full colour
+// at its tip, so the arc of a blade reads from above.
+const GRASS_ROOT_SHADE: f32 = 0.7;
 
 // How far the grass vertex at `world`, of a mesh standing at `root`, moves, the more the higher
 // above its root it is:
@@ -74,18 +87,47 @@ fn grass_normal(normal: vec3f) -> vec3f {
     return normalize(mix(normalize(normal), vec3f(0.0, 1.0, 0.0), 0.65));
 }
 
-// How far the grass at `world` fades towards `GRASS_REVEAL_ALPHA` around the benders that reveal,
-// from 0 outside their reveal radius, easing in over its outer two thirds, to 1.
-fn grass_reveal(field: GrassField, world: vec3f) -> f32 {
-    var reveal = 0.0;
+// The position of a grass mesh's vertex at `local`, thinned towards its tip. A grass blade is
+// modelled lying flat: its outline in XZ, its length running along -Z from its root at the
+// origin, and its thickness rising along +Y from 0. Over the outer part of its length the blade
+// thins down onto its underside, to `GRASS_TIP_THICKNESS` of its thickness, so its tip ends in a
+// thin rounded edge rather than a blunt cap.
+fn grass_taper(field: GrassField, local: vec3f) -> vec3f {
+    let along = max(-local.z, 0.0) / max(field.height, 0.01);
+    let thickness = mix(1.0, GRASS_TIP_THICKNESS, smoothstep(GRASS_TAPER_START, 1.0, along));
+    return vec3f(local.x, local.y * thickness, local.z);
+}
+
+// How far up its blade the grass vertex at `world`, of a mesh standing at `root`, is, from 0 at
+// its root to 1 at the field's height.
+fn grass_rise(field: GrassField, root: vec3f, world: vec3f) -> f32 {
+    return clamp((world.y - root.y) / max(field.height, 0.01), 0.0, 1.0);
+}
+
+// The colour of grass `rise` up its blade, of colour `albedo`: darker towards the root.
+fn grass_shade(albedo: vec3f, rise: f32) -> vec3f {
+    return albedo * mix(GRASS_ROOT_SHADE, 1.0, smoothstep(0.0, 0.9, rise));
+}
+
+// The opacity of the grass at `world` around the benders that reveal: 1 outside their reveal
+// radius, easing over its outer two thirds to `GRASS_REVEAL_ALPHA`, and from there, over the
+// inner 0.6 of the radius, down to `GRASS_CORE_ALPHA` over the bender and the tank round it.
+fn grass_alpha(field: GrassField, world: vec3f) -> f32 {
+    var alpha = 1.0;
     for (var i = 0u; i < min(field.bender_count, MAX_GRASS_BENDERS); i++) {
         let bender = field.benders[i];
         if bender.w > 0.0 {
             let distance = length(world.xz - bender.xy);
-            reveal = max(reveal, 1.0 - smoothstep(bender.w * 0.35, bender.w, distance));
+            let ring = mix(1.0, GRASS_REVEAL_ALPHA, 1.0 - smoothstep(bender.w * 0.35, bender.w, distance));
+            let core = mix(
+                ring,
+                GRASS_CORE_ALPHA,
+                1.0 - smoothstep(bender.w * 0.35, bender.w * 0.6, distance),
+            );
+            alpha = min(alpha, core);
         }
     }
-    return reveal;
+    return alpha;
 }
 
 // Whether the grass at `world` draws ink: not near a bender that reveals, out to a quarter past
@@ -98,9 +140,4 @@ fn grass_inked(field: GrassField, world: vec3f) -> bool {
         }
     }
     return true;
-}
-
-// The opacity of grass `reveal` has faded.
-fn grass_alpha(reveal: f32) -> f32 {
-    return mix(1.0, GRASS_REVEAL_ALPHA, reveal);
 }

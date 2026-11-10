@@ -1,0 +1,147 @@
+# Grain silo: a concrete stave tower 3.4 m across and 9.6 m high on a
+# footing, bound by five steel hoops, under a galvanised dome with a vent
+# cap, a ladder up its +Z side; about 11.8 m high, the barn yard's tall
+# landmark, read from the Far camera by its dome and long shadow. The solid
+# is the tower's body. Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "footing"
+kind = "cylinder"
+role = "rocks"
+radius = 1.95
+height = 0.35
+vertices = 20
+bevel = 0.08
+segments = 2
+offset = [0, 0, 0]
+
+[[parts]]
+name = "tower"
+kind = "cylinder"
+role = "barriers"
+radius = 1.7
+height = 9.6
+vertices = 20
+bevel = 0.06
+segments = 2
+offset = [0, 0.3, 0]
+
+[[parts]]
+name = "hoop_0"
+kind = "ring"
+role = "metal"
+radius = 1.78
+inner_radius = 1.6
+height = 0.16
+vertices = 20
+offset = [0, 1.6, 0]
+
+[[parts]]
+name = "hoop_1"
+kind = "ring"
+role = "metal"
+radius = 1.78
+inner_radius = 1.6
+height = 0.16
+vertices = 20
+offset = [0, 3.4, 0]
+
+[[parts]]
+name = "hoop_2"
+kind = "ring"
+role = "metal"
+radius = 1.78
+inner_radius = 1.6
+height = 0.16
+vertices = 20
+offset = [0, 5.2, 0]
+
+[[parts]]
+name = "hoop_3"
+kind = "ring"
+role = "metal"
+radius = 1.78
+inner_radius = 1.6
+height = 0.16
+vertices = 20
+offset = [0, 7, 0]
+
+[[parts]]
+name = "hoop_4"
+kind = "ring"
+role = "metal"
+radius = 1.78
+inner_radius = 1.6
+height = 0.16
+vertices = 20
+offset = [0, 8.8, 0]
+
+[[parts]]
+name = "eave"
+kind = "cylinder"
+role = "metal_caps"
+radius = 1.85
+height = 0.2
+vertices = 20
+bevel = 0.05
+segments = 2
+offset = [0, 9.8, 0]
+
+[[parts]]
+name = "dome"
+kind = "blob"
+role = "metal_caps"
+subdivisions = 3
+lobes = [{ center = [0, 9.9, 0], radius = 1.78 }]
+
+[[parts]]
+name = "vent"
+kind = "cylinder"
+role = "metal"
+radius = 0.32
+top_radius = 0.22
+height = 0.4
+vertices = 10
+bevel = 0.04
+segments = 2
+offset = [0, 11.5, 0]
+
+[[parts]]
+name = "vent_cap"
+kind = "cylinder"
+role = "metal_caps"
+radius = 0.45
+top_radius = 0.06
+height = 0.3
+vertices = 10
+bevel = 0.03
+segments = 1
+offset = [0, 11.88, 0]
+
+# The ladder: two rails over a strip of rungs.
+[[parts]]
+name = "ladder_rail_0"
+kind = "box"
+role = "metal"
+size = [0.08, 9.2, 0.08]
+bevel = 0.02
+segments = 1
+offset = [-0.26, 0.4, 1.82]
+
+[[parts]]
+name = "ladder_rail_1"
+kind = "box"
+role = "metal"
+size = [0.08, 9.2, 0.08]
+bevel = 0.02
+segments = 1
+offset = [0.26, 0.4, 1.82]
+
+[[parts]]
+name = "ladder_rungs"
+kind = "box"
+role = "metal_caps"
+size = [0.5, 9.0, 0.04]
+bevel = 0.01
+segments = 1
+offset = [0, 0.5, 1.8]
