@@ -43,7 +43,7 @@ pub struct ComponentCombatPalette {
 impl Component for ComponentCombatPalette {}
 
 impl ComponentCombatPalette {
-    fn in_scene(scene: &Scene) -> Self {
+    pub(crate) fn in_scene(scene: &Scene) -> Self {
         scene
             .objects_with::<Self>()
             .find_map(|object| scene.read_component::<Self, _, _>(object, |palette| *palette))
