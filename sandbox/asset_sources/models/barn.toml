@@ -1,0 +1,295 @@
+# Barn: red board walls 6.6 m long (along X) and 4.6 m deep under a pitched
+# galvanised roof, cream corner boards and window frames, a braced sliding
+# door under a hayloft door in the +X gable, another hayloft door in the -X
+# gable and a vented cupola on the ridge, about 6.5 m high; the barn yard's
+# landmark, read from the Far camera by its long pale roof and red walls.
+# The solid is the walls' box. Regenerate with calyx_model_gen; dimensions
+# in metres.
+
+[[parts]]
+name = "walls"
+kind = "box"
+role = "barn_boards"
+size = [6.6, 3.2, 4.6]
+bevel = 0.12
+segments = 2
+offset = [0, 0, 0]
+
+# The gable: two wedges back to back, each rising from the eave to the
+# ridge along the barn's middle, 4.8 m up.
+[[parts]]
+name = "gable_0"
+kind = "wedge"
+role = "barn_boards"
+size = [6.5, 1.6, 2.3]
+bevel = 0.04
+segments = 2
+offset = [0, 3.2, -1.15]
+
+[[parts]]
+name = "gable_1"
+kind = "wedge"
+role = "barn_boards"
+size = [6.5, 1.6, 2.3]
+bevel = 0.04
+segments = 2
+offset = [0, 3.2, 1.15]
+rotation = [0, 180, 0]
+
+# The roof's two slopes, 34.8 degrees, each lying on its gable's slope from
+# the ridge to past the eave, overhanging the gables.
+[[parts]]
+name = "roof_0"
+kind = "box"
+role = "metal_caps"
+size = [7.4, 0.2, 3.25]
+bevel = 0.05
+segments = 2
+offset = [0, 3.92, -1.293]
+rotation = [-34.82, 0, 0]
+
+[[parts]]
+name = "roof_1"
+kind = "box"
+role = "metal_caps"
+size = [7.4, 0.2, 3.25]
+bevel = 0.05
+segments = 2
+offset = [0, 3.92, 1.293]
+rotation = [34.82, 0, 0]
+
+[[parts]]
+name = "ridge_cap"
+kind = "box"
+role = "metal"
+size = [7.5, 0.22, 0.56]
+bevel = 0.06
+segments = 2
+offset = [0, 4.86, 0]
+
+[[parts]]
+name = "corner_0"
+kind = "box"
+role = "barn_trim"
+size = [0.3, 3.25, 0.3]
+bevel = 0.06
+segments = 2
+offset = [-3.25, 0, -2.25]
+
+[[parts]]
+name = "corner_1"
+kind = "box"
+role = "barn_trim"
+size = [0.3, 3.25, 0.3]
+bevel = 0.06
+segments = 2
+offset = [3.25, 0, -2.25]
+
+[[parts]]
+name = "corner_2"
+kind = "box"
+role = "barn_trim"
+size = [0.3, 3.25, 0.3]
+bevel = 0.06
+segments = 2
+offset = [-3.25, 0, 2.25]
+
+[[parts]]
+name = "corner_3"
+kind = "box"
+role = "barn_trim"
+size = [0.3, 3.25, 0.3]
+bevel = 0.06
+segments = 2
+offset = [3.25, 0, 2.25]
+
+# The sliding door in the +X gable: a cream frame, a red panel, a cream X
+# brace and the rail it hangs from.
+[[parts]]
+name = "door_frame"
+kind = "box"
+role = "barn_trim"
+size = [0.14, 2.75, 3]
+bevel = 0.04
+segments = 2
+offset = [3.33, 0, 0]
+
+[[parts]]
+name = "door"
+kind = "box"
+role = "barn_boards"
+size = [0.12, 2.45, 2.6]
+bevel = 0.03
+segments = 2
+offset = [3.4, 0, 0]
+
+[[parts]]
+name = "door_brace_0"
+kind = "box"
+role = "barn_trim"
+size = [0.08, 3.3, 0.18]
+bevel = 0.02
+segments = 1
+offset = [3.48, 0.079, -1.187]
+rotation = [46, 0, 0]
+
+[[parts]]
+name = "door_brace_1"
+kind = "box"
+role = "barn_trim"
+size = [0.08, 3.3, 0.18]
+bevel = 0.02
+segments = 1
+offset = [3.48, 0.079, 1.187]
+rotation = [-46, 0, 0]
+
+[[parts]]
+name = "door_rail"
+kind = "box"
+role = "metal"
+size = [0.14, 0.16, 4]
+bevel = 0.03
+segments = 1
+offset = [3.42, 2.82, 0.5]
+
+# Hayloft doors high in each gable.
+[[parts]]
+name = "loft_frame_0"
+kind = "box"
+role = "barn_trim"
+size = [0.14, 1.05, 1.2]
+bevel = 0.04
+segments = 2
+offset = [3.33, 3.3, 0]
+
+[[parts]]
+name = "loft_door_0"
+kind = "box"
+role = "barn_boards"
+size = [0.12, 0.8, 0.9]
+bevel = 0.03
+segments = 2
+offset = [3.4, 3.42, 0]
+
+[[parts]]
+name = "loft_frame_1"
+kind = "box"
+role = "barn_trim"
+size = [0.14, 1.05, 1.2]
+bevel = 0.04
+segments = 2
+offset = [-3.33, 3.3, 0]
+
+[[parts]]
+name = "loft_door_1"
+kind = "box"
+role = "barn_boards"
+size = [0.12, 0.8, 0.9]
+bevel = 0.03
+segments = 2
+offset = [-3.4, 3.42, 0]
+
+# Two windows in each long wall.
+[[parts]]
+name = "window_0"
+kind = "box"
+role = "barn_trim"
+size = [0.9, 0.8, 0.12]
+bevel = 0.03
+segments = 1
+offset = [-1.6, 1.4, 2.33]
+
+[[parts]]
+name = "window_1"
+kind = "box"
+role = "barn_trim"
+size = [0.9, 0.8, 0.12]
+bevel = 0.03
+segments = 1
+offset = [1.4, 1.4, 2.33]
+
+[[parts]]
+name = "window_2"
+kind = "box"
+role = "barn_trim"
+size = [0.9, 0.8, 0.12]
+bevel = 0.03
+segments = 1
+offset = [-1.4, 1.4, -2.33]
+
+[[parts]]
+name = "window_3"
+kind = "box"
+role = "barn_trim"
+size = [0.9, 0.8, 0.12]
+bevel = 0.03
+segments = 1
+offset = [1.6, 1.4, -2.33]
+
+[[parts]]
+name = "pane_0"
+kind = "box"
+role = "metal"
+size = [0.6, 0.5, 0.06]
+bevel = 0.01
+segments = 1
+offset = [-1.6, 1.55, 2.4]
+
+[[parts]]
+name = "pane_1"
+kind = "box"
+role = "metal"
+size = [0.6, 0.5, 0.06]
+bevel = 0.01
+segments = 1
+offset = [1.4, 1.55, 2.4]
+
+[[parts]]
+name = "pane_2"
+kind = "box"
+role = "metal"
+size = [0.6, 0.5, 0.06]
+bevel = 0.01
+segments = 1
+offset = [-1.4, 1.55, -2.4]
+
+[[parts]]
+name = "pane_3"
+kind = "box"
+role = "metal"
+size = [0.6, 0.5, 0.06]
+bevel = 0.01
+segments = 1
+offset = [1.6, 1.55, -2.4]
+
+# The cupola on the ridge, louvred, under a four-sided cap.
+[[parts]]
+name = "cupola"
+kind = "box"
+role = "barn_trim"
+size = [1, 1.2, 1]
+bevel = 0.06
+segments = 2
+offset = [0.6, 4.5, 0]
+
+[[parts]]
+name = "cupola_louvre"
+kind = "box"
+role = "metal"
+size = [1.06, 0.36, 0.64]
+bevel = 0.03
+segments = 1
+offset = [0.6, 4.95, 0]
+
+[[parts]]
+name = "cupola_roof"
+kind = "cylinder"
+role = "metal_caps"
+radius = 0.92
+top_radius = 0.06
+height = 0.7
+vertices = 4
+bevel = 0.03
+segments = 1
+offset = [0.6, 5.65, 0]
+rotation = [0, 45, 0]

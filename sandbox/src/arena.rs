@@ -303,8 +303,8 @@ mod tests {
         assert!(colliders > 50, "the authored pen and cover have collision");
         // Saved before colliders had groups, every collider keeps the default
         // groups, stopping hulls, rounds and sight alike, and saves unchanged;
-        // only the farmland creek's blockers and the bridge's rails stop
-        // tanks alone.
+        // only the farmland creek's blockers, the bridge's rails and the
+        // barn yard's paddock fence stop tanks alone.
         let mut tank_blockers = 0;
         // Brush volumes, which stop nothing, have their own.
         for object in scene.descendants_with::<ComponentCollider>(arena) {
@@ -319,7 +319,9 @@ mod tests {
             }
             let name = scene.name(object);
             scene.read_component::<ComponentCollider, _, _>(object, |collider| {
-                if name.starts_with("Arena Creek Blocker") || name.starts_with("Arena Bridge Rail")
+                if name.starts_with("Arena Creek Blocker")
+                    || name.starts_with("Arena Bridge Rail")
+                    || name.starts_with("Arena Paddock Fence")
                 {
                     assert_eq!(collider.groups, crate::collision::TANK_BLOCKER, "{name}");
                     tank_blockers += 1;

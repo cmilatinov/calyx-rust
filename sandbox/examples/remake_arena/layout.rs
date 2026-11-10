@@ -10,9 +10,10 @@
 //!   corner, past the south branch, dressed later by #581.
 //! - **Northwest, the orchard**: rows of trees broken by hedgerows and a
 //!   wall, with a windmill's footprint in the corner, dressed later by #580.
-//! - **Northeast, the barn yard**: the raised platform and an open yard
-//!   past the north branch, the barn's and silo's footprints left clear for
-//!   #579.
+//! - **Northeast, the barn yard**: the raised platform, the barn beside its
+//!   south ramp, the silo in the east cove, an open feed yard at the ramp's
+//!   foot and a paddock in the lobe north of the platform, past the north
+//!   branch (`barn_yard.rs`).
 //!
 //! Interior walls, hedgerows and lines of cover run at 35 to 45 degrees to
 //! the arena's axes, each at its own angle: nothing mirrors between the
@@ -40,8 +41,10 @@ pub const NORTH_SPAWN: Vec2 = Vec2::new(-10.0, 18.5);
 /// The barn and silo (#579), the windmill among the orchard rows (#580) and
 /// the supply depot's sheds (#581) go inside them.
 pub const FOOTPRINTS: [(&str, f32, f32, f32, f32); 5] = [
-    ("Barn", 9.0, 10.0, 16.5, 15.5),
-    ("Silo", 24.0, 12.0, 28.0, 17.0),
+    // The barn's feed yard, in front of its door, and the silo's pad (see
+    // `barn_yard.rs`).
+    ("Barn", 12.5, 6.0, 21.5, 12.5),
+    ("Silo", 24.5, 11.0, 29.5, 16.5),
     ("Windmill", -27.0, 24.5, -22.0, 29.5),
     ("Orchard", -27.0, 12.0, -13.5, 29.0),
     ("Depot", 18.5, -29.0, 28.0, -17.0),
@@ -122,8 +125,8 @@ const COVER: [(&str, &str, f32, f32, f32); 15] = [
     ("crate_framed", "Depot Stack 2", 27.5, -21.0, 52.0),
     ("barrier_plain", "Orchard Barrier", -12.5, 4.5, -38.0),
     ("sandbag_stack", "Orchard Sandbags", -13.0, 6.5, -38.0),
-    ("crate_large", "Barn Crate", 11.5, 17.0, 42.0),
-    ("barrier_hazard", "Barn Barrier", 6.0, 15.5, 42.0),
+    ("crate_large", "Barn Crate", 29.9, 12.6, 38.0),
+    ("barrier_hazard", "Barn Barrier", 29.4, 25.4, 40.0),
     ("barrier_plain", "East Barrier", 25.0, 8.0, -40.0),
     ("rock_large", "Spawn Boulder", -3.5, -16.5, 20.0),
     ("rock_large", "Orchard Boulder", -22.5, 6.5, 60.0),
