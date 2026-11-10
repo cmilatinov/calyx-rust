@@ -54,8 +54,8 @@ The tank's `Camera` object carries it as a Tank Camera component
 point and zooms in with the scroll wheel to 0.6 of the Far framing.
 
 Kit prop scales stay the same as the showcase; the playable arena sits
-inside an irregular border about 67 by 69 m across, with a larger visible
-ground apron beyond it.
+inside an irregular border about 82 by 81 m across, a dry-stone wall that
+turns every few metres, with a larger visible ground apron beyond it.
 
 ## Colour convention
 
@@ -300,7 +300,9 @@ and read from the Far framing by shape, colour and motion: a river that
 meanders between carved banks, its surface rolling with waves that run
 downstream, shallow colour at the banks running to deep in the
 middle, and hard-edged foam along the shores, around rocks and drifting with
-the flow. Never a straight channel: a river bends, and its width changes. The arena's creek is one
+the flow. Never a straight channel: a river bends, and its width changes. The arena's creek is one,
+and it forks: a branch joins it as a second water whose shores open into
+the creek's where they meet, with no bank or foam line across the mouth
 (`sandbox/asset_sources/arena-kit.md`, Farmland front). The
 creek in `sandbox/assets/lookdev/water_test.cxscene` (built by `cargo run -p
 sandbox --example water_test`) shows it in each palette.

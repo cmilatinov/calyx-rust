@@ -147,34 +147,35 @@ heightmap and per-palette materials are written to
 `asset_sources/ground/ground_detail.py`.
 
 The map is asymmetric farmland, built by `remake_arena`'s `layout` module:
-nothing on it mirrors between the halves. A creek runs across the middle
-from the west wall to the east wall (see Farmland front), splitting the pen
-into the south team's bank and the north team's. The player's side spawns at
-the `Player Spawn`, at the origin (local `(0, -22)`); team 1 at the `North
-Spawn`, at local `(-7.5, 21)` facing south, on a gravel pad. Each quadrant
-has its own character:
+nothing on it mirrors. A creek comes in through the west border and forks in
+the middle of the pen (see Farmland front), splitting it into three
+sections: the south team's bank in the southwest, the north team's in the
+northwest, and the contested east between the branches. The player's side
+spawns at the `Player Spawn`, at the origin (local `(0, -22)`); team 1 at
+the `North Spawn`, at local `(-10, 18.5)` facing south, on a gravel pad. Each
+corner has its own character:
 
 - **Southwest, the farm**: the ruined farmhouse, the water tower, a field,
   hedgerows, and the creek's deep bend into the south half.
 - **Southeast, the supply depot**: a walled yard of stacked crates in the
-  corner (footprint `Depot`, local x 14..27, z -29.5..-17), dressed by #581.
+  corner past the south branch (footprint `Depot`, local x 18.5..28,
+  z -29..-17), dressed by #581.
 - **Northwest, the orchard**: rows of kit trees at 37 degrees broken by
-  hedgerows, a wall and brush (footprint `Orchard`, x -27..-11, z 12..29),
-  with the windmill's footprint in the corner (`Windmill`, x -27..-22,
-  z 24.5..29.5), dressed by #580.
-- **Northeast, the barn yard**: the raised platform and an open yard with
-  long sightlines down to the east bridge, the barn's and silo's footprints
-  (`Barn`, x 4..14, z 11..17; `Silo`, x 24..28, z 12..17) left clear for
-  #579.
+  hedgerows, a wall and brush (footprint `Orchard`, x -27..-13.5,
+  z 12..29), with the windmill's footprint in the corner (`Windmill`,
+  x -27..-22, z 24.5..29.5), dressed by #580.
+- **Northeast, the barn yard**: the raised platform and an open yard past
+  the north branch, the barn's and silo's footprints (`Barn`, x 9..16.5,
+  z 10..15.5; `Silo`, x 24..28, z 12..17) left clear for #579.
 
 The footprints are `layout::FOOTPRINTS`; the ground paints the barn yard
 and the windmill's ground worn dirt and the silo's and the depot's gravel.
 Sand lanes, painted on the ground and smoothed into curves, run from the
-south spawn to the west bridge and on to the north spawn, from the south
-spawn round the depot to the east bridge and the south ramp, and from the
-north spawn to the west ramp. Targets are at world (-3, 0.5, 35.5) and
-(10, 0.5, -1), and the sentry at (9.5, 0.5, 41.5), in the barn yard beside the
-foot of the west ramp.
+south spawn over the west bridge to the north spawn, from the south spawn
+over the south bridge through the east to the south ramp, and from the
+north spawn over the north bridge to the west ramp. Targets are at world
+(-8, 0.5, 34.5) and (28, 0.5, 23), and the sentry at (20, 0.5, 23.5), in
+the east between the barn yard wall and the east field's wall.
 
 The raised area fills the northeast pocket. The platform's root is at local
 `(20, 23)` (world Z 45), its deck 1.6 m up, 3.4 m clear of the north and east
@@ -185,11 +186,11 @@ sandbag stack on the deck at `(17, 21)` gives cover overlooking the middle.
 
 Interior walls, each an `Arena Wall ...` object holding its kit modules,
 run at 35 to 45 degrees to the arena's axes, each at its own angle, as do
-the hedgerows and the lines of barriers, sandbags and crates: `South Centre`
-screens the south spawn's run to the west bridge, `Depot` closes the
-depot's yard, `Farm` shields the farm's field and water tower, `Orchard`
-edges the orchard towards the creek, and `Barn Yard` screens the west
-ramp's approach from the west bridge. Each is a straight run, an end piece,
+the hedgerows and the lines of barriers, sandbags and crates: `East Field`
+breaks the long sightline across the east between the south bridge and the
+barn yard, `Depot` closes the depot's yard, `Farm` shields the farm's field and
+water tower, `Orchard` edges the orchard towards the creek, and `Barn Yard`
+screens the barn yard from the fork. Each is a straight run, an end piece,
 a long module and an end piece joined at their connection ports, in an
 object turned to the wall's angle, with one continuous solid along the run,
 as the border has, rising to the shell-blocking top. Every wall leaves
@@ -198,24 +199,27 @@ a tank (at least 2.8 m) to other obstacles and 4.8 m to the border. Like
 every wall they block sight and cast fog shadows; the minimap outlines
 their solids as it does cover.
 
-The border (`remake_arena`'s `border` module) is not a rectangle: a closed
-outline of straight runs that steps out round the corner landmarks and cuts
-across corners at 35 to 45 degrees, built of what suits each quadrant.
-Going round from the west creek gap: hedgerows along the orchard, cut
-across the northwest corner; the farm's stone wall along the north; hay
-bales round the barn yard, stepping out round the platform's corner and
-along the east; the creek's east gap; concrete barriers round the supply
-depot, stepping out east of it and cut across its corner; and the farm's
-stone wall along the south, stepping out round the water tower and cut
-across the southwest corner, back to the west gap. Each segment is an
-object turned along it holding its pieces (stone modules stretched to fit,
-or props spread evenly and turned a little by hand) and one solid along its
-whole length, reaching half its thickness past each corner so neighbouring
-solids overlap, rising to the shell-blocking top. Stone segments are `Arena
-Wall Border ...`, on the terrain's outline layer; the others are `Arena
-Cover Border ...`, props, which block sight as the walls do. Where the
-creek leaves, the border's solids stop just past its shore, in the creek's
-blockers, and its pieces stop on the bank. The minimap outlines the border's
+The border (`remake_arena`'s `border` module) is an irregular outline of
+56 short stretches, no two alike and none longer than about 11 m, turning
+every which way: lobes push out round the orchard in the northwest, the
+barn yard in the northeast, the middle of the east and the farm in the
+southwest; peninsulas reach north behind the north spawn and south behind
+the south spawn; coves bite in between them, by the silo, above the depot
+and either side of the creek's west gap. The creek comes in through a gap
+on the west and its branches leave through inlets on the north and the
+south. It is a field boundary: a dry-stone wall, the kit's long modules
+stretched to fit each stretch, with a boulder set at every bend
+(`Arena Prop Border Bend ...`, decoration within the overlapping solids),
+and a hedgerow round the orchard's lobe. Each stretch is an object turned
+along it holding its pieces and one solid along its whole length, reaching
+half its thickness past each bend so neighbouring solids overlap, rising
+to the shell-blocking top. Stone stretches are `Arena Wall Border ...`, on
+the terrain's outline layer; the hedgerows `Arena Cover Border Hedgerow
+...`, props, which block sight as the walls do. Where the creek leaves, the
+border's solids stop just past its shore, in the creek's blockers, and its
+pieces stop on the bank. Outside the border the grass grows rank, a band
+of darker verge along the wall, then fields, fences and copses of trees, so
+nothing outside reads as playable. The minimap outlines the border's
 solids, since no rectangle bounds the floor; the Arena's extent, which the
 minimap fits and the camera checks cover, is the border's bounding
 rectangle, as is the `Arena Floor`.
@@ -258,43 +262,53 @@ masks.
 The farmland, Sunny Battlefield's setting, is built by `remake_arena`'s
 `farmland` module. It reads by detail rather than height:
 
-- **Creek.** One Water component, `Arena Creek`, 0.6 m below the ground,
-  meanders in under the west wall, bends deep into the south half past the
-  farm, crosses the middle on a diagonal and runs straighter through the
-  north half to leave under the east wall, 6 to 8 m wide, and keeps
-  meandering outside both walls to the apron's edge. Its banks are the
-  component's, in the generated `creek_bank` material (the dirt's colours
-  on the terrain's ink layer), with their lip 2 cm above the ground. The
-  ground drops under the creek inside the bank wall, so the lip covers the
-  step, and its mud frays out from the banks. Stones stand in the stream,
-  with foam rings, and reeds on its banks.
-- **Collision.** `Arena Creek Blocker` boxes, 1.6 m pieces along the
-  centreline as wide as the water plus 0.5 m a side and overlapping the
-  next, are in the sandbox's `TANK_BLOCKER` collision groups: they stop
-  tanks short of the water but let rounds, sight and the aim across.
-  Colliders are primitives, so the blockers follow the bends in pieces;
-  either side of each bridge, in the bridge's frame, a block closes the
-  creek up to the rails.
-- **Crossings.** Two timber bridges (`bridge`), `Arena Prop Bridge West`
-  on the diagonal run near the centre in the open and `Arena Prop Bridge
-  East` on the straight run far east, at the foot of the south ramp. Each
-  stands square across the water where the centreline crosses its x, its
-  deck 5 cm above the floor, its rails `TANK_BLOCKER` boxes. There is no
-  ford: with the decks closed no drive joins the spawns.
+- **Creek.** Two Water components, 0.6 m below the ground. `Arena Creek`
+  meanders in under the west border, bends deep into the south half past
+  the farm, and at the fork in the middle of the pen runs on as the north
+  branch, winding north to leave through the north border's inlet;
+  `Arena Creek South Branch` starts inside it at the fork and runs
+  south-east, bending east, to leave through the south border's inlet. Both
+  are 5.5 to 8 m wide and keep meandering outside the border to the apron's
+  edge. Where they meet each opens into the other (the water's `openings`):
+  neither draws a bank or a shore along a shore lying in the other's water,
+  so the fork reads as one water. Their banks are the component's, in the
+  generated `creek_bank` material (the dirt's colours on the terrain's ink
+  layer), with their lip 2 cm above the ground. The ground drops under the
+  water inside the bank wall, so the lip covers the step, and its mud
+  frays out from the banks. Stones stand in the stream, with foam rings,
+  and reeds on its banks.
+- **Collision.** `Arena Creek Blocker` boxes, 1.6 m pieces along each
+  water's centreline as wide as the water plus 0.5 m a side and
+  overlapping the next, are in the sandbox's `TANK_BLOCKER` collision
+  groups: they stop tanks short of the water but let rounds, sight and the
+  aim across. Colliders are primitives, so the blockers follow the bends in
+  pieces; either side of each bridge, in the bridge's frame, a block closes
+  the creek up to the rails.
+- **Crossings.** Three timber bridges (`bridge`), one over each stretch, at
+  uneven positions far apart: `Arena Prop Bridge West` over the creek's
+  diagonal run before the fork, joining the two western sections;
+  `Arena Prop Bridge North` high up the north branch, by the platform's west
+  ramp; `Arena Prop Bridge South` over the south branch on the east lane,
+  by the south spawn. Each stands square across its water where the
+  centreline passes nearest its point, its deck 5 cm above the floor, its
+  rails `TANK_BLOCKER` boxes. There is no ford: with the decks closed no
+  drive joins any two sections, and each bridge alone joins exactly the two
+  either side of it.
 - **Fairness.** Each team's drive from its spawn to its nearest bridge, and
   to the ground nearest the map's centre on its own bank, takes within 15 %
   as long as the other team's (`tests/feature_regressions.rs`).
 - **Landmarks.** The ruined farmhouse (`Arena Wall Farmhouse`) is two kit
   wall corners with doorways wider than 2.8 m, a 3.8 m `chimney` and a
-  broken `roof_ruin`, with hay bales; the 9.7 m `water_tower` stands in the
-  pen's southwest corner, roof and all clear of both walls, its solid
-  leaving a gap too narrow for a tank. The `hedgerow`s are cover that stops
+  broken `roof_ruin`, with hay bales; the 9.7 m `water_tower` stands well
+  inside the farm's lobe, east of the field and south of the farm's wall,
+  about 11 m from the border. The `hedgerow`s are cover that stops
   rounds and, like crates, sight.
 - **Ground.** A tilled field with crop rows by the water tower, the
   farmhouse's dirt yard, gravel under the water tower and mud along the
   creek, all drawn by the ground's material.
-- **Outside.** Fields with fences and copses of kit trees beyond every
-  wall, around the creek's continuation.
+- **Outside.** A verge of darker grass along the border, then fields with
+  fences and copses of kit trees all round, around the creek's and its
+  branch's continuations.
 
 New models are generated in all three palettes like the kit: the ground
 tiles `ground_grass_dark`, `ground_grass_light`, `ground_gravel`,

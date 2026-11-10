@@ -18,6 +18,10 @@ const CURVE_STEPS: usize = 48;
 /// reach further.
 const MAX_OBSTACLE_DISTANCE: f32 = 50.0;
 
+/// The farthest a vertex lies from the shore when its own shore opens into
+/// other water and no shore meeting land is nearer, in local units.
+const MAX_OPEN_SHORE_DISTANCE: f32 = 50.0;
+
 /// One control point of a river's centreline, in its owner's local XZ plane.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct WaterPathPoint {
@@ -57,6 +61,13 @@ pub struct WaterPath {
     pub cell_size: f32,
     /// What stands in the water.
     pub obstacles: Vec<WaterCircle>,
+    /// Where the river opens into other water, such as a branch that joins
+    /// it: no bank is cut along a shore inside these circles, and the shore
+    /// there is open water, not land: the water's distance to the shore is
+    /// measured to the nearest stretch of shore outside every opening, so
+    /// no shallows or foam band run across the mouth and two rivers meet
+    /// without a wall or a foam line between them.
+    pub openings: Vec<WaterCircle>,
 }
 
 /// One cross-section of a [`WaterPath`]: where the centreline is, which way
@@ -261,6 +272,15 @@ impl WaterPath {
             .max(0.0)
     }
 
+    /// How far inside the nearest opening local `point` lies, 0 outside
+    /// every opening.
+    pub fn opening_depth(&self, point: Vec2) -> f32 {
+        self.openings
+            .iter()
+            .map(|circle| circle.radius - (point - circle.center).norm())
+            .fold(0.0, f32::max)
+    }
+
     /// The river's triangle mesh, or `None` when the path is not valid.
     ///
     /// Each triangle runs counter-clockwise seen from above, as a
@@ -269,6 +289,20 @@ impl WaterPath {
         let sections = self.sections()?;
         let columns = self.columns(&sections);
         let rows = sections.len() - 1;
+        // Where the shore meets land: the shore at each section, on both
+        // sides, outside every opening.
+        let closed: Vec<Vec2> = if self.openings.is_empty() {
+            Vec::new()
+        } else {
+            sections
+                .iter()
+                .flat_map(|section| {
+                    [1.0, -1.0]
+                        .map(|side| section.center + section.normal * section.half_width * side)
+                })
+                .filter(|&shore| self.opening_depth(shore) <= 0.0)
+                .collect()
+        };
         // A grid vertex: local XZ, river coordinates and distance to shore.
         let vertex = |column: usize, row: usize| -> (Vec2, Vec2, f32) {
             let section = sections[row];
@@ -290,11 +324,19 @@ impl WaterPath {
                     * self.cell_size;
             }
             let position = section.center + section.tangent * along + section.normal * t;
-            (
-                position,
-                vec2(section.s + along, t),
-                (section.half_width - t.abs()).max(0.0),
-            )
+            // Where the nearest shore opens into other water, the shore
+            // that counts is the nearest stretch that meets land.
+            let side = if t < 0.0 { -1.0 } else { 1.0 };
+            let nearest = section.center + section.normal * section.half_width * side;
+            let shore = if self.opening_depth(nearest) > 0.0 {
+                closed
+                    .iter()
+                    .map(|&land| (land - position).norm())
+                    .fold(MAX_OPEN_SHORE_DISTANCE, f32::min)
+            } else {
+                (section.half_width - t.abs()).max(0.0)
+            };
+            (position, vec2(section.s + along, t), shore)
         };
         let count = columns * rows * 6;
         let mut geometry = WaterGeometry {
@@ -378,6 +420,11 @@ impl WaterPath {
                     let at = section.center + section.normal * side * (section.half_width + out);
                     vec3(at.x, y, at.y)
                 };
+                // No bank where the shore opens into other water.
+                let shore = (point(&pair[0], (0.0, 0.0)) + point(&pair[1], (0.0, 0.0))).xz() * 0.5;
+                if self.opening_depth(shore) > 0.0 {
+                    continue;
+                }
                 for strip in profile_points.windows(2) {
                     let quad = [
                         point(&pair[0], strip[0]),
@@ -484,6 +531,7 @@ mod tests {
             points: vec![point(0.0, 0.0, 4.0), point(0.0, 10.0, 4.0)],
             cell_size: 1.0,
             obstacles: Vec::new(),
+            openings: Vec::new(),
         }
     }
 
@@ -501,6 +549,7 @@ mod tests {
                 center: vec2(5.0, 12.0),
                 radius: 1.0,
             }],
+            openings: Vec::new(),
         }
     }
 
@@ -593,6 +642,52 @@ mod tests {
                 assert_eq!(geometry.facets[vertex], geometry.facets[t * 3]);
             }
         }
+    }
+
+    /// Where a river opens into other water, its shore there is open
+    /// water: no bank is cut along it, and the water there lies as far from
+    /// the shore as the nearest stretch of shore that meets land, so no
+    /// shallows or foam band draws across the mouth.
+    #[test]
+    fn an_opening_leaves_its_shore_without_a_bank_or_a_shore() {
+        let profile = BankProfile {
+            height: 0.6,
+            depth: 0.6,
+            run: 0.4,
+            lip: 0.5,
+        };
+        let mut path = straight();
+        let whole = path.banks(&profile).unwrap().positions.len();
+        // An opening on the left shore (-X) halfway along.
+        path.openings.push(WaterCircle {
+            center: vec2(-2.0, 5.0),
+            radius: 2.0,
+        });
+        let banks = path.banks(&profile).unwrap();
+        assert!(banks.positions.len() < whole);
+        assert!(banks
+            .positions
+            .iter()
+            .all(|p| p.x > 0.0 || (p.z - 5.0).abs() >= 1.0 - 1e-4));
+        let geometry = path.geometry().unwrap();
+        let mut across_the_mouth = 0;
+        for (position, extra) in geometry.positions.iter().zip(&geometry.extra) {
+            let own = 2.0 - position.x.abs();
+            let open = position.x < 0.0 && (position.z - 5.0).abs() < 2.0;
+            if !open {
+                assert_abs_diff_eq!(extra.z, own, epsilon = 1e-4);
+            } else {
+                // Never nearer the shore than its own, and well clear of it
+                // in the mouth's middle, where the nearest land is the
+                // mouth's ends or the far shore.
+                assert!(extra.z >= own - 1e-4);
+                if (position.z - 5.0).abs() < 0.5 {
+                    across_the_mouth += 1;
+                    assert!(extra.z > 1.4, "{position:?} is {} from the shore", extra.z);
+                }
+            }
+        }
+        assert!(across_the_mouth > 0);
     }
 
     #[test]

@@ -135,14 +135,9 @@ impl Author {
     /// at their connection ports, and one continuous solid along each
     /// straight run, from `from` to `to` on its centre line, so a tank
     /// sliding along it meets no seam between modules. Like every wall solid
-    /// it blocks sight and rises to the shell-blocking top.
-    fn interior_wall(&mut self, name: &str, pieces: &[WallPiece], runs: &[(Vec2, Vec2)]) {
-        self.interior_wall_at(name, Vec2::zeros(), 0.0, pieces, runs);
-    }
-
-    /// An interior wall as [`Author::interior_wall`] builds it, its pieces
-    /// and runs in a frame at `origin` turned `yaw` degrees, so the wall
-    /// may run at any angle to the arena's axes.
+    /// it blocks sight and rises to the shell-blocking top. Its pieces and
+    /// runs are in a frame at `origin` turned `yaw` degrees, so the wall may
+    /// run at any angle to the arena's axes.
     fn interior_wall_at(
         &mut self,
         name: &str,
@@ -659,9 +654,9 @@ fn main() {
     // transforms change; model scales, ids and gameplay settings survive.
     for (name, x, z) in [
         ("Arena", 0.0, 22.0),
-        ("Target A", -3.0, 35.5),
-        ("Target B", 10.0, -1.0),
-        ("Sentry", 9.5, 41.5),
+        ("Target A", -8.0, 34.5),
+        ("Target B", 28.0, 23.0),
+        ("Sentry", 20.0, 23.5),
     ] {
         let object = scene.objects().find(|o| scene.name(*o) == name).unwrap();
         let mut pose = scene.transform(object);
@@ -748,7 +743,7 @@ fn main() {
     let creek = farmland::Creek::new(&author.assets, palette);
     // The Arena's extent is the border's bounding rectangle, in whole
     // two-metre cells, which the minimap fits and the camera checks cover.
-    let (low, high) = border::bounds(&creek);
+    let (low, high) = border::bounds();
     let half = vec2(low.x.abs().max(high.x), low.y.abs().max(high.y));
     let (columns, rows) = ((half.x).ceil() as u32, (half.y).ceil() as u32);
     author
@@ -789,7 +784,7 @@ fn main() {
         if creek.carves(x, z) {
             return None;
         }
-        let inside = (-30..30).contains(&x) && (-32..32).contains(&z);
+        let inside = border::inside(vec2(x as f32 + 0.5, z as f32 + 0.5));
         Some(farmland::farm_ground(x, z).unwrap_or_else(|| {
             if inside {
                 pen_kind(x, z)
@@ -875,21 +870,21 @@ fn main() {
     // The spawns' flags and lamps: the south's either side of its paving,
     // the north's by its gravel pad.
     for (model, name, x, z, yaw) in [
-        ("flag", "Spawn Flag", -7.0, -23.0, 0.0),
-        ("lamp", "Spawn Lamp", 7.0, -21.0, 0.0),
-        ("flag", "North Spawn Flag", -11.0, 25.0, 0.0),
-        ("lamp", "North Spawn Lamp", -3.0, 27.0, 0.0),
+        ("flag", "Spawn Flag", -5.0, -27.5, 0.0),
+        ("lamp", "Spawn Lamp", 5.0, -25.5, 0.0),
+        ("flag", "North Spawn Flag", -15.5, 20.5, 0.0),
+        ("lamp", "North Spawn Lamp", -6.5, 26.5, 0.0),
     ] {
         author.prop(model, &format!("Arena Prop {name}"), x, z, yaw);
     }
     // Tufts scattered over the open grass, unevenly.
     for (i, (x, z)) in [
-        (-21.0, -6.5),
-        (-14.5, -3.0),
+        (-15.0, -1.5),
+        (-13.5, 1.0),
         (5.5, -24.5),
-        (11.0, -14.0),
+        (17.0, -10.5),
         (15.5, -6.0),
-        (-2.5, 4.5),
+        (-4.0, 6.0),
         (8.0, 21.5),
         (24.0, 20.5),
         (-25.0, 10.0),
@@ -898,6 +893,11 @@ fn main() {
     .into_iter()
     .enumerate()
     {
+        // On dry ground inside the border: no blades over the water.
+        assert!(
+            creek.beyond(vec2(x, z)) > 1.0 && border::beyond(vec2(x, z)) < -2.0,
+            "tuft {i} at ({x}, {z}) is in the creek or past the border"
+        );
         author.prop(
             "grass_tuft",
             &format!("Arena Grass {i}"),

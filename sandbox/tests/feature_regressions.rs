@@ -747,15 +747,19 @@ fn player_rounds_destroy_a_sentry_on_the_ground() {
     }
 }
 
-/// Tanks cross the creek on both bridges, square over the deck from one
+/// The arena's bridges: one over the creek before it forks, one over each
+/// of its branches.
+const BRIDGES: [&str; 3] = ["West", "North", "South"];
+
+/// Tanks cross the creek on every bridge, square over the deck from one
 /// bank to the other, staying between the rails, 0.75 m clear of the hull
 /// either side.
 #[test]
-fn tanks_cross_the_creek_on_both_bridges() {
+fn tanks_cross_the_creek_on_every_bridge() {
     let (copy, assets) = sandbox_assets();
     let scene = load_sandbox_scene(&copy, &assets);
-    for name in ["Arena Prop Bridge West", "Arena Prop Bridge East"] {
-        let bridge = scene.world_transform(object_named(&scene, name));
+    for name in BRIDGES.map(|bridge| format!("Arena Prop Bridge {bridge}")) {
+        let bridge = scene.world_transform(object_named(&scene, &name));
         let along = bridge.rotation * vec3(0.0, 0.0, 1.0);
         let yaw = along.x.atan2(along.z);
         let start = bridge.position - along * 7.0;
@@ -1371,9 +1375,9 @@ fn tank_climbs_the_south_ramp_onto_the_platform_and_drives_back_down() {
 
 #[test]
 fn tank_climbs_the_west_ramp_from_the_middle_of_the_arena() {
-    // West of the ramp's foot, facing east up it.
+    // West of the ramp's foot, past the north bridge, facing east up it.
     let (mut runner, tank) =
-        raised_area_runner(vec3(1.0, 0.0, 46.0), std::f32::consts::FRAC_PI_2, 60);
+        raised_area_runner(vec3(6.0, 0.0, 46.0), std::f32::consts::FRAC_PI_2, 60);
     hold(&mut runner, Some(egui::Key::W), 5.0, 60);
     hold(&mut runner, None, 2.0, 60);
     let parked = runner.scene().world_transform(tank);
@@ -1626,8 +1630,8 @@ fn interior_walls_stop_rounds_and_block_sight() {
         "fog hides the target behind the wall"
     );
     // The wall casts a fog shadow over the ground behind it, and only
-    // behind it: the ground about as far away past its end is lit.
-    let past_end = at(-4.5, 1.5);
+    // behind it: the ground about as far away past its far end is lit.
+    let past_end = at(10.5, 1.5);
     let sight = fog_sight(runner.scene());
     assert!(!sight.clear_line(from, ground(behind)));
     assert!(sight.clear_line(from, ground(past_end)));
@@ -1741,10 +1745,10 @@ struct DriveGrid {
 impl DriveGrid {
     const STEP: f32 = 0.25;
     // Round the border's outer faces, with a free margin outside it.
-    const MIN_X: f32 = -36.0;
-    const MAX_X: f32 = 36.0;
-    const MIN_Z: f32 = -15.0;
-    const MAX_Z: f32 = 59.0;
+    const MIN_X: f32 = -46.0;
+    const MAX_X: f32 = 48.0;
+    const MIN_Z: f32 = -26.0;
+    const MAX_Z: f32 = 70.0;
 
     /// The pen's grid, with `extra` footprints closed as well.
     fn new(scene: &Scene, extra: &[Vec<nalgebra_glm::Vec2>]) -> Self {
@@ -1913,29 +1917,60 @@ fn the_whole_pen_is_one_drive_from_the_spawn() {
     }
 }
 
-/// The creek splits the pen between the teams: the two spawns stand on
-/// opposite banks, and with the bridges' decks closed no drive joins them,
-/// so no gap between the creek's blockers lets a tank ford it.
+/// Ground in the east, the third of the pen between the creek's branches:
+/// the foot of the platform's south ramp.
+const EAST_GROUND: (f32, f32) = (20.0, 32.0);
+
+/// The forked creek splits the pen into three: the south spawn's bank in
+/// the southwest, the north spawn's in the northwest and the east between
+/// the branches. With every bridge's deck closed no drive joins any two of
+/// them, so no gap between the creek's blockers lets a tank ford it; each
+/// bridge alone joins exactly the two sections either side of it, so every
+/// section reaches the others.
 #[test]
-fn the_creek_splits_the_spawns_and_only_the_bridges_cross_it() {
+fn the_forked_creek_splits_the_pen_in_three_and_only_the_bridges_cross_it() {
     let (copy, assets) = sandbox_assets();
     let scene = load_sandbox_scene(&copy, &assets);
-    let decks: Vec<_> = ["West", "East"]
-        .iter()
-        .map(|name| {
-            let deck =
-                scene.world_transform(object_named(&scene, &format!("Arena Prop Bridge {name}")));
-            footprint(&deck, vec3(2.0, 0.5, 4.5))
-        })
-        .collect();
-    let grid = DriveGrid::new(&scene, &decks);
-    let drives = grid.drives_from(ground_of(&scene, "Player Spawn"));
+    let deck = |name: &str| {
+        let deck =
+            scene.world_transform(object_named(&scene, &format!("Arena Prop Bridge {name}")));
+        footprint(&deck, vec3(2.0, 0.5, 4.5))
+    };
+    let sections = [
+        ("southwest", ground_of(&scene, "Player Spawn")),
+        ("northwest", ground_of(&scene, "North Spawn")),
+        ("east", nalgebra_glm::vec2(EAST_GROUND.0, EAST_GROUND.1)),
+    ];
+    // Which sections each bridge joins, by index into `sections`.
+    let joins = [("West", 0, 1), ("North", 1, 2), ("South", 0, 2)];
+    let connected = |closed: &[&str]| {
+        let decks: Vec<_> = closed.iter().map(|name| deck(name)).collect();
+        let grid = DriveGrid::new(&scene, &decks);
+        let mut pairs = Vec::new();
+        for a in 0..sections.len() {
+            let drives = grid.drives_from(sections[a].1);
+            for b in a + 1..sections.len() {
+                if drives[grid.index(sections[b].1)].is_finite() {
+                    pairs.push((a, b));
+                }
+            }
+        }
+        pairs
+    };
     assert!(
-        drives[grid.index(ground_of(&scene, "North Spawn"))].is_infinite(),
+        connected(&BRIDGES).is_empty(),
         "a drive crosses the creek off the bridges"
     );
-    let open = DriveGrid::new(&scene, &[]).drives_from(ground_of(&scene, "Player Spawn"));
-    assert!(open[grid.index(ground_of(&scene, "North Spawn"))].is_finite());
+    for (open, a, b) in joins {
+        let closed: Vec<&str> = BRIDGES.iter().copied().filter(|n| *n != open).collect();
+        assert_eq!(
+            connected(&closed),
+            vec![(a, b)],
+            "the {open} bridge alone joins the {} and the {}",
+            sections[a].0,
+            sections[b].0
+        );
+    }
 }
 
 /// The map is fair to both spawns although nothing on it is mirrored: each
@@ -1957,7 +1992,7 @@ fn both_teams_reach_their_nearest_crossing_and_the_centre_equally_fast() {
         .world_transform(object_named(&scene, "Arena"))
         .position
         .xz();
-    let bridges: Vec<_> = ["West", "East"]
+    let bridges: Vec<_> = BRIDGES
         .iter()
         .map(|name| ground_of(&scene, &format!("Arena Prop Bridge {name}")))
         .collect();
@@ -2059,34 +2094,109 @@ fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
 }
 
 /// The creek stops tanks at its bank, but rounds fly over it and sight
-/// crosses it: a tank driving south at it between the bridges stops short
-/// of the water, then sees and hits a target on the far bank.
+/// crosses it: a tank in the east driving west at the north branch stops
+/// short of the water, then sees and hits a target on the far bank.
 #[test]
 fn the_creek_stops_tanks_but_not_rounds_or_sight() {
-    // North of the creek, facing south across it; its north shore here is
-    // at about z = 27.2.
-    let (mut runner, tank) = raised_area_runner(vec3(15.5, 0.0, 34.0), std::f32::consts::PI, 60);
+    // East of the north branch, facing west across it; its east shore here
+    // is at about x = 6.7.
+    let (mut runner, tank) =
+        raised_area_runner(vec3(14.0, 0.0, 33.0), -std::f32::consts::FRAC_PI_2, 60);
     hold(&mut runner, Some(egui::Key::W), 3.0, 60);
     let stopped = runner.scene().world_transform(tank).position;
     assert!(
-        stopped.z < 32.0,
+        stopped.x < 12.0,
         "the tank drove towards the creek: {stopped:?}"
     );
     assert!(
-        stopped.z > 27.2,
+        stopped.x > 6.7,
         "the tank drove into the creek: {stopped:?}"
     );
-    // On the far bank, south of the water.
+    // On the far bank, west of the water.
+    let far = vec3(-4.0, 0.0, 33.0);
     let target = object_named(runner.scene(), "Target A");
     let mut pose = runner.scene().world_transform(target);
-    pose.position = vec3(10.5, pose.position.y, 19.0);
+    pose.position = vec3(far.x, pose.position.y, far.z);
     runner
         .scene_mut()
         .set_world_transform(target, pose.matrix());
     hold(&mut runner, None, 1.0, 60);
     assert!(runner.scene().is_visible(target), "sight crosses the creek");
-    aim_at(&mut runner, vec3(10.5, 0.0, 19.0));
+    aim_at(&mut runner, far);
     fire_until_hit(&mut runner, target);
+}
+
+/// The border is an irregular outline, not a rectangle with notches: many
+/// short stretches turned every which way, none long, and it encloses
+/// much less than its bounding rectangle. Every stretch is one solid that
+/// stops tanks, rounds and sight, and together they close the pen: no
+/// drive from outside reaches any section of it.
+#[test]
+fn the_border_is_an_irregular_closed_outline() {
+    use calyx_engine::component::{ColliderShape, ComponentCollider};
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    let mut segments = Vec::new();
+    for object in scene.objects() {
+        let name = scene.name(object);
+        if !(name.contains(" Border ") && name.ends_with(" collision")) {
+            continue;
+        }
+        let Some(ColliderShape::Cuboid { half_extents }) =
+            scene.read_component::<ComponentCollider, _, _>(object, |c| c.shape)
+        else {
+            panic!("{name} is not a box");
+        };
+        let pose = scene.world_transform(object);
+        let along = pose.rotation * vec3(1.0, 0.0, 0.0);
+        segments.push((
+            name,
+            half_extents.x * 2.0,
+            along.z.atan2(along.x).to_degrees(),
+        ));
+    }
+    assert!(segments.len() >= 50, "{} border segments", segments.len());
+    for (name, length, _) in &segments {
+        assert!(*length < 12.5, "{name} runs straight for {length} m");
+    }
+    // Headings, folded to 0..180 degrees, in 15 degree bins: the stretches
+    // turn every way, not just along two axes and a diagonal.
+    let bins: std::collections::BTreeSet<i32> = segments
+        .iter()
+        .map(|(_, _, heading)| (heading.rem_euclid(180.0) / 15.0) as i32)
+        .collect();
+    assert!(bins.len() >= 10, "border headings fall in {bins:?}");
+    // The pen covers far less than the rectangle round it.
+    let grid = DriveGrid::new(&scene, &[]);
+    let drives = [
+        grid.drives_from(ground_of(&scene, "Player Spawn")),
+        grid.drives_from(ground_of(&scene, "North Spawn")),
+        grid.drives_from(nalgebra_glm::vec2(EAST_GROUND.0, EAST_GROUND.1)),
+    ];
+    let pen: Vec<_> = (0..grid.free.len())
+        .filter(|&i| drives.iter().any(|d| d[i].is_finite()))
+        .map(|i| grid.cell(i))
+        .collect();
+    let (low, high) = pen.iter().fold(
+        (
+            nalgebra_glm::vec2(f32::MAX, f32::MAX),
+            nalgebra_glm::vec2(f32::MIN, f32::MIN),
+        ),
+        |(low, high), p| (low.inf(p), high.sup(p)),
+    );
+    let area = pen.len() as f32 * DriveGrid::STEP * DriveGrid::STEP;
+    let rectangle = (high.x - low.x) * (high.y - low.y);
+    println!("pen {area} m2 of its {rectangle} m2 rectangle");
+    assert!(
+        area < 0.7 * rectangle,
+        "the pen fills {area} of its {rectangle} m2 bounding rectangle"
+    );
+    // Closed: a drive from outside reaches none of it.
+    let outside = grid.drives_from(grid.cell(0));
+    assert!(
+        pen.iter().all(|&p| outside[grid.index(p)].is_infinite()),
+        "a drive from outside reaches the pen"
+    );
 }
 
 /// Every patch of brush is the union of its volumes, of whatever outline,

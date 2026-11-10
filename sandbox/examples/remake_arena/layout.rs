@@ -1,23 +1,23 @@
-//! The arena's asymmetric layout: a creek across the middle splits the pen
-//! into the south team's bank and the north team's, crossed by two bridges
-//! at uneven positions (see `farmland.rs`), and each quadrant has its own
-//! character:
+//! The arena's asymmetric layout: a creek forks in the middle of the pen
+//! (see `farmland.rs`) and splits it into three, the south team's bank in
+//! the southwest, the north team's in the northwest and the contested east
+//! between the branches, crossed by three bridges at uneven positions. Each
+//! corner has its own character:
 //!
 //! - **Southwest, the farm**: the ruined farmhouse, the water tower, a field
 //!   and hedgerows, beside the creek's deep bend into the south half.
 //! - **Southeast, the supply depot**: a walled yard of stacked crates in the
-//!   corner, dressed later by #581.
+//!   corner, past the south branch, dressed later by #581.
 //! - **Northwest, the orchard**: rows of trees broken by hedgerows and a
 //!   wall, with a windmill's footprint in the corner, dressed later by #580.
-//! - **Northeast, the barn yard**: the raised platform and an open yard with
-//!   long sightlines down to the east bridge, the barn's and silo's
-//!   footprints left clear for #579.
+//! - **Northeast, the barn yard**: the raised platform and an open yard
+//!   past the north branch, the barn's and silo's footprints left clear for
+//!   #579.
 //!
 //! Interior walls, hedgerows and lines of cover run at 35 to 45 degrees to
 //! the arena's axes, each at its own angle: nothing mirrors between the
-//! halves. Positions are in the Arena's frame, where the pen spans x -30..30
-//! and z -32..32, the south spawn is at (0, -22) and the north spawn at
-//! [`NORTH_SPAWN`].
+//! sections. Positions are in the Arena's frame, where the south spawn is
+//! at (0, -22) and the north spawn at [`NORTH_SPAWN`].
 
 use calyx_engine::assets::AssetRef;
 use calyx_engine::component::{
@@ -33,43 +33,52 @@ use super::{asset_id, Author};
 /// as far from the map's centre and its nearest bridge as the south spawn
 /// at (0, -22) is from them (see the fairness test in
 /// `tests/feature_regressions.rs`), and not its mirror.
-pub const NORTH_SPAWN: Vec2 = Vec2::new(-7.5, 21.0);
+pub const NORTH_SPAWN: Vec2 = Vec2::new(-10.0, 18.5);
 
 /// Ground the corner ETs dress, `(name, x0, z0, x1, z1)`: kept clear of
 /// cover here except for the yard cover that already marks each corner.
 /// The barn and silo (#579), the windmill among the orchard rows (#580) and
 /// the supply depot's sheds (#581) go inside them.
 pub const FOOTPRINTS: [(&str, f32, f32, f32, f32); 5] = [
-    ("Barn", 4.0, 11.0, 14.0, 17.0),
+    ("Barn", 9.0, 10.0, 16.5, 15.5),
     ("Silo", 24.0, 12.0, 28.0, 17.0),
     ("Windmill", -27.0, 24.5, -22.0, 29.5),
-    ("Orchard", -27.0, 12.0, -11.0, 29.0),
-    ("Depot", 14.0, -29.5, 27.0, -17.0),
+    ("Orchard", -27.0, 12.0, -13.5, 29.0),
+    ("Depot", 18.5, -29.0, 28.0, -17.0),
 ];
 
 /// The sand lanes, as points along their middles, each smoothed into a
-/// curve: from the south spawn to the west bridge and on to the north
-/// spawn, from the south spawn round the depot to the east bridge and the
-/// platform's south ramp, and from the north spawn to the west ramp.
+/// curve: from the south spawn over the west bridge and on to the north
+/// spawn, from the south spawn over the south bridge and on through the
+/// east to the platform's south ramp, and from the north spawn over the
+/// north bridge to the west ramp.
 pub const LANES: [&[(f32, f32)]; 3] = [
     &[
         (0.0, -20.0),
-        (-1.5, -14.0),
-        (-3.5, -7.5),
-        (-5.0, -1.8),
-        (-6.5, 5.0),
-        (-8.0, 13.0),
-        (-8.0, 20.5),
+        (-2.5, -14.0),
+        (-5.5, -9.0),
+        (-9.0, -4.2),
+        (-8.0, 2.0),
+        (-7.0, 9.0),
+        (-8.5, 13.0),
+        (-10.0, 17.5),
     ],
     &[
         (3.0, -21.0),
-        (9.5, -18.5),
+        (7.0, -18.0),
+        (11.0, -15.5),
         (14.5, -12.5),
         (19.0, -5.0),
         (20.0, 2.5),
         (20.0, 10.5),
     ],
-    &[(-6.0, 23.0), (2.0, 24.5), (7.0, 24.0)],
+    &[
+        (-8.5, 19.5),
+        (-4.5, 22.0),
+        (-0.8, 23.5),
+        (3.5, 23.5),
+        (6.5, 24.0),
+    ],
 ];
 /// Half a lane's width.
 pub const LANE_HALF_WIDTH: f32 = 1.7;
@@ -80,42 +89,43 @@ pub const LANE_HALF_WIDTH: f32 = 1.7;
 /// module. Each keeps a gap wider than a tank, at least 2.8 m, to other
 /// obstacles and 4.8 m to the perimeter.
 const WALLS: [(&str, f32, f32, f32, usize); 5] = [
-    // Screens the south spawn's run to the west bridge from the centre.
-    ("South Centre", 2.5, -8.0, 40.0, 1),
+    // Breaks the long sightline across the east field, between the south
+    // bridge and the barn yard.
+    ("East Field", 23.0, -3.0, 40.0, 1),
     // Closes the depot's yard from the north-west.
-    ("Depot", 17.0, -16.0, 38.0, 1),
+    ("Depot", 21.0, -14.5, 38.0, 1),
     // Shields the farm's field and water tower from the spawn's lane.
     ("Farm", -21.0, -16.5, 47.0, 1),
     // The orchard's edge towards the creek.
     ("Orchard", -17.0, 9.5, 135.0, 1),
-    // Screens the west ramp's approach from the west bridge.
-    ("Barn Yard", 3.0, 10.0, -43.0, 1),
+    // Screens the barn yard from the fork.
+    ("Barn Yard", 13.5, 3.0, -43.0, 1),
 ];
 
 /// Hedgerows, `(name, x, z, yaw)`.
 const HEDGEROWS: [(&str, f32, f32, f32); 4] = [
-    ("Farm Lane", -6.5, -20.0, -44.0),
+    ("Farm Lane", -6.5, -23.5, -44.0),
     ("Creek Field", -23.5, -12.0, 37.0),
     ("Depot", 21.5, -9.5, 44.0),
-    ("Orchard", -11.5, 17.0, 42.0),
+    ("Orchard", -15.5, 17.5, 42.0),
 ];
 
 /// Cover, `(model, name, x, z, yaw)`: lines of barriers, sandbags and crates
 /// at the walls' angles, and rocks.
 const COVER: [(&str, &str, f32, f32, f32); 15] = [
-    ("barrier_hazard", "Spawn Barrier", -0.5, -11.5, 40.0),
-    ("barrier_plain", "Creek Barrier", 8.5, -4.5, -35.0),
-    ("crate_framed", "Creek Supply", 11.5, -9.5, 45.0),
-    ("crate_large", "Creek Crate", 12.5, -10.5, 45.0),
+    ("barrier_hazard", "Spawn Barrier", 2.5, -10.5, 40.0),
+    ("barrier_plain", "Creek Barrier", 15.0, -1.5, -35.0),
+    ("crate_framed", "Creek Supply", 16.0, -6.0, 45.0),
+    ("crate_large", "Creek Crate", 17.0, -7.0, 45.0),
     ("crate_large", "Depot Stack 0", 22.6, -25.1, 37.0),
     ("crate_large", "Depot Stack 1", 20.9, -23.8, 37.0),
-    ("crate_framed", "Depot Stack 2", 17.0, -26.5, 52.0),
+    ("crate_framed", "Depot Stack 2", 27.5, -21.0, 52.0),
     ("barrier_plain", "Orchard Barrier", -12.5, 4.5, -38.0),
-    ("sandbag_stack", "Orchard Sandbags", -10.1, 6.5, -38.0),
-    ("crate_large", "Barn Crate", 1.0, 15.5, 42.0),
-    ("barrier_hazard", "Barn Barrier", 5.0, 18.5, 42.0),
-    ("barrier_plain", "Bridge Barrier", 13.0, 9.5, -40.0),
-    ("rock_large", "Spawn Boulder", 4.0, -16.0, 20.0),
+    ("sandbag_stack", "Orchard Sandbags", -13.0, 6.5, -38.0),
+    ("crate_large", "Barn Crate", 11.5, 17.0, 42.0),
+    ("barrier_hazard", "Barn Barrier", 6.0, 15.5, 42.0),
+    ("barrier_plain", "East Barrier", 25.0, 8.0, -40.0),
+    ("rock_large", "Spawn Boulder", -3.5, -16.5, 20.0),
     ("rock_large", "Orchard Boulder", -22.5, 6.5, 60.0),
     ("rock_small", "Farm Stone", -17.0, -11.5, 0.0),
 ];
@@ -186,10 +196,10 @@ const fn strip(x: f32, z: f32, length: f32, width: f32, yaw: f32) -> BrushPart {
 
 /// The patches, placed unevenly along the creek's banks, clear of the
 /// water, and by the landmarks, each its own shape: a kidney and a blob of
-/// circles, a thin strip along the creek's south bank with a lobe, an L
-/// wrapping the farmhouse's south-east corner, a teardrop in the orchard, a
-/// peanut by the barn yard and a crescent round the depot wall's end. Each
-/// is clear of cover.
+/// circles by the creek's banks, a thin strip with a lobe in the east
+/// field, an L wrapping the farmhouse's south-east corner, a teardrop in
+/// the orchard, a peanut by the barn yard and a crescent round the depot
+/// wall's end. Each is clear of cover.
 pub const BRUSH_PATCHES: [BrushPatch; 7] = [
     BrushPatch {
         name: "Creek West",
@@ -203,8 +213,8 @@ pub const BRUSH_PATCHES: [BrushPatch; 7] = [
         ],
     },
     BrushPatch {
-        name: "Bridge North",
-        origin: (-1.5, 8.2),
+        name: "Fork East",
+        origin: (11.5, 7.0),
         yaw: 0.0,
         parts: &[
             circle(0.0, 0.0, 2.0),
@@ -214,14 +224,14 @@ pub const BRUSH_PATCHES: [BrushPatch; 7] = [
         ],
     },
     BrushPatch {
-        name: "Creek East",
+        name: "Yard East",
         origin: (14.2, -4.3),
         yaw: -6.0,
         parts: &[strip(0.0, 0.0, 5.6, 1.4, 0.0), circle(1.6, -0.6, 1.0)],
     },
     BrushPatch {
         name: "Farmyard",
-        origin: (-12.5, -19.5),
+        origin: (-13.5, -22.0),
         yaw: 0.0,
         parts: &[
             strip(0.0, 0.4, 5.0, 1.6, 0.0),
@@ -240,7 +250,7 @@ pub const BRUSH_PATCHES: [BrushPatch; 7] = [
     },
     BrushPatch {
         name: "Barn",
-        origin: (0.0, 19.5),
+        origin: (11.5, 20.5),
         yaw: -35.0,
         parts: &[
             circle(-1.6, 0.0, 1.3),
@@ -357,7 +367,7 @@ pub fn orchard_trees() -> Vec<Vec2> {
             let p = ORCHARD_CENTER
                 + along * (column as f32 * ORCHARD_SPACING)
                 + across * (row as f32 * ORCHARD_ROW_GAP);
-            let inside = p.x > -25.2 && p.x < -13.5 && p.y > 11.5 && p.y < 27.2;
+            let inside = p.x > -25.2 && p.x < -14.5 && p.y > 11.5 && p.y < 27.2;
             let (_, x0, z0, x1, z1) = FOOTPRINTS[2];
             let windmill = p.x > x0 - 1.0 && p.x < x1 + 1.0 && p.y > z0 - 1.0 && p.y < z1 + 1.0;
             let clear = HEDGEROWS

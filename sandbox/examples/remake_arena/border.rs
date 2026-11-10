@@ -1,12 +1,16 @@
-//! The arena's border: not one rectangle but a closed outline of straight
-//! runs, jogging out round the corner landmarks and cut at 35 to 45 degrees
-//! like the interior walls, and built of what suits each quadrant: the
-//! farm's stone walls in the southwest and along the south and north,
-//! concrete barriers round the supply depot, hay bales round the barn yard
-//! and hedgerows along the orchard. The creek leaves through a gap on the
-//! west and the east, where its blockers close the border to tanks.
+//! The arena's border: an irregular outline with no straight side, every
+//! stretch of it turning: lobes push out round the orchard in the
+//! northwest, the barn yard in the northeast, the middle of the east and
+//! the farm in the southwest, a peninsula reaches north behind the north
+//! spawn and south behind the south spawn, and coves bite in between them.
+//! The creek comes in through a gap on the west, and its two branches leave
+//! through inlets on the north and the south, where its blockers close the
+//! border to tanks.
 //!
-//! Positions are on the border's centre line, in the Arena's frame.
+//! The border is a farm's field boundary: a dry-stone wall, its modules
+//! stretched along each stretch, with a boulder set at every bend, and a
+//! hedgerow round the orchard's lobe. Positions are on the border's centre
+//! line, in the Arena's frame.
 
 use calyx_engine::math::Transform;
 use nalgebra::UnitQuaternion;
@@ -14,17 +18,17 @@ use nalgebra_glm::{vec2, vec3, Vec2};
 
 use super::{blocking_shells, farmland::Creek, Author};
 
-/// What a run of the border is built of.
+/// What the stretch of border from a vertex to the next is built of.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
-    /// The kit's stone wall modules, stretched to fit each segment.
+    /// The kit's stone wall modules, stretched to fit each segment, with a
+    /// boulder at each bend.
     Stone,
-    /// Concrete barriers set end to end.
-    Barriers,
-    /// Round hay bales in a row.
-    Bales,
     /// Hedgerows.
     Hedge,
+    /// A creek gap: the border stops at the creek's banks either side, and
+    /// the creek's blockers close the gap to tanks.
+    Creek,
 }
 
 impl Kind {
@@ -32,98 +36,81 @@ impl Kind {
     /// the run's solid is.
     fn piece(self) -> (&'static str, f32, f32) {
         match self {
-            Kind::Stone => ("wall_long", 4.0, 1.2),
-            Kind::Barriers => ("barrier_plain", 2.5, 1.12),
-            Kind::Bales => ("hay_bale", 1.25, 1.24),
+            Kind::Stone | Kind::Creek => ("wall_long", 4.0, 1.2),
             Kind::Hedge => ("hedgerow", 4.0, 1.3),
         }
     }
-
-    /// The name of a segment's object: stone walls are `Arena Wall`s, on
-    /// the terrain's outline layer; the rest are props, `Arena Cover
-    /// Border`, which block sight as the walls do.
-    fn object_name(self, run: &str, i: usize) -> String {
-        match self {
-            Kind::Stone => format!("Arena Wall Border {run} {i}"),
-            Kind::Barriers => format!("Arena Cover Border {run} Barriers {i}"),
-            Kind::Bales => format!("Arena Cover Border {run} Hay Bales {i}"),
-            Kind::Hedge => format!("Arena Cover Border {run} Hedgerow {i}"),
-        }
-    }
 }
 
-/// Where a run starts or ends: a fixed point, or the creek's crossing of
-/// the line x = `x`, on its south or north bank.
-#[derive(Clone, Copy)]
-enum End {
-    At(f32, f32),
-    CreekSouth(f32),
-    CreekNorth(f32),
-}
-
-/// The border's runs, `(name, kind, points)`, going round the pen
-/// clockwise seen from above (west, north, east, south): the orchard's
-/// hedgerows from the west creek gap, cut across the northwest corner; the
-/// north's stone wall; the barn yard's hay bales, stepping out round the
-/// platform's corner; the depot's barriers, from the east creek gap
-/// stepping out east round the depot; and the farm's stone walls along
-/// the south and round the water tower, back to the west creek gap. Every
-/// angled segment runs at 35 to 45 degrees to the axes.
-const RUNS: [(&str, Kind, &[End]); 5] = [
-    (
-        "Orchard",
-        Kind::Hedge,
-        &[
-            End::CreekNorth(-29.0),
-            End::At(-29.0, 26.0),
-            End::At(-24.0, 31.0),
-            End::At(-12.0, 31.0),
-        ],
-    ),
-    (
-        "North",
-        Kind::Stone,
-        &[End::At(-12.0, 31.0), End::At(19.0, 31.0)],
-    ),
-    (
-        "Barn",
-        Kind::Bales,
-        &[
-            End::At(19.0, 31.0),
-            End::At(22.0, 34.0),
-            End::At(28.0, 34.0),
-            End::At(31.5, 30.0),
-            End::At(31.5, 16.0),
-            End::At(29.0, 13.0),
-            End::CreekNorth(29.0),
-        ],
-    ),
-    (
-        "Depot",
-        Kind::Barriers,
-        &[
-            End::CreekSouth(29.0),
-            End::At(29.0, -11.0),
-            End::At(33.0, -15.0),
-            End::At(33.0, -27.5),
-            End::At(30.0, -31.0),
-            End::At(11.0, -31.0),
-        ],
-    ),
-    (
-        "Farm",
-        Kind::Stone,
-        &[
-            End::At(11.0, -31.0),
-            End::At(-15.5, -31.0),
-            End::At(-18.0, -34.0),
-            End::At(-27.5, -34.0),
-            End::At(-33.0, -27.5),
-            End::At(-33.0, -22.0),
-            End::At(-29.0, -18.0),
-            End::CreekSouth(-29.0),
-        ],
-    ),
+/// The border's outline, going round the pen clockwise seen from above
+/// (west, north, east, south), each vertex with what the stretch to the
+/// next one is built of. The west gap's last vertex closes the ring back to
+/// the first.
+const OUTLINE: [(f32, f32, Kind); 56] = [
+    // The west side north of the creek, then the orchard's lobe.
+    (-33.5, 8.5, Kind::Stone),
+    (-29.0, 8.5, Kind::Stone),
+    (-28.5, 13.5, Kind::Hedge),
+    (-32.5, 16.0, Kind::Hedge),
+    (-38.0, 18.5, Kind::Hedge),
+    (-39.0, 24.0, Kind::Hedge),
+    (-35.0, 28.5, Kind::Hedge),
+    (-30.5, 29.0, Kind::Hedge),
+    (-27.5, 33.5, Kind::Hedge),
+    (-21.0, 34.0, Kind::Stone),
+    // The peninsula behind the north spawn, and the north branch's inlet.
+    (-17.0, 38.5, Kind::Stone),
+    (-10.5, 41.0, Kind::Stone),
+    (-5.5, 38.0, Kind::Stone),
+    (-4.5, 33.5, Kind::Creek),
+    (10.0, 33.0, Kind::Stone),
+    // The barn yard's lobe.
+    (11.0, 37.5, Kind::Stone),
+    (14.5, 39.0, Kind::Stone),
+    (20.5, 37.0, Kind::Stone),
+    (24.0, 33.5, Kind::Stone),
+    (28.0, 32.5, Kind::Stone),
+    (30.5, 27.5, Kind::Stone),
+    (34.5, 25.0, Kind::Stone),
+    // A cove by the silo, then the east's bulge.
+    (33.0, 19.5, Kind::Stone),
+    (29.5, 16.5, Kind::Stone),
+    (31.0, 12.0, Kind::Stone),
+    (37.5, 10.0, Kind::Stone),
+    (42.5, 5.5, Kind::Stone),
+    (41.5, -1.0, Kind::Stone),
+    (37.0, -4.5, Kind::Stone),
+    (33.5, -9.0, Kind::Stone),
+    // A cove above the depot, and the depot's corner.
+    (30.0, -11.5, Kind::Stone),
+    (33.5, -15.5, Kind::Stone),
+    (34.5, -21.5, Kind::Stone),
+    (32.5, -27.0, Kind::Stone),
+    (35.0, -31.5, Kind::Stone),
+    (29.5, -36.0, Kind::Stone),
+    (24.0, -34.5, Kind::Stone),
+    (22.0, -31.0, Kind::Creek),
+    // The south branch's inlet, the peninsula behind the south spawn.
+    (10.5, -30.0, Kind::Stone),
+    (7.0, -28.0, Kind::Stone),
+    (3.5, -31.5, Kind::Stone),
+    (1.5, -36.5, Kind::Stone),
+    (-4.0, -39.0, Kind::Stone),
+    (-10.0, -36.0, Kind::Stone),
+    (-13.5, -33.0, Kind::Stone),
+    // The farm's lobe.
+    (-19.0, -35.5, Kind::Stone),
+    (-25.5, -40.0, Kind::Stone),
+    (-33.5, -38.0, Kind::Stone),
+    (-37.0, -32.5, Kind::Stone),
+    (-34.5, -27.5, Kind::Stone),
+    (-38.5, -22.0, Kind::Stone),
+    (-36.5, -16.5, Kind::Stone),
+    // The west side, a cove south of the creek.
+    (-30.5, -13.5, Kind::Stone),
+    (-29.0, -8.5, Kind::Stone),
+    (-31.5, -6.0, Kind::Stone),
+    (-34.0, -4.0, Kind::Creek),
 ];
 
 /// How far past the creek's shore a border run ends: its solid reaches
@@ -132,45 +119,97 @@ const RUNS: [(&str, Kind, &[End]); 5] = [
 const CREEK_SOLID_END: f32 = 0.2;
 const CREEK_PIECE_END: f32 = 0.8;
 
-/// Where the creek's bank, `beyond` its shore, crosses x = `x`: the least
-/// and greatest z, south and north of the water.
-fn creek_bank(creek: &Creek, x: f32, beyond: f32) -> (f32, f32) {
-    let inside: Vec<f32> = (-400..400)
-        .map(|i| i as f32 * 0.05)
-        .filter(|&z| creek.beyond(vec2(x, z)) < beyond)
-        .collect();
-    (
-        inside.iter().copied().fold(f32::MAX, f32::min),
-        inside.iter().copied().fold(f32::MIN, f32::max),
-    )
+/// The outline's vertices, as a closed ring.
+pub fn polygon() -> Vec<Vec2> {
+    OUTLINE.iter().map(|&(x, z, _)| vec2(x, z)).collect()
 }
 
-/// The border's outline as closed rings of segments: each run's points on
-/// the border's centre line, a creek end resolved where its solid stops.
-pub fn outline(creek: &Creek) -> Vec<Vec<Vec2>> {
-    RUNS.iter()
-        .map(|&(_, _, ends)| {
-            ends.iter()
-                .map(|&end| resolve(creek, end, CREEK_SOLID_END))
-                .collect()
-        })
-        .collect()
-}
-
-fn resolve(creek: &Creek, end: End, beyond: f32) -> Vec2 {
-    match end {
-        End::At(x, z) => vec2(x, z),
-        End::CreekSouth(x) => vec2(x, creek_bank(creek, x, beyond).0),
-        End::CreekNorth(x) => vec2(x, creek_bank(creek, x, beyond).1),
+/// Whether `p` lies inside the border's outline (its centre line).
+pub fn inside(p: Vec2) -> bool {
+    let ring = polygon();
+    let mut inside = false;
+    for i in 0..ring.len() {
+        let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+        if (a.y > p.y) != (b.y > p.y) && p.x < a.x + (p.y - a.y) / (b.y - a.y) * (b.x - a.x) {
+            inside = !inside;
+        }
     }
+    inside
+}
+
+/// How far `p` lies from the border's centre line, whichever side.
+pub fn distance(p: Vec2) -> f32 {
+    let ring = polygon();
+    (0..ring.len())
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+            let ab = b - a;
+            let f = ((p - a).dot(&ab) / ab.norm_squared()).clamp(0.0, 1.0);
+            (p - (a + ab * f)).norm()
+        })
+        .fold(f32::MAX, f32::min)
+}
+
+/// How far `p` lies outside the border's centre line: negative inside.
+pub fn beyond(p: Vec2) -> f32 {
+    if inside(p) {
+        -distance(p)
+    } else {
+        distance(p)
+    }
+}
+
+/// Where the gap edge from `a` towards `b` first comes within `beyond` of
+/// the creek's shore.
+fn to_shore(creek: &Creek, a: Vec2, b: Vec2, beyond: f32) -> Vec2 {
+    let steps = ((b - a).norm() / 0.05).ceil() as usize;
+    (0..=steps)
+        .map(|i| a + (b - a) * (i as f32 / steps as f32))
+        .find(|&p| creek.beyond(p) < beyond)
+        .expect("a creek gap crosses the creek")
+}
+
+/// The border's runs, between creek gaps: each a list of `(point, kind)`,
+/// the kind building the stretch to the next point, its first and last
+/// points on a creek bank where the solid stops `beyond` the shore.
+fn runs(creek: &Creek, beyond: f32) -> Vec<Vec<(Vec2, Kind, bool)>> {
+    let n = OUTLINE.len();
+    let gap = OUTLINE
+        .iter()
+        .position(|&(_, _, kind)| kind == Kind::Creek)
+        .unwrap();
+    let mut runs = Vec::new();
+    let mut run: Vec<(Vec2, Kind, bool)> = Vec::new();
+    // Start just after a gap, so every run lies between two of them.
+    for k in 1..=n {
+        let i = (gap + k) % n;
+        let (x, z, kind) = OUTLINE[i];
+        let (prev_x, prev_z, _) = OUTLINE[(i + n - 1) % n];
+        let at = vec2(x, z);
+        if run.is_empty() {
+            // The run starts where the gap's far side meets the bank.
+            let start = to_shore(creek, at, vec2(prev_x, prev_z), beyond);
+            run.push((start, Kind::Stone, false));
+        }
+        if kind == Kind::Creek {
+            let (next_x, next_z, _) = OUTLINE[(i + 1) % n];
+            run.push((at, kind, true));
+            let end = to_shore(creek, at, vec2(next_x, next_z), beyond);
+            run.push((end, kind, false));
+            runs.push(std::mem::take(&mut run));
+        } else {
+            run.push((at, kind, true));
+        }
+    }
+    runs
 }
 
 /// The border's bounding rectangle, outer faces included: its least and
 /// greatest corners.
-pub fn bounds(creek: &Creek) -> (Vec2, Vec2) {
+pub fn bounds() -> (Vec2, Vec2) {
     let mut low = vec2(f32::MAX, f32::MAX);
     let mut high = vec2(f32::MIN, f32::MIN);
-    for point in outline(creek).into_iter().flatten() {
+    for point in polygon() {
         low = low.inf(&point);
         high = high.sup(&point);
     }
@@ -182,35 +221,38 @@ impl Author {
     /// holding the run's pieces spread along the segment and one solid
     /// along its whole length, to the shell-blocking top, that stops tanks,
     /// rounds and sight. A segment's solid reaches half its thickness past
-    /// each corner, so neighbouring solids overlap and no tank slips
-    /// between them.
+    /// each bend, so neighbouring solids overlap and no tank slips between
+    /// them; a boulder set at each bend of a stone run hides the joint.
     pub fn border(&mut self, creek: &Creek) {
         let mut count = 0;
-        for &(run, kind, ends) in &RUNS {
-            let (model, step, thickness) = kind.piece();
-            let solid: Vec<Vec2> = ends
-                .iter()
-                .map(|&end| resolve(creek, end, CREEK_SOLID_END))
-                .collect();
-            let pieces: Vec<Vec2> = ends
-                .iter()
-                .map(|&end| resolve(creek, end, CREEK_PIECE_END))
-                .collect();
-            let last = ends.len() - 2;
-            for i in 0..=last {
-                let (a, b) = (solid[i], solid[i + 1]);
+        let mut index = 0;
+        let solid_runs = runs(creek, CREEK_SOLID_END);
+        let piece_runs = runs(creek, CREEK_PIECE_END);
+        for (run, pieces) in solid_runs.iter().zip(&piece_runs) {
+            for i in 0..run.len() - 1 {
+                let (a, kind, a_bend) = run[i];
+                let (b, _, b_bend) = run[i + 1];
+                // The last stretch of a run, to the bank, is stone.
+                let kind = if kind == Kind::Creek {
+                    Kind::Stone
+                } else {
+                    kind
+                };
+                let (model, step, thickness) = kind.piece();
+                assert!(
+                    (b - a).norm() > 1.0,
+                    "border stretch {index} from {a:?} to {b:?} is too short"
+                );
                 let along = (b - a).normalize();
                 let yaw = (-along.y).atan2(along.x).to_degrees();
-                // A corner gets the overlap; a creek end stops at the bank.
-                let is_corner = |j: usize| matches!(ends[j], End::At(..));
-                let start = if is_corner(i) { -thickness * 0.5 } else { 0.0 };
-                let end = (b - a).norm()
-                    + if is_corner(i + 1) {
-                        thickness * 0.5
-                    } else {
-                        0.0
-                    };
-                let name = kind.object_name(run, i);
+                // A bend gets the overlap; a creek end stops at the bank.
+                let start = if a_bend { -thickness * 0.5 } else { 0.0 };
+                let end = (b - a).norm() + if b_bend { thickness * 0.5 } else { 0.0 };
+                let name = match kind {
+                    Kind::Hedge => format!("Arena Cover Border Hedgerow {index}"),
+                    _ => format!("Arena Wall Border {index}"),
+                };
+                index += 1;
                 let origin = a + along * ((start + end) * 0.5);
                 let position = vec3(origin.x, 0.0, origin.y);
                 let segment = self.object(&name, self.arena, position);
@@ -227,17 +269,17 @@ impl Author {
                 let (center, size) =
                     blocking_shells(vec3(0.0, 0.8, 0.0), vec3(length, 1.6, thickness));
                 self.collider(segment, &format!("{name} collision"), center, size);
-                // The pieces: from where the solid starts to the bank at a
-                // creek end, spread evenly.
-                let piece_start = if is_corner(i) {
+                // The pieces: from bend to bend, or to the bank at a creek
+                // end, spread evenly.
+                let piece_start = if a_bend {
                     start
                 } else {
-                    (pieces[i] - a).dot(&along)
+                    (pieces[i].0 - a).dot(&along)
                 };
-                let piece_end = if is_corner(i + 1) {
+                let piece_end = if b_bend {
                     end
                 } else {
-                    (pieces[i + 1] - a).dot(&along)
+                    (pieces[i + 1].0 - a).dot(&along)
                 };
                 let span = piece_end - piece_start;
                 let n = (span / step).round().max(1.0) as usize;
@@ -245,14 +287,11 @@ impl Author {
                 let mid = (start + end) * 0.5;
                 for k in 0..n {
                     let x = piece_start + spacing * (k as f32 + 0.5) - mid;
-                    // Stone modules stretch to meet; the props keep their
-                    // size, turned a little at random so the row reads
-                    // laid by hand.
+                    // Stone modules stretch to meet; hedges keep their size,
+                    // turned a little so the row reads grown, not laid.
                     let jitter = match kind {
-                        Kind::Stone => 0.0,
-                        Kind::Barriers => [0.0, 2.0, -1.5, 1.0][k % 4],
-                        Kind::Bales => [0.0, 23.0, -31.0, 47.0, 12.0][(k + i) % 5],
                         Kind::Hedge => [0.0, 3.0, -2.0][k % 3],
+                        _ => 0.0,
                     };
                     let piece = self.kit_under(
                         segment,
@@ -268,8 +307,24 @@ impl Author {
                     }
                     count += 1;
                 }
+                // A boulder at the segment's far bend, set into the wall's
+                // joint, turned and sized by the bend so no two match. It
+                // stands within the overlapping solids, so it needs none.
+                if b_bend && kind == Kind::Stone {
+                    let model = ["rock_medium", "rock_large", "rock_medium"][index % 3];
+                    let rock = self.kit(
+                        model,
+                        &format!("Arena Prop Border Bend {index}"),
+                        vec3(b.x, -0.08, b.y),
+                        (index * 67 % 360) as f32,
+                    );
+                    let mut pose = self.scene.transform(rock);
+                    pose.scale =
+                        vec3(1.0, 1.0, 1.0) * if model == "rock_large" { 0.95 } else { 1.2 };
+                    self.scene.set_transform(rock, &pose.matrix());
+                }
             }
         }
-        assert!(count > 40, "the border has {count} pieces");
+        assert!(count > 60, "the border has {count} pieces");
     }
 }
