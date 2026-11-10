@@ -1,0 +1,353 @@
+# Supply depot fuel tank: a horizontal tank on a steel stand, raised so it
+# fills a tractor by gravity: concrete footings, four braced legs and a deck
+# carrying the tank on two saddles, its top about 6.3 m up, two red hoops
+# and a hazard placard round it, a manhole and vent on top, a ladder up its
+# east end and a hose hanging from its west end. The depot's tall landmark.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "footing_0"
+kind = "box"
+role = "rocks"
+size = [0.7, 0.25, 2.1]
+bevel = 0.06
+segments = 2
+offset = [-1.6, 0, 0]
+
+[[parts]]
+name = "footing_1"
+kind = "box"
+role = "rocks"
+size = [0.7, 0.25, 2.1]
+bevel = 0.06
+segments = 2
+offset = [1.6, 0, 0]
+
+[[parts]]
+name = "leg_0"
+kind = "box"
+role = "metal"
+size = [0.24, 3.6, 0.24]
+bevel = 0.05
+segments = 2
+offset = [-1.6, 0.25, -0.85]
+
+[[parts]]
+name = "leg_1"
+kind = "box"
+role = "metal"
+size = [0.24, 3.6, 0.24]
+bevel = 0.05
+segments = 2
+offset = [-1.6, 0.25, 0.85]
+
+[[parts]]
+name = "leg_2"
+kind = "box"
+role = "metal"
+size = [0.24, 3.6, 0.24]
+bevel = 0.05
+segments = 2
+offset = [1.6, 0.25, -0.85]
+
+[[parts]]
+name = "leg_3"
+kind = "box"
+role = "metal"
+size = [0.24, 3.6, 0.24]
+bevel = 0.05
+segments = 2
+offset = [1.6, 0.25, 0.85]
+
+[[parts]]
+name = "brace_side_0"
+kind = "box"
+role = "metal"
+size = [3.6, 0.12, 0.1]
+bevel = 0.03
+segments = 2
+offset = [0, 2, -0.88]
+rotation = [0, 0, 40]
+
+[[parts]]
+name = "brace_side_1"
+kind = "box"
+role = "metal"
+size = [3.6, 0.12, 0.1]
+bevel = 0.03
+segments = 2
+offset = [0, 2, -0.88]
+rotation = [0, 0, -40]
+
+[[parts]]
+name = "brace_side_2"
+kind = "box"
+role = "metal"
+size = [3.6, 0.12, 0.1]
+bevel = 0.03
+segments = 2
+offset = [0, 2, 0.88]
+rotation = [0, 0, 40]
+
+[[parts]]
+name = "brace_side_3"
+kind = "box"
+role = "metal"
+size = [3.6, 0.12, 0.1]
+bevel = 0.03
+segments = 2
+offset = [0, 2, 0.88]
+rotation = [0, 0, -40]
+
+[[parts]]
+name = "brace_end_0"
+kind = "box"
+role = "metal"
+size = [0.1, 0.12, 2]
+bevel = 0.03
+segments = 2
+offset = [-1.6, 2, 0]
+rotation = [40, 0, 0]
+
+[[parts]]
+name = "brace_end_1"
+kind = "box"
+role = "metal"
+size = [0.1, 0.12, 2]
+bevel = 0.03
+segments = 2
+offset = [1.6, 2, 0]
+rotation = [-40, 0, 0]
+
+[[parts]]
+name = "deck"
+kind = "box"
+role = "metal"
+size = [3.8, 0.24, 2.1]
+bevel = 0.05
+segments = 2
+offset = [0, 3.85, 0]
+
+[[parts]]
+name = "saddle_0"
+kind = "box"
+role = "crate_frame"
+size = [0.4, 0.5, 1.7]
+bevel = 0.05
+segments = 2
+offset = [-1.3, 4, 0]
+
+[[parts]]
+name = "saddle_1"
+kind = "box"
+role = "crate_frame"
+size = [0.4, 0.5, 1.7]
+bevel = 0.05
+segments = 2
+offset = [1.3, 4, 0]
+
+[[parts]]
+name = "tank"
+kind = "cylinder"
+role = "metal_caps"
+radius = 1.05
+height = 4.8
+vertices = 20
+bevel = 0.12
+segments = 3
+offset = [-2.4, 5.1, 0]
+rotation = [0, 0, -90]
+
+[[parts]]
+name = "hoop_0"
+kind = "ring"
+role = "explosive_red"
+radius = 1.1
+inner_radius = 0.98
+height = 0.2
+vertices = 20
+offset = [-1.75, 5.1, 0]
+rotation = [0, 0, -90]
+
+[[parts]]
+name = "hoop_1"
+kind = "ring"
+role = "explosive_red"
+radius = 1.1
+inner_radius = 0.98
+height = 0.2
+vertices = 20
+offset = [1.55, 5.1, 0]
+rotation = [0, 0, -90]
+
+[[parts]]
+name = "placard"
+kind = "box"
+role = "hazard_yellow"
+size = [0.62, 0.62, 0.06]
+bevel = 0.02
+segments = 2
+offset = [0.2, 4.72, -1.08]
+rotation = [0, 0, 45]
+
+[[parts]]
+name = "placard_mark"
+kind = "box"
+role = "hazard_black"
+size = [0.22, 0.22, 0.06]
+bevel = 0.02
+segments = 2
+offset = [0.2, 4.98, -1.11]
+rotation = [0, 0, 45]
+
+[[parts]]
+name = "manhole"
+kind = "cylinder"
+role = "metal"
+radius = 0.32
+height = 0.2
+vertices = 12
+bevel = 0.03
+segments = 2
+offset = [0.9, 6.05, 0]
+
+[[parts]]
+name = "vent"
+kind = "cylinder"
+role = "metal"
+radius = 0.08
+height = 0.7
+vertices = 8
+bevel = 0.03
+segments = 2
+offset = [-1.4, 6, 0]
+
+[[parts]]
+name = "vent_cap"
+kind = "cylinder"
+role = "metal"
+radius = 0.17
+height = 0.12
+vertices = 8
+bevel = 0.03
+segments = 2
+offset = [-1.4, 6.68, 0]
+
+[[parts]]
+name = "ladder_rail_0"
+kind = "box"
+role = "metal"
+size = [0.09, 6.2, 0.09]
+bevel = 0.02
+segments = 2
+offset = [2.62, 0, -0.28]
+
+[[parts]]
+name = "ladder_rail_1"
+kind = "box"
+role = "metal"
+size = [0.09, 6.2, 0.09]
+bevel = 0.02
+segments = 2
+offset = [2.62, 0, 0.28]
+
+[[parts]]
+name = "ladder_rung_0"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 0.6, 0]
+
+[[parts]]
+name = "ladder_rung_1"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 1.2, 0]
+
+[[parts]]
+name = "ladder_rung_2"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 1.8, 0]
+
+[[parts]]
+name = "ladder_rung_3"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 2.4, 0]
+
+[[parts]]
+name = "ladder_rung_4"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 3, 0]
+
+[[parts]]
+name = "ladder_rung_5"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 3.6, 0]
+
+[[parts]]
+name = "ladder_rung_6"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 4.2, 0]
+
+[[parts]]
+name = "ladder_rung_7"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 4.8, 0]
+
+[[parts]]
+name = "ladder_rung_8"
+kind = "box"
+role = "metal"
+size = [0.07, 0.07, 0.56]
+bevel = 0.02
+segments = 2
+offset = [2.62, 5.4, 0]
+
+[[parts]]
+name = "hose"
+kind = "cylinder"
+role = "hazard_black"
+radius = 0.07
+height = 3.3
+vertices = 8
+bevel = 0.03
+segments = 2
+offset = [-2, 0.9, -0.6]
+
+[[parts]]
+name = "nozzle"
+kind = "box"
+role = "metal"
+size = [0.14, 0.4, 0.22]
+bevel = 0.03
+segments = 2
+offset = [-2, 0.55, -0.6]
