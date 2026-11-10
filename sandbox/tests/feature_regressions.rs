@@ -394,9 +394,9 @@ fn drive_from(start: Vec3, yaw: f32, fps: usize, seconds: f32) -> Vec3 {
 
 #[test]
 fn tank_slides_along_a_wall_the_same_at_30_and_144_fps() {
-    // Facing 45 degrees into the depot's border of barriers, whose face is
-    // at x = 32.44, in the lane between it and the cover.
-    let start = vec3(29.5, 0.0, 0.0);
+    // Facing 45 degrees into the east border's stone wall, in the lane
+    // between it and the supply depot's shed.
+    let start = vec3(31.5, 0.0, 1.5);
     let yaw = std::f32::consts::FRAC_PI_4;
     let slow = drive_from(start, yaw, 30, 1.5);
     let fast = drive_from(start, yaw, 144, 1.5);

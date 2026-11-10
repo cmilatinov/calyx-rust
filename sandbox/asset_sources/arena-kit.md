@@ -157,9 +157,10 @@ corner has its own character:
 
 - **Southwest, the farm**: the ruined farmhouse, the water tower, a field,
   hedgerows, and the creek's deep bend into the south half.
-- **Southeast, the supply depot**: a walled yard of stacked crates in the
-  corner past the south branch (footprint `Depot`, local x 18.5..28,
-  z -29..-17), dressed by #581.
+- **Southeast, the supply depot**: a tractor yard past the south branch,
+  behind the depot's wall, with a shed, a raised fuel tank, a parked
+  tractor and stacked crates round an open gravel yard (footprint `Depot`,
+  local x 19.5..32.5, z -33..-19.5; see Supply depot).
 - **Northwest, the orchard**: rows of kit trees at 37 degrees broken by
   hedgerows, a wall and brush (footprint `Orchard`, x -27..-13.5,
   z 12..29), with the windmill's footprint in the corner (`Windmill`,
@@ -317,6 +318,52 @@ tiles `ground_grass_dark`, `ground_grass_light`, `ground_gravel`,
 `ground_grass_light`, `ground_gravel`, `ground_field`, `ground_crop`,
 `ground_track`, `creek_bank` and `roof_tiles`. No third-party assets are
 used.
+
+## Supply depot
+
+The southeast corner, past the south branch, is the supply depot, built by
+`remake_arena`'s `depot` module: close-quarters cover between a shed and
+stacks of crates, unlike the farm's open field, the orchard's rows or the
+barn yard. Positions are local to the Arena.
+
+- **Shed.** `Arena Cover Depot Supply Shed`, a closed timber `depot_shed` 5.6 by
+  3.8 m on a concrete plinth, its pitched galvanised roof about 4.2 m up,
+  at `(28.9, -24.6)` turned 38 degrees, its back to the east border and its
+  sliding door and window facing the yard. One solid round its body, which
+  stops tanks, rounds and sight, as supply cover does; a prop, it draws on
+  the props' outline layer.
+- **Fuel tank.** `Arena Cover Depot Fuel Tank`, the depot's tall landmark:
+  a horizontal `fuel_tank` raised on a braced steel stand, its top about
+  6.3 m up, in the corner past the shed at `(29.4, -31.8)` turned -40
+  degrees, parallel to the border behind it. Its solid is a box round the
+  stand; rounds stop at it, sight crosses it.
+- **Tractor.** `Arena Cover Depot Tractor`, a yellow `tractor` parked along
+  the depot wall at `(22.6, -18.3)` turned 38 degrees, nose to the shed.
+  Low cover: one solid round it, which stops rounds but not sight.
+- **Crates.** Two large crates in a line at 37 degrees on the yard's
+  north-west edge (`Arena Cover Depot Stack Crate 0` and `1`), a pair by
+  the south inlet (`Arena Cover Depot Inlet Crate 0` and `1`) and a framed
+  crate against the border between the shed and the fuel tank
+  (`... Stack Crate 2`), each with the kit crate's solid, so they block
+  sight. Three framed crates stacked on them
+  (`Arena Prop Depot Stacked Crate ...`) stand above the shell-blocking top
+  and are decoration.
+- **Yard.** The middle, a circle 4 m across round `(26, -27.6)`
+  (`depot::YARD`), stays open gravel, readable ground an objective can use.
+  Lanes about a tank wide run between the creek and the crates, between
+  the crates and the shed, and round the fuel tank; the south bridge's east
+  exit stays clear.
+- **Outside.** Beyond the border the depot carries on: a second shed, a
+  parked tractor, stacked crates and a fence line along the south-east
+  stretch (`Arena Prop Depot Outside ...`), without collision.
+
+The new models are generated like the kit, in all three palettes, from
+`depot_shed.toml`, `fuel_tank.toml` and `tractor.toml` in `models/`. They
+use the kit's existing roles: timber in `crate_plank`, `crate_frame`,
+`crate_panel` and `crate_brace`, concrete in `rocks`, steel in `metal`, the
+galvanised roof and the tank in `metal_caps`, the tank's hoops in
+`explosive_red`, the tractor and the hazard placard in `hazard_yellow` and
+`hazard_black`, and tyres in `tracks`. No third-party assets are used.
 
 ## Brush patches
 

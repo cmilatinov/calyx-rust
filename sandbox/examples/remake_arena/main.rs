@@ -8,6 +8,7 @@
 #![recursion_limit = "256"]
 
 mod border;
+mod depot;
 mod farmland;
 mod ground;
 mod layout;
@@ -867,6 +868,7 @@ fn main() {
     author.raised_area();
     author.layout();
     author.farmland(&creek);
+    author.depot(&creek);
     // The spawns' flags and lamps: the south's either side of its paving,
     // the north's by its gravel pad.
     for (model, name, x, z, yaw) in [
