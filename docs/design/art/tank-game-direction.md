@@ -120,6 +120,9 @@ ground roles draw no ink, the creek bank draws the terrain's:
 | Worn tank tracks | `#7D6B50` | `#8E7B62` | `#33414A` |
 | Creek bank | as dirt `#A2855E` | `#968267` | `#4C5D62` |
 | Roof tiles | `#B4553D` | `#AF5E42` | slate `#55687A` |
+| Barn boards | barn red `#9C4A36` | faded red `#A2583F` | plum-grey `#6B4C4E` |
+| Barn trim | cream `#E8DFC8` | bone `#DED3BC` | pale steel `#A9B4BC` |
+| Barn roof | stained timber `#7B5235` | sun-bleached timber `#8A6446` | grey-brown `#4E4B52` |
 
 Roads must stay clearly lighter or darker than the ground; Sunbaked's road is
 one step darker than the sand, Sunny Battlefield's sand road is lighter than
@@ -467,17 +470,22 @@ the arena before and after, in play in all three palettes, under
   0.28 to 0.38 m wide at the foot tapering gently to a rounded end, 3.2 to
   3.8 m long so the grass stands well above a tank's turret, each leaning
   10 to 30 degrees in its own direction with a short sideways arc. The grass
-  shader droops them down and outward, so each bends in a smooth arc and
-  ends in a soft curve, never a spike. Blades are dark (`tall_grass`) or
-  mid (`tall_grass_light`) green, inked as props, with no pale band.
+  shader droops them down and outward, so each bends in a smooth arc, and
+  thins each blade to an edge over the outer part of its length, so a tip
+  seen from above ends in a soft taper, never a square cut or a blunt ink
+  cap. Blades are dark (`tall_grass`) or mid (`tall_grass_light`) green,
+  darkening a little towards the root so the arc reads from above, inked
+  as props, with no pale band.
   Patches stand one clump, turned at random, anywhere in each cell of an
   even 1.1 m grid, so the blades fill the patch evenly without showing the
   grid or a centre, over darker grass painted into the ground. Both roles
   use the engine's grass shader (`shaders/mesh/grass`): the grass sways in
   the wind, bends away from tanks, and, around the player's tank in brush
   and the tanks the player sees in the same patch, fades in a soft circle
-  to 35 % opacity, truly alpha blended, with no ink and no dither, so the
-  tank reads clearly through it and anti-aliasing has nothing to flicker.
+  to 55 % opacity, and to 15 % over the tank itself, truly alpha blended,
+  with no ink and no dither. Only the nearest faded blade over each pixel
+  is blended, so stacked blades never tint a tank green: it reads in its
+  own colours, and anti-aliasing has nothing to flicker.
 - No textures are needed for the style itself. The ground's toon detail
   textures are ours, drawn by `sandbox/asset_sources/ground/ground_detail.py`
   (see Ground); no third-party texture is used.

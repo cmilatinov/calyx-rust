@@ -1412,12 +1412,13 @@ fn ramp_climbs_are_the_same_at_30_and_144_fps() {
 
 #[test]
 fn ramp_kerbs_and_platform_sides_stop_tanks_on_the_ground() {
-    // Driving east into the south ramp's west kerb, halfway up its side.
+    // Driving west into the south ramp's east kerb, halfway up its side,
+    // between the ramp and the silo (the barn stands against its west kerb).
     let (mut runner, tank) =
-        raised_area_runner(vec3(15.0, 0.0, 37.0), std::f32::consts::FRAC_PI_2, 60);
+        raised_area_runner(vec3(24.5, 0.0, 38.0), -std::f32::consts::FRAC_PI_2, 60);
     hold(&mut runner, Some(egui::Key::W), 2.0, 60);
     let stopped = runner.scene().world_transform(tank).position;
-    assert!(stopped.x > 16.0 && stopped.x < 16.8, "{stopped:?}");
+    assert!(stopped.x > 23.2 && stopped.x < 24.0, "{stopped:?}");
     assert!(stopped.y.abs() < 1e-3, "{stopped:?}");
     // Driving north into the platform's south face, beside the ramp.
     let (mut runner, tank) = raised_area_runner(vec3(24.0, 0.0, 36.0), 0.0, 60);
@@ -1577,8 +1578,13 @@ fn platform_and_ramps_stop_level_shells_and_deck_cover_stops_shells_from_the_dec
         2.0
     ));
     // Over the low end of a ramp, a level round flies on: a ramp is a
-    // slope, not cover.
-    assert!(!shell_hits(vec3(16.0, gun, 34.0), vec3(1.0, 0.0, 0.0), 8.0));
+    // slope, not cover. (From the east: the barn stands against the
+    // ramp's west kerb.)
+    assert!(!shell_hits(
+        vec3(24.0, gun, 34.0),
+        vec3(-1.0, 0.0, 0.0),
+        6.0
+    ));
 }
 
 /// The side's sight the renderer's fog of war draws this frame.
@@ -2098,14 +2104,14 @@ fn tanks_props_and_terrain_draw_on_their_own_outline_layers_in_the_same_ink() {
 /// short of the water, then sees and hits a target on the far bank.
 #[test]
 fn the_creek_stops_tanks_but_not_rounds_or_sight() {
-    // East of the north branch, facing west across it; its east shore here
-    // is at about x = 6.7.
+    // East of the north branch, between it and the barn, facing west across
+    // it; its east shore here is at about x = 6.7.
     let (mut runner, tank) =
-        raised_area_runner(vec3(14.0, 0.0, 33.0), -std::f32::consts::FRAC_PI_2, 60);
+        raised_area_runner(vec3(11.0, 0.0, 33.0), -std::f32::consts::FRAC_PI_2, 60);
     hold(&mut runner, Some(egui::Key::W), 3.0, 60);
     let stopped = runner.scene().world_transform(tank).position;
     assert!(
-        stopped.x < 12.0,
+        stopped.x < 10.0,
         "the tank drove towards the creek: {stopped:?}"
     );
     assert!(

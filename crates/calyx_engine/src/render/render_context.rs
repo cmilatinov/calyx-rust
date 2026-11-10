@@ -6,8 +6,17 @@ use std::sync::Arc;
 
 // This mirrors typed-builder's generated type state for `PipelineOptions`.
 // `fragment_targets` is the fourth field; update this alias if that field order changes.
-type ColorTargetPipelineOptions =
-    PipelineOptionsBuilder<((), (), (), (Vec<Option<ColorTargetState>>,), (), (), (), ())>;
+type ColorTargetPipelineOptions = PipelineOptionsBuilder<(
+    (),
+    (),
+    (),
+    (Vec<Option<ColorTargetState>>,),
+    (),
+    (),
+    (),
+    (),
+    (),
+)>;
 
 enum RenderBackend {
     Eframe {

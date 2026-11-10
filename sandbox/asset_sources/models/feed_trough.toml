@@ -1,0 +1,41 @@
+# Feed trough: a timber trough 2.4 m long (along X), 0.9 m wide and 0.75 m
+# high on splayed end legs, heaped with hay; the feed yard's cover. The solid
+# is a box round the trough. Regenerate with calyx_model_gen; dimensions in
+# metres.
+
+[[parts]]
+name = "trough"
+kind = "box"
+role = "crate_plank"
+size = [2.4, 0.5, 0.9]
+bevel = 0.06
+segments = 2
+offset = [0, 0.22, 0]
+band = { height = 0.12, overhang = 0.03 }
+
+[[parts]]
+name = "hay"
+kind = "box"
+role = "sandbags"
+size = [2.2, 0.16, 0.72]
+bevel = 0.07
+segments = 2
+offset = [0, 0.66, 0]
+
+[[parts]]
+name = "leg_0"
+kind = "box"
+role = "crate_frame"
+size = [0.16, 0.75, 1.1]
+bevel = 0.04
+segments = 2
+offset = [-1.05, 0, 0]
+
+[[parts]]
+name = "leg_1"
+kind = "box"
+role = "crate_frame"
+size = [0.16, 0.75, 1.1]
+bevel = 0.04
+segments = 2
+offset = [1.05, 0, 0]

@@ -1,0 +1,102 @@
+{
+  "shader": "869cbd32-a789-f19d-3e24-5207f558d1c2",
+  "variables": [
+    {
+      "binding": 0,
+      "group": 3,
+      "name": "base_color_texture",
+      "offset": null,
+      "span": null,
+      "value": {
+        "Texture2D": {
+          "Color": [
+            1.0,
+            1.0,
+            1.0,
+            1.0
+          ]
+        }
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "metallic",
+      "offset": 0,
+      "span": 4,
+      "value": {
+        "Float": 0.0
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "roughness",
+      "offset": 4,
+      "span": 4,
+      "value": {
+        "Float": 0.95
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "ambient_occlusion",
+      "offset": 8,
+      "span": 4,
+      "value": {
+        "Float": 1.0
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "emission_strength",
+      "offset": 12,
+      "span": 4,
+      "value": {
+        "Float": 0.0
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "emission_color",
+      "offset": 16,
+      "span": 16,
+      "value": {
+        "Color": [
+          1.0,
+          1.0,
+          1.0,
+          1.0
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "base_color_factor",
+      "offset": 32,
+      "span": 16,
+      "value": {
+        "Color": [
+          0.33245,
+          0.06848,
+          0.03689,
+          1.0
+        ]
+      }
+    },
+    {
+      "binding": 2,
+      "group": 3,
+      "name": "outline_style",
+      "offset": 60,
+      "span": 4,
+      "value": {
+        "Uint": 3
+      }
+    }
+  ]
+}

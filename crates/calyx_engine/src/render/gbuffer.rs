@@ -78,6 +78,14 @@ impl GrassFieldUniform {
         uniform.bender_count = field.benders.len().min(MAX_GRASS_BENDERS) as u32;
         uniform
     }
+
+    /// Whether any of the field's benders fades the grass around it, so the
+    /// transparent grass pass has anything to draw.
+    pub fn fades(&self) -> bool {
+        self.benders[..self.bender_count as usize]
+            .iter()
+            .any(|bender| bender[3] > 0.0)
+    }
 }
 
 /// The grass clock wraps after this many seconds, so it keeps its precision
@@ -641,5 +649,21 @@ mod grass_tests {
         assert_eq!(uniform.benders[0], [3.0, -4.0, 2.0, 2.5]);
         // The layout `shaders/mesh/grass_field.wgsl` declares.
         assert_eq!(size_of::<GrassFieldUniform>(), 32 + 16 * MAX_GRASS_BENDERS);
+    }
+
+    /// The transparent grass pass runs only while a bender in use fades the
+    /// grass.
+    #[test]
+    fn the_grass_fades_only_around_a_bender_in_use_that_reveals() {
+        let mut uniform = GrassFieldUniform::default();
+        assert!(!uniform.fades(), "no benders");
+        uniform.benders[1] = [0.0, 0.0, 1.8, 3.2];
+        uniform.bender_count = 1;
+        assert!(!uniform.fades(), "the revealing bender is not in use");
+        uniform.benders[0] = [0.0, 0.0, 1.8, 0.0];
+        uniform.bender_count = 2;
+        assert!(uniform.fades());
+        uniform.benders[1][3] = 0.0;
+        assert!(!uniform.fades(), "the benders only bend");
     }
 }

@@ -728,6 +728,10 @@ impl SceneRenderer {
         // and the forward pass draws every other mesh after them, against the
         // deferred depth.
         crate::profile_scope!("Record passes");
+        let grass = crate::render::gbuffer::GrassFieldUniform::of_scene(
+            scene,
+            self.gbuffer_renderer.grass_time(),
+        );
         {
             crate::profile_scope!("G-buffer pass");
             self.gbuffer_renderer.render(
@@ -739,10 +743,7 @@ impl SceneRenderer {
                 &self.camera_uniform_buffer,
                 &self.scene_depth_texture,
                 self.options.mesh_cull_mode,
-                &crate::render::gbuffer::GrassFieldUniform::of_scene(
-                    scene,
-                    self.gbuffer_renderer.grass_time(),
-                ),
+                &grass,
             );
         }
         let gbuffer = self
@@ -808,11 +809,12 @@ impl SceneRenderer {
                 &self.gbuffer_renderer.deferred_shaders(),
             );
         }
-        {
+        if grass.fades() {
             // The grass fading around revealing benders, blended over
             // everything opaque.
             crate::profile_scope!("Transparent grass pass");
             self.mesh_renderer.render_grass(
+                &render_context,
                 &mut encoder.scope("Transparent grass"),
                 &assets,
                 &material_bind_groups,

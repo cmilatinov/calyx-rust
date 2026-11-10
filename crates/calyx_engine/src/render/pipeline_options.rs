@@ -84,6 +84,11 @@ pub struct PipelineOptions {
     /// `DEPTH_CLIP_CONTROL` feature. Defaults to clipping.
     #[builder(default = false)]
     pub(crate) unclipped_depth: bool,
+    /// The shader's fragment entry point. Defaults to `fs_main`; a shader
+    /// may declare others, such as a depth-only entry point with no outputs
+    /// for a pass without color targets.
+    #[builder(default = "fs_main")]
+    pub(crate) fragment_entry_point: &'static str,
 }
 
 /// Pipeline options of a draw of `shaders/common/fullscreen.wgsl`'s triangle, which

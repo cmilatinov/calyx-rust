@@ -6,6 +6,7 @@ use crate::core::Ref;
 use crate::profiler::PassScope;
 use crate::render::asset_render_state::LockedAssetRenderState;
 use crate::render::render_utils::RenderUtils;
+use crate::render::RenderContext;
 use crate::render::{
     CachedBindGroup, GizmoRenderer, LightManager, PipelineOptions, SceneRendererError, Shader,
     ShadowBindings,
@@ -14,6 +15,7 @@ use egui_wgpu::wgpu;
 use egui_wgpu::wgpu::util::DeviceExt;
 use std::collections::{HashMap, HashSet};
 use std::ops::Range;
+use std::sync::Arc;
 
 #[repr(C)]
 #[derive(Default, Debug, Copy, Clone, bytemuck::Pod, bytemuck::Zeroable)]
@@ -54,6 +56,9 @@ pub struct MeshRenderer {
     scene_bind_group: CachedBindGroup<SceneBindGroupKey>,
     light_storage_bind_group: CachedBindGroup<LightStorageBindGroupKey>,
     grass_scene_bind_group: CachedBindGroup<GrassSceneBindGroupKey>,
+    /// The transparent grass pass's own copy of the scene's depth, into
+    /// which it writes the nearest faded blade's depth.
+    grass_depth: Option<Texture>,
     object_id_camera_bind_group: CachedBindGroup<(wgpu::BindGroupLayout, wgpu::Buffer)>,
 }
 
@@ -129,6 +134,7 @@ impl MeshRenderer {
             scene_bind_group: Default::default(),
             light_storage_bind_group: Default::default(),
             grass_scene_bind_group: Default::default(),
+            grass_depth: None,
             object_id_camera_bind_group: Default::default(),
         })
     }
@@ -259,13 +265,21 @@ impl MeshRenderer {
 
     /// Draws the grass that fades around the grass field's revealing
     /// benders: every batch of `draw_list` whose shader is `grass_shader`,
-    /// with that shader, alpha blended over `targets` after the lighting
-    /// and forward passes, tested against their depth but not writing it.
-    /// The shader discards every fragment that does not fade, which the
-    /// geometry pass drew opaque.
+    /// alpha blended over `targets` after the lighting and forward passes.
+    ///
+    /// Only the nearest faded blade over each pixel is blended, so blades
+    /// stacked behind it tint what stands in the grass no further. Two
+    /// passes draw against a copy of the scene's depth, which the grass
+    /// keeps to itself: the shader's `fs_depth` writes the depth of the
+    /// faded grass into it, then `fs_main` blends the grass whose depth
+    /// matches it. The scene's depth is left as the opaque passes wrote
+    /// it, so particles, the skybox and post-processing see through the
+    /// faded grass as the image does. The shader discards every fragment
+    /// that does not fade, which the geometry pass drew opaque.
     #[allow(clippy::too_many_arguments)]
     pub fn render_grass(
         &mut self,
+        render_context: &Arc<RenderContext>,
         encoder: &mut wgpu::CommandEncoder,
         assets: &LockedAssetRenderState,
         material_bind_groups: &MaterialBindGroups,
@@ -282,70 +296,97 @@ impl MeshRenderer {
         let Some(shader) = assets.shader(grass_shader) else {
             return;
         };
-        let options = PipelineOptions::builder()
-            .samples(samples)
-            .cull_mode(cull_mode)
-            .fragment_targets(vec![Some(wgpu::ColorTargetState {
-                format: targets.color.descriptor.format,
-                blend: Some(wgpu::BlendState::ALPHA_BLENDING),
-                write_mask: wgpu::ColorWrites::ALL,
-            })])
-            .depth_stencil(Some(wgpu::DepthStencilState {
-                depth_write_enabled: false,
-                ..RenderUtils::depth_default(targets.depth.descriptor.format)
-            }))
-            .build();
-        let Some(pipeline) = shader.pipeline(&options) else {
+        let depth_format = targets.depth.descriptor.format;
+        let depth_pipeline = shader.pipeline(
+            &PipelineOptions::builder()
+                .samples(samples)
+                .cull_mode(cull_mode)
+                .depth_stencil(Some(RenderUtils::depth_default(depth_format)))
+                .fragment_entry_point("fs_depth")
+                .build(),
+        );
+        let color_pipeline = shader.pipeline(
+            &PipelineOptions::builder()
+                .samples(samples)
+                .cull_mode(cull_mode)
+                .fragment_targets(vec![Some(wgpu::ColorTargetState {
+                    format: targets.color.descriptor.format,
+                    blend: Some(wgpu::BlendState::ALPHA_BLENDING),
+                    write_mask: wgpu::ColorWrites::ALL,
+                })])
+                .depth_stencil(Some(wgpu::DepthStencilState {
+                    depth_write_enabled: false,
+                    depth_compare: wgpu::CompareFunction::Equal,
+                    ..RenderUtils::depth_default(depth_format)
+                }))
+                .build(),
+        );
+        let (Some(depth_pipeline), Some(color_pipeline)) = (depth_pipeline, color_pipeline) else {
             return;
         };
-        let mut batches = draw_list
+        let batches = draw_list
             .iter()
             .filter(|batch| batch.shader_id == grass_shader)
-            .peekable();
-        if batches.peek().is_none() {
+            .filter_map(|batch| {
+                let mesh = assets.mesh(batch.mesh_id)?;
+                let material_group = material_bind_groups
+                    .get(&batch.mat_id)
+                    .and_then(|groups| groups.get(&3))?;
+                let instance_group = mesh.instance_bind_group()?;
+                Some((
+                    mesh,
+                    material_group,
+                    instance_group,
+                    batch.instances.clone(),
+                ))
+            })
+            .collect::<Vec<_>>();
+        if batches.is_empty() {
             return;
         }
-        let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-            label: Some("Transparent Grass"),
-            color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+        let depth = grass_depth(&mut self.grass_depth, render_context, targets.depth);
+        encoder.copy_texture_to_texture(
+            targets.depth.texture.as_image_copy(),
+            depth.texture.as_image_copy(),
+            targets.depth.descriptor.size,
+        );
+        let depth_attachment = || wgpu::RenderPassDepthStencilAttachment {
+            view: &depth.view,
+            depth_ops: Some(wgpu::Operations {
+                load: wgpu::LoadOp::Load,
+                store: wgpu::StoreOp::Store,
+            }),
+            stencil_ops: None,
+        };
+        for (pipeline, color) in [(&depth_pipeline, false), (&color_pipeline, true)] {
+            let color_attachments = [Some(wgpu::RenderPassColorAttachment {
                 view: &targets.color.view,
                 resolve_target: None,
                 ops: wgpu::Operations {
                     load: wgpu::LoadOp::Load,
                     store: wgpu::StoreOp::Store,
                 },
-            })],
-            depth_stencil_attachment: Some(wgpu::RenderPassDepthStencilAttachment {
-                view: &targets.depth.view,
-                depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Load,
-                    store: wgpu::StoreOp::Store,
+            })];
+            let mut render_pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some(if color {
+                    "Transparent Grass"
+                } else {
+                    "Transparent Grass Depth"
                 }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-        });
-        render_pass.set_pipeline(&pipeline);
-        render_pass.set_bind_group(0, scene_group, &[]);
-        render_pass.set_bind_group(2, &lighting.lights, &[]);
-        for batch in batches {
-            let Some(mesh) = assets.mesh(batch.mesh_id) else {
-                continue;
-            };
-            let Some(material_group) = material_bind_groups
-                .get(&batch.mat_id)
-                .and_then(|groups| groups.get(&3))
-            else {
-                continue;
-            };
-            let Some(instance_group) = mesh.instance_bind_group() else {
-                continue;
-            };
-            render_pass.set_bind_group(1, instance_group, &[]);
-            render_pass.set_bind_group(3, material_group, &[]);
-            RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
-            RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, batch.instances.clone());
+                color_attachments: if color { &color_attachments[..] } else { &[] },
+                depth_stencil_attachment: Some(depth_attachment()),
+                timestamp_writes: None,
+                occlusion_query_set: None,
+            });
+            render_pass.set_pipeline(pipeline);
+            render_pass.set_bind_group(0, scene_group, &[]);
+            render_pass.set_bind_group(2, &lighting.lights, &[]);
+            for (mesh, material_group, instance_group, instances) in &batches {
+                render_pass.set_bind_group(1, *instance_group, &[]);
+                render_pass.set_bind_group(3, *material_group, &[]);
+                RenderUtils::bind_mesh_buffers(&mut render_pass, mesh);
+                RenderUtils::draw_mesh_instanced(&mut render_pass, mesh, instances.clone());
+            }
         }
     }
 
@@ -641,6 +682,41 @@ impl MeshRenderer {
         self.material_bind_group_cache
             .retain(|mat_id, _| live_materials.contains(mat_id));
     }
+}
+
+/// `copy`, made the size, sample count and format of `depth` if it is not,
+/// with the usages the transparent grass pass needs: a copy of `depth` it
+/// draws into.
+fn grass_depth<'a>(
+    copy: &'a mut Option<Texture>,
+    render_context: &Arc<RenderContext>,
+    depth: &Texture,
+) -> &'a Texture {
+    let descriptor = &depth.descriptor;
+    let fits = |texture: &Texture| {
+        texture.descriptor.size == descriptor.size
+            && texture.descriptor.sample_count == descriptor.sample_count
+            && texture.descriptor.format == descriptor.format
+    };
+    if !copy.as_ref().is_some_and(fits) {
+        *copy = Some(Texture::new(
+            render_context.clone(),
+            &wgpu::TextureDescriptor {
+                label: Some("grass_depth"),
+                size: descriptor.size,
+                mip_level_count: 1,
+                sample_count: descriptor.sample_count,
+                dimension: wgpu::TextureDimension::D2,
+                format: descriptor.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_DST,
+                view_formats: &[],
+            },
+            None,
+            None,
+            false,
+        ));
+    }
+    copy.as_ref().expect("the copy was just made")
 }
 
 #[cfg(test)]

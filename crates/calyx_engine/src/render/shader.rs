@@ -1064,7 +1064,7 @@ impl Shader {
             },
             fragment: Some(wgpu::FragmentState {
                 module: &self.shader,
-                entry_point: Some("fs_main"),
+                entry_point: Some(options.fragment_entry_point),
                 targets: options.fragment_targets.as_slice(),
                 compilation_options: PipelineCompilationOptions {
                     constants: &Default::default(),

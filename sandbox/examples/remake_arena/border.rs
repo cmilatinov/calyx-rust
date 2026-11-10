@@ -47,7 +47,7 @@ impl Kind {
 /// (west, north, east, south), each vertex with what the stretch to the
 /// next one is built of. The west gap's last vertex closes the ring back to
 /// the first.
-const OUTLINE: [(f32, f32, Kind); 58] = [
+const OUTLINE: [(f32, f32, Kind); 59] = [
     // The west side north of the creek, then the orchard's lobe.
     (-33.5, 8.5, Kind::Stone),
     (-29.0, 8.5, Kind::Stone),
@@ -65,19 +65,20 @@ const OUTLINE: [(f32, f32, Kind); 58] = [
     (-5.5, 38.0, Kind::Stone),
     (-4.5, 33.5, Kind::Creek),
     (10.0, 33.0, Kind::Stone),
-    // The barn yard's lobe.
-    (11.0, 37.5, Kind::Stone),
-    (14.5, 39.0, Kind::Stone),
-    (20.5, 37.0, Kind::Stone),
-    (24.0, 33.5, Kind::Stone),
-    (28.0, 32.5, Kind::Stone),
-    (30.5, 27.5, Kind::Stone),
-    (34.5, 25.0, Kind::Stone),
+    // The barn yard's lobe, pushed out round the paddocks.
+    (11.0, 38.5, Kind::Stone),
+    (15.0, 42.0, Kind::Stone),
+    (21.5, 43.0, Kind::Stone),
+    (27.0, 40.0, Kind::Stone),
+    (32.5, 39.5, Kind::Stone),
+    (36.5, 34.5, Kind::Stone),
+    (41.0, 31.0, Kind::Stone),
+    (40.0, 24.5, Kind::Stone),
     // A cove by the silo, then the east's bulge.
-    (33.0, 19.5, Kind::Stone),
-    (29.5, 16.5, Kind::Stone),
-    (31.0, 12.0, Kind::Stone),
-    (37.5, 10.0, Kind::Stone),
+    (36.5, 21.0, Kind::Stone),
+    (34.0, 16.5, Kind::Stone),
+    (36.0, 12.0, Kind::Stone),
+    (40.5, 9.5, Kind::Stone),
     (42.5, 5.5, Kind::Stone),
     (41.5, -1.0, Kind::Stone),
     (37.0, -4.5, Kind::Stone),
