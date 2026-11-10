@@ -1578,8 +1578,13 @@ fn platform_and_ramps_stop_level_shells_and_deck_cover_stops_shells_from_the_dec
         2.0
     ));
     // Over the low end of a ramp, a level round flies on: a ramp is a
-    // slope, not cover.
-    assert!(!shell_hits(vec3(16.0, gun, 34.0), vec3(1.0, 0.0, 0.0), 8.0));
+    // slope, not cover. (From the east: the barn stands against the
+    // ramp's west kerb.)
+    assert!(!shell_hits(
+        vec3(24.0, gun, 34.0),
+        vec3(-1.0, 0.0, 0.0),
+        6.0
+    ));
 }
 
 /// The side's sight the renderer's fog of war draws this frame.

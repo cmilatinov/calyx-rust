@@ -164,10 +164,11 @@ corner has its own character:
   hedgerows, a wall and brush (footprint `Orchard`, x -27..-13.5,
   z 12..29), with the windmill's footprint in the corner (`Windmill`,
   x -27..-22, z 24.5..29.5), dressed by #580.
-- **Northeast, the barn yard**: the raised platform, a red barn beside its
-  south ramp, a tall silo in the east cove, an open feed yard at the ramp's
-  foot (`Barn`, x 12.5..21.5, z 6..12.5) and a fenced paddock in the lobe
-  north of the platform, past the north branch (see Barn yard).
+- **Northeast, the barn yard**: the raised platform, a red barn against
+  its south ramp, a tall silo in the east cove, an open feed yard at the
+  ramp's foot (`Barn`, x 12.5..21.5, z 6..12.5), and a stable and a fenced
+  paddock in the wide lobe north of the platform, past the north branch
+  (see Barn yard).
 
 The footprints are `layout::FOOTPRINTS`; the ground paints the barn's feed
 yard and the windmill's ground worn dirt and the silo's pad (`Silo`) and
@@ -202,7 +203,7 @@ every wall they block sight and cast fog shadows; the minimap outlines
 their solids as it does cover.
 
 The border (`remake_arena`'s `border` module) is an irregular outline of
-56 short stretches, no two alike and none longer than about 11 m, turning
+57 short stretches, no two alike and none longer than about 11 m, turning
 every which way: lobes push out round the orchard in the northwest, the
 barn yard in the northeast, the middle of the east and the farm in the
 southwest; peninsulas reach north behind the north spawn and south behind
@@ -318,47 +319,56 @@ tiles `ground_grass_dark`, `ground_grass_light`, `ground_gravel`,
 `roof_ruin`, `hay_bale` and `fence`, with the new roles `ground_grass_dark`,
 `ground_grass_light`, `ground_gravel`, `ground_field`, `ground_crop`,
 `ground_track`, `creek_bank` and `roof_tiles`; and for the barn yard
-`barn`, `silo` and `feed_trough`, with the roles `barn_boards` and
-`barn_trim`. No third-party assets are used.
+`barn`, `silo` and `feed_trough`, with the roles `barn_boards`,
+`barn_trim` and `barn_roof`. No third-party assets are used.
 
 ## Barn yard
 
 The northeast corner is dressed by `remake_arena`'s `barn_yard` module as
 a barn and silo, a fairly open yard with long sightlines, distinct from the
-other corners. Positions are local, in the Arena's frame.
+other corners. Its border is pushed out round it: the lobe north of the
+platform reaches about 16 m past the platform's north rim, and the wall
+east of the platform about 15 m past its east rim, so the way round the
+platform and the paddock have room. Positions are local, in the Arena's
+frame.
 
-- **Barn** (`barn`, `Arena Prop Barn`, at `(13.2, 14.5)` turned 50
+- **Barn** (`barn`, `Arena Prop Barn`, at `(14.9, 13.8)` turned 90
   degrees): red board walls 6.6 by 4.6 m and 3.2 m to the eaves under a
-  pitched galvanised roof (`metal_caps`), 6.5 m to its cupola, cream corner
-  boards and window frames (`barn_trim`), a braced sliding door under a
-  hayloft door in the gable that faces the feed yard, another hayloft door
-  in the back gable. Its long axis runs at 40 degrees to the arena's Z,
-  along the creek's bank; its east corner meets the south ramp's kerb, so
-  tanks pass it on the creek's side, a lane at least 3 m wide from the fork
-  to the north bridge's foot. Its solid is the walls' box, risen to the
-  shell-blocking top like any cover; the roof is decoration.
-- **Silo** (`silo`, `Arena Prop Silo`, at `(27.4, 13.8)`): a concrete stave
+  pitched stained timber roof (`barn_roof`, with shingle battens in the crates' timber,
+  `crate_frame`), 6.5 m to its cupola, cream corner boards and window
+  frames (`barn_trim`), a braced sliding door under a hayloft door in the
+  gable that faces south over the feed yard, another hayloft door in the
+  back gable. Its ridge runs north to south; its east wall meets the south
+  ramp's kerb, so tanks pass it on the creek's side, a lane about 5 m wide
+  from the fork to the north bridge's foot. Its solid is the walls' box,
+  risen to the shell-blocking top like any cover; the roof is decoration.
+- **Stable** (the `barn` model at 0.62 scale, `Arena Prop Stable`, at
+  `(31, 34)`, not turned): in the lobe, its ridge running east to west,
+  square to the barn's, as buildings in a corner stand at 90 degrees to
+  each other. Its solid is its scaled walls' box.
+- **Silo** (`silo`, `Arena Prop Silo`, at `(31, 15)`): a concrete stave
   tower (`barriers`) 3.4 m across and 9.6 m high on a stone footing, five
   steel hoops, a galvanised dome and vent cap, a ladder up the yard side;
   11.8 m high, the corner's tall landmark, taller than the farm's water
-  tower. It stands in the cove by the east border, on a gravel pad, and
-  leaves a lane about 3 m wide to the south ramp's kerb: with the lobe's
-  west end closed by the creek and the west ramp, that lane and the way
-  round the platform's east side are how tanks reach the lobe. Its solid is
-  an octagon of four crossed boxes, 1.8 m from its centre to each side.
+  tower. Its back meets the cove's wall, on a gravel pad; it leaves a lane
+  over 6 m wide to the south ramp's kerb. With the lobe's west end closed
+  by the creek and the west ramp, that lane and the way round the
+  platform's east side are how tanks reach the lobe. Its solid is an
+  octagon of four crossed boxes, 1.8 m from its centre to each side.
 - **Feed yard**: worn dirt in front of the barn's door at the ramp's foot,
-  left open as a clearing, with hay bales at its edge against the ramp and
-  behind the barn, where they fill the closed gap between the barn and the
-  ramp's kerb.
-- **Paddock**: in the lobe north of the platform, a rail fence (the kit's
-  `fence`, stretched) in a V at 38 and 43 degrees under the lobe's north
-  wall, which closes it behind; a gate at its east end is wider than a
-  tank. A `feed_trough` stands inside along the fence. The fence's solid,
-  `Arena Paddock Fence ...`, is in the `TANK_BLOCKER` groups like the
-  bridges' rails: it stops tanks, but rounds and sight cross it, so the
-  lobe keeps its sightlines.
-- **Cover**: the `Barn Barrier` stands east of the platform, on the way
-  round to the lobe, and the `Barn Crate` in the cove behind the silo.
+  left open as a clearing.
+- **Paddock**: under the lobe's north wall, two runs of rail fence (the
+  kit's `fence`, stretched) at 39 and 38 degrees, the wall closing the
+  paddock behind them, with a gate between them about 5 m wide, and a
+  `feed_trough` inside. The fence's solids, `Arena Paddock Fence ...`, are
+  in the `TANK_BLOCKER` groups like the bridges' rails: they stop tanks,
+  but rounds and sight cross them, so the lobe keeps its sightlines.
+- **Loose furniture**: the paddock's trough, the `Lobe Hay Bale` east of
+  the stable and the `Barn Crate` north of the platform are expected to
+  become physical objects. Each stands alone in open ground, at least a
+  tank's width clear of everything, so no lane or cover depends on it and
+  pushing it about jams nothing. The `Barn Barrier`, east of the platform,
+  is fixed cover.
 - **Outside**: beyond the lobe's wall, paddock fences run along it, with a
   stack of three bales and two loose bales, among the copses and the field
   to the east, so the corner reads as a farm beyond its wall too.
