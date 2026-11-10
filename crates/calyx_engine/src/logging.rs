@@ -87,23 +87,37 @@ pub struct Log<T: LoggerImplementation> {
 impl<T: LoggerImplementation> Log<T> {
     /// Builds and installs the process-wide logger.
     pub fn new(logger: T) -> Self {
-        let filter = configured_filter();
+        let config = FilterConfig::from_env();
+        let filter = config.filter;
         let max_level = filter.filter();
         let log_file_path = logger.log_file_path();
-        match logger.log_file(&log_file_path) {
+        let installed = match logger.log_file(&log_file_path) {
             Ok(file) => {
-                if install_logger(MultiSinkLogger::new(filter, file), max_level).is_ok() {
+                let installed =
+                    install_logger(MultiSinkLogger::new(filter, file), max_level).is_ok();
+                if installed {
                     log::info!(
                         "Logging initialized; max_level={max_level}, file={}",
                         log_file_path.display()
                     );
                 }
+                installed
             }
             Err(error) => {
                 let stdout_logger = StdoutLogger::new(filter);
-                if install_logger(stdout_logger, max_level).is_ok() {
+                let installed = install_logger(stdout_logger, max_level).is_ok();
+                if installed {
                     log::error!("Failed to create file log sink: {error}");
                 }
+                installed
+            }
+        };
+        if installed {
+            for (variable, spec) in &config.applied {
+                log::info!("Log filter from {variable}: {spec}");
+            }
+            for (variable, spec) in &config.rejected {
+                log::warn!("Ignoring {variable}={spec}: it is not a valid log filter");
             }
         }
         Self { logger }
@@ -233,31 +247,67 @@ fn install_logger(
     })
 }
 
-fn configured_filter() -> Filter {
-    let spec = std::env::var("CALYX_LOG")
-        .or_else(|_| std::env::var("RUST_LOG"))
-        .ok();
-    build_filter(spec.as_deref())
+/// The environment variables read for log filter directives, lowest
+/// precedence first. Each one is layered over [`DEFAULT_FILTER_SPEC`] and
+/// the variables before it, as described on [`FilterConfig::build`].
+const FILTER_ENV: [&str; 2] = ["RUST_LOG", "CALYX_LOG"];
+
+/// The directives every Calyx process starts from.
+const DEFAULT_FILTER_SPEC: &str = "calyx_engine=info,calyx_editor=info,sandbox=info";
+
+/// The log filter a process installs, with the environment directives that
+/// shaped it, logged once the logger is installed.
+struct FilterConfig {
+    filter: Filter,
+    /// Variables whose directives were layered in, with their values.
+    applied: Vec<(&'static str, String)>,
+    /// Variables whose values did not parse and were ignored.
+    rejected: Vec<(&'static str, String)>,
 }
 
-fn build_filter(spec: Option<&str>) -> Filter {
-    let mut builder = env_filter::Builder::new();
-    match spec {
-        Some(spec) if !spec.trim().is_empty() => {
-            if builder.try_parse(spec).is_err() {
-                builder = env_filter::Builder::new();
-                builder.parse(default_filter_spec());
+impl FilterConfig {
+    fn from_env() -> Self {
+        let specs = FILTER_ENV.map(|variable| (variable, std::env::var(variable).ok()));
+        Self::build(&specs)
+    }
+
+    /// Layers each `(variable, spec)` over [`DEFAULT_FILTER_SPEC`] in order,
+    /// so a later layer takes precedence over an earlier one.
+    ///
+    /// A directive naming a target (`calyx_engine=debug`) replaces the
+    /// earlier directive for the same target and keeps the others, so a
+    /// layer only changes the targets it names. A bare level (`off`, `warn`)
+    /// sets the level of targets that no directive names, such as
+    /// `wgpu_core`, and leaves the Calyx targets of the defaults at theirs:
+    /// a machine-wide `RUST_LOG=off,...` set for other tools does not hide
+    /// engine records. Name a Calyx target to change its level
+    /// (`CALYX_LOG=calyx_engine=off`). An empty or unset variable adds
+    /// nothing, and one that does not parse is ignored as a whole.
+    fn build(specs: &[(&'static str, Option<String>)]) -> Self {
+        let mut builder = env_filter::Builder::new();
+        builder.parse(DEFAULT_FILTER_SPEC);
+        let mut applied = Vec::new();
+        let mut rejected = Vec::new();
+        for (variable, spec) in specs {
+            let Some(spec) = spec.as_deref().map(str::trim) else {
+                continue;
+            };
+            if spec.is_empty() {
+                continue;
+            }
+            // `try_parse` changes nothing when the spec does not parse.
+            if builder.try_parse(spec).is_ok() {
+                applied.push((*variable, spec.to_string()));
+            } else {
+                rejected.push((*variable, spec.to_string()));
             }
         }
-        _ => {
-            builder.parse(default_filter_spec());
+        Self {
+            filter: builder.build(),
+            applied,
+            rejected,
         }
     }
-    builder.build()
-}
-
-fn default_filter_spec() -> &'static str {
-    "calyx_engine=info,calyx_editor=info,sandbox=info"
 }
 
 fn format_stdout_record(record: &Record) -> String {
@@ -303,7 +353,8 @@ fn file_timestamp() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{build_filter, format_file_record, format_stdout_record, LogEntry};
+    use super::{format_file_record, format_stdout_record, FilterConfig, LogEntry};
+    use env_filter::Filter;
     use log::{Level, LevelFilter, Record};
 
     fn record(target: &'static str, level: Level) -> Record<'static> {
@@ -314,26 +365,121 @@ mod tests {
             .build()
     }
 
-    #[test]
-    fn default_filter_includes_calyx_targets_only() {
-        let filter = build_filter(None);
+    fn filter(rust_log: Option<&str>, calyx_log: Option<&str>) -> Filter {
+        FilterConfig::build(&[
+            ("RUST_LOG", rust_log.map(String::from)),
+            ("CALYX_LOG", calyx_log.map(String::from)),
+        ])
+        .filter
+    }
 
-        assert_eq!(filter.filter(), LevelFilter::Info);
-        assert!(filter.matches(&record("calyx_engine::assets", Level::Info)));
-        assert!(filter.matches(&record("calyx_editor::project_manager", Level::Info)));
-        assert!(!filter.matches(&record("wgpu_core", Level::Info)));
-        assert!(!filter.matches(&record("calyx_engine::assets", Level::Debug)));
+    /// Asserts the engine, editor and sandbox targets log `info` and above.
+    fn assert_calyx_targets_at_info(filter: &Filter) {
+        for target in [
+            "calyx_engine::runtime::player",
+            "calyx_editor::remote",
+            "sandbox::hud",
+        ] {
+            for level in [Level::Error, Level::Warn, Level::Info] {
+                assert!(
+                    filter.matches(&record(target, level)),
+                    "{target} {level} is filtered out"
+                );
+            }
+            assert!(!filter.matches(&record(target, Level::Debug)));
+        }
     }
 
     #[test]
-    fn env_filter_respects_target_directives() {
-        let filter = build_filter(Some("calyx_engine=trace,wgpu_core=warn"));
+    fn default_filter_includes_calyx_targets_only() {
+        let filter = filter(None, None);
+
+        assert_eq!(filter.filter(), LevelFilter::Info);
+        assert_calyx_targets_at_info(&filter);
+        assert!(!filter.matches(&record("wgpu_core", Level::Info)));
+    }
+
+    #[test]
+    fn empty_variables_keep_the_defaults() {
+        let filter = filter(Some(""), Some("  "));
+
+        assert_calyx_targets_at_info(&filter);
+    }
+
+    #[test]
+    fn a_bare_rust_log_level_leaves_calyx_targets_at_their_level() {
+        // This machine's user environment, set for other tools.
+        let filter = filter(
+            Some("off,bitwatch=trace,engine=trace,sandbox=trace,editor=trace"),
+            None,
+        );
+
+        for target in ["calyx_engine::runtime::player", "calyx_editor::remote"] {
+            for level in [Level::Error, Level::Warn, Level::Info] {
+                assert!(filter.matches(&record(target, level)));
+            }
+            assert!(!filter.matches(&record(target, Level::Debug)));
+        }
+        assert!(filter.matches(&record("sandbox::hud", Level::Trace)));
+        assert!(filter.matches(&record("bitwatch", Level::Trace)));
+        assert!(!filter.matches(&record("wgpu_core", Level::Error)));
+    }
+
+    #[test]
+    fn rust_log_target_directives_change_only_the_targets_they_name() {
+        let filter = filter(Some("calyx_engine=trace,wgpu_core=warn"), None);
 
         assert_eq!(filter.filter(), LevelFilter::Trace);
         assert!(filter.matches(&record("calyx_engine::assets", Level::Trace)));
+        assert!(filter.matches(&record("calyx_editor", Level::Info)));
+        assert!(!filter.matches(&record("calyx_editor", Level::Debug)));
         assert!(filter.matches(&record("wgpu_core", Level::Warn)));
         assert!(!filter.matches(&record("wgpu_core", Level::Info)));
-        assert!(!filter.matches(&record("calyx_editor", Level::Info)));
+    }
+
+    #[test]
+    fn calyx_log_takes_precedence_over_rust_log() {
+        let filter = filter(
+            Some("calyx_engine=trace,wgpu_core=warn"),
+            Some("calyx_engine=warn,calyx_editor=debug"),
+        );
+
+        assert!(!filter.matches(&record("calyx_engine::assets", Level::Info)));
+        assert!(filter.matches(&record("calyx_engine::assets", Level::Warn)));
+        assert!(filter.matches(&record("calyx_editor::remote", Level::Debug)));
+        assert!(filter.matches(&record("sandbox::hud", Level::Info)));
+        assert!(filter.matches(&record("wgpu_core", Level::Warn)));
+    }
+
+    #[test]
+    fn naming_a_calyx_target_can_silence_it() {
+        let filter = filter(None, Some("calyx_engine=off"));
+
+        assert!(!filter.matches(&record("calyx_engine::assets", Level::Error)));
+        assert!(filter.matches(&record("calyx_editor", Level::Info)));
+    }
+
+    #[test]
+    fn an_invalid_variable_is_ignored_and_reported() {
+        let config = FilterConfig::build(&[
+            ("RUST_LOG", Some("calyx_engine=loud".to_string())),
+            ("CALYX_LOG", Some("calyx_editor=debug".to_string())),
+        ]);
+
+        assert_eq!(
+            config.rejected,
+            [("RUST_LOG", "calyx_engine=loud".to_string())]
+        );
+        assert_eq!(
+            config.applied,
+            [("CALYX_LOG", "calyx_editor=debug".to_string())]
+        );
+        assert!(config
+            .filter
+            .matches(&record("calyx_engine::assets", Level::Info)));
+        assert!(config
+            .filter
+            .matches(&record("calyx_editor::remote", Level::Debug)));
     }
 
     #[test]
