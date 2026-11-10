@@ -405,6 +405,79 @@ impl Texture {
         texture
     }
 
+    /// Creates a `width` by `height` 8-bit RGBA texture without mips, every texel `fill`,
+    /// sampled linearly and clamped at its edges, for gameplay code to draw into at run time
+    /// with [`Texture::write_rgba8`]. Its channels are read as stored.
+    pub fn writable_rgba8(
+        render_context: Arc<RenderContext>,
+        label: &str,
+        width: u32,
+        height: u32,
+        fill: [u8; 4],
+    ) -> Self {
+        let size = wgpu::Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let texture = Self::new(
+            render_context,
+            &wgpu::TextureDescriptor {
+                label: Some(label),
+                size,
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: wgpu::TextureFormat::Rgba8Unorm,
+                usage: wgpu::TextureUsages::TEXTURE_BINDING
+                    | wgpu::TextureUsages::COPY_DST
+                    | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            },
+            Some(wgpu::SamplerDescriptor {
+                label: Some(label),
+                address_mode_u: wgpu::AddressMode::ClampToEdge,
+                address_mode_v: wgpu::AddressMode::ClampToEdge,
+                address_mode_w: wgpu::AddressMode::ClampToEdge,
+                mag_filter: wgpu::FilterMode::Linear,
+                min_filter: wgpu::FilterMode::Linear,
+                mipmap_filter: wgpu::FilterMode::Nearest,
+                ..Default::default()
+            }),
+            None,
+            false,
+        );
+        let texels = fill.repeat((width * height) as usize);
+        texture.write_rgba8(0, 0, width, height, &texels);
+        texture
+    }
+
+    /// Writes `texels`, `width` by `height` 8-bit RGBA texels row by row, into mip 0 of an
+    /// 8-bit RGBA texture with its corner at texel `x`, `y`. The write reaches the GPU
+    /// before the next submitted frame.
+    pub fn write_rgba8(&self, x: u32, y: u32, width: u32, height: u32, texels: &[u8]) {
+        debug_assert_eq!(texels.len(), (width * height * 4) as usize);
+        self.render_context.queue().write_texture(
+            wgpu::TexelCopyTextureInfo {
+                texture: &self.texture,
+                mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: 0 },
+                aspect: wgpu::TextureAspect::All,
+            },
+            texels,
+            wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            wgpu::Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
+
     fn texture_format(color: ColorType) -> wgpu::TextureFormat {
         match color {
             ColorType::Rgba32F | ColorType::Rgb32F => wgpu::TextureFormat::Rgba32Float,
@@ -710,6 +783,24 @@ mod tests {
                 bytes[start..start + 4].try_into().unwrap()
             })
             .collect()
+    }
+
+    #[test]
+    fn a_writable_texture_starts_filled_and_takes_writes_in_place() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let white = [255; 4];
+        let texture =
+            Texture::writable_rgba8(context.render_context.clone(), "writable_test", 4, 4, white);
+        assert_eq!(read_mip_rows(&texture, &texture.texture, 0), vec![white; 4]);
+
+        texture.write_rgba8(0, 1, 1, 2, &[TOP, BOTTOM].concat());
+        assert_eq!(
+            read_mip_rows(&texture, &texture.texture, 0),
+            vec![white, TOP, BOTTOM, white],
+            "only the written rectangle changes"
+        );
     }
 
     #[test]

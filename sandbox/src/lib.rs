@@ -15,6 +15,7 @@ pub mod spawn;
 pub mod tank;
 pub mod tank_camera;
 pub mod terrain;
+pub mod track_marks;
 pub mod vision;
 
 use calyx_engine::reflect::type_registry::TypeRegistry;
@@ -74,6 +75,9 @@ mod tests {
             .is_some());
         assert!(registry
             .type_registration::<ComponentTankCamera>()
+            .is_some());
+        assert!(registry
+            .type_registration::<crate::track_marks::ComponentTrackMarks>()
             .is_some());
         assert!(registry.type_registration::<ComponentTransform>().is_none());
     }

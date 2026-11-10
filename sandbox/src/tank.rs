@@ -43,7 +43,7 @@ const MIN_PITCHED_SHOT_DISTANCE: f32 = 1.0;
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "21b467c0-9409-4a7f-b750-418809609eb1"]
-#[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
+#[reflect(Default, TypeUuidDynamic, Component, ComponentStart, ComponentUpdate)]
 #[reflect_attr(name = "Tank Controller")]
 #[serde(default)]
 pub struct ComponentTankController {
@@ -132,6 +132,13 @@ impl Default for ComponentTankController {
 }
 
 impl Component for ComponentTankController {}
+
+impl ComponentStart for ComponentTankController {
+    fn start(_this: ComponentRef<Self>, ctx: ComponentEventContext) {
+        // Tanks print their treads into the terrain they drive on.
+        crate::track_marks::attach(ctx.scene);
+    }
+}
 
 #[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
 #[uuid = "951b5a6f-c3bb-46ed-b938-3909a2f439d1"]
