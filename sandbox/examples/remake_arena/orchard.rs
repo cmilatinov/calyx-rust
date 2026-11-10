@@ -1,16 +1,16 @@
-//! The north-west corner, the orchard (#580): rows of fruit trees at the
-//! layout's 37 degrees, filling the orchard's footprint and the border's
-//! lobe round it, a windmill standing over them in its footprint, its cart
-//! track running down an alley towards the north spawn, a clearing of open
-//! ground in its yard, and stacks of picked fruit's crates in the lanes. Past
-//! the border's hedgerow the rows run on, so the corner reads as the edge of
-//! a larger orchard.
+//! The north-west corner, the orchard (#580): short rows of fruit trees at
+//! the layout's 37 degrees in the orchard's footprint and round the
+//! border's lobe, a windmill standing over them in its footprint, its cart
+//! track running down an alley towards the north spawn, an open clearing in
+//! the lobe where two tanks can fight, and stacks of picked fruit's crates
+//! in open ground. Past the border's hedgerow the rows run on, so the corner
+//! reads as the edge of a larger orchard.
 //!
-//! The trees stand in rows `TREE_SPACING` apart along them, close enough
-//! that a tank cannot slip between two neighbours, the rows `ROW_GAP` apart,
-//! so the lanes between them are wider than a tank. Every fifth tree in a
-//! row is left out, staggered from row to row, so tanks cross the rows
-//! there and no lane is closed off; the rows break sight into short lanes.
+//! The corner is kept open: the trees stand `TREE_SPACING` apart along a
+//! row, the rows `ROW_GAP` apart, so the lanes between them are wide
+//! enough for two tanks. Every fifth tree in a row is left out, staggered
+//! from row to row, so tanks cross the rows there and every lane has more
+//! than one way in and out.
 //!
 //! Positions are in the Arena's frame, where the north spawn is at
 //! [`layout::NORTH_SPAWN`].
@@ -34,22 +34,23 @@ const WINDMILL_YAW: f32 = 150.0;
 const WINDMILL_SOLID: f32 = 3.9;
 
 /// The rows' angle, as the layout's other lines, and their spacing: along
-/// a row a tank cannot pass between neighbouring trunks; across, the lanes
-/// leave it 3.3 m.
+/// a row the trunks stand close, the rows read as rows; across, the lanes
+/// leave 5.5 m of clear ground.
 const ROW_YAW: f32 = 37.0;
-const TREE_SPACING: f32 = 2.7;
-const ROW_GAP: f32 = 4.0;
+const TREE_SPACING: f32 = 3.0;
+const ROW_GAP: f32 = 6.0;
 /// Where the rows' grid sits, along and across them, from the windmill.
-const PHASE: (f32, f32) = (1.125, 0.75);
+const PHASE: (f32, f32) = (1.5, 4.0);
 
 /// The windmill's cart track: from its door down the alley between two
 /// rows, towards the north spawn.
 const TRACK_LENGTH: f32 = 13.0;
 const TRACK_CLEAR: f32 = 1.6;
-/// The clearing: open ground in the windmill's yard, beside its track, kept
-/// free of trees and cover for whatever the game puts there.
-pub const CLEARING: Vec2 = Vec2::new(-19.3, 23.1);
-pub const CLEARING_RADIUS: f32 = 3.0;
+/// The clearing: open ground filling the border's lobe, 11 m across, room
+/// for two tanks to fight and manoeuvre, kept free of trees and cover for
+/// whatever the game puts there.
+pub const CLEARING: Vec2 = Vec2::new(-34.0, 23.0);
+pub const CLEARING_RADIUS: f32 = 5.5;
 
 /// Ground the rows keep clear of, `(x, z, radius)`: the layout's cover in
 /// the corner, the orchard's hedgerow and wall, its boulder and the north
@@ -69,17 +70,21 @@ const KEEP_CLEAR: [(f32, f32, f32); 7] = [
     (-15.5, 20.5, 1.6),
 ];
 
-/// Stacks of crates of picked fruit standing in the lanes, `(name, x, z,
+/// Stacks of crates of picked fruit standing in open ground, `(name, x, z,
 /// yaw)`: a large crate with a framed one on it and one at its foot, each
 /// its own object. They stop rounds and sight for now, but are dressing,
 /// not the corner's essential cover: crates are to become loose objects
-/// tanks shove and shots knock over, so they stand in open lanes, away from
+/// tanks shove and shots knock over, so they stand in open ground, away from
 /// the north spawn's exits, with room round them to scatter, and the rows'
 /// crossings never depend on them.
 const CRATES: [(&str, f32, f32, f32); 2] = [
-    ("Lobe", -31.5, 22.0, ROW_YAW + 8.0),
+    ("Yard", -22.5, 19.5, ROW_YAW + 8.0),
     ("North", -17.2, 30.0, ROW_YAW - 6.0),
 ];
+
+/// The side of a tree's trunk solid at scale 1, which turns and scales
+/// with the tree.
+const TRUNK: f32 = 0.5;
 
 /// Where the orchard ends outside the border: this far past it.
 const OUTSIDE_REACH: f32 = 18.0;
@@ -182,7 +187,7 @@ pub fn trees(creek: &Creek) -> &'static [Tree] {
                 let inside = beyond < -1.5
                     && at.x < -13.5
                     && at.y > 9.5
-                    && (at - layout::NORTH_SPAWN).norm() > 6.5
+                    && (at - layout::NORTH_SPAWN).norm() > 8.0
                     && layout::lane_distance(&lanes, at) > layout::LANE_HALF_WIDTH + 1.7
                     && layout::BRUSH_PATCHES
                         .iter()
@@ -251,8 +256,6 @@ pub fn ground(p: Vec2, creek: &Creek) -> (f32, f32) {
 fn open_pockets(solids: &[(String, Vec2, Vec2, f32)], trees: &[Tree]) -> Vec<bool> {
     const STEP: f32 = 0.25;
     const CLEARANCE: f32 = 1.2;
-    /// The trunk's solid at its largest scale.
-    const TRUNK: f32 = 0.56;
     let (low, high) = (vec2(-44.0, 2.0), vec2(-2.0, 46.0));
     let columns = ((high.x - low.x) / STEP) as usize;
     let rows = ((high.y - low.y) / STEP) as usize;
@@ -296,7 +299,8 @@ fn open_pockets(solids: &[(String, Vec2, Vec2, f32)], trees: &[Tree]) -> Vec<boo
                     && trees.iter().zip(&kept).all(|(tree, kept)| {
                         !*kept
                             || !tree.inside
-                            || distance(p, tree.at, vec2(TRUNK, TRUNK), 0.0) > CLEARANCE
+                            || distance(p, tree.at, Vec2::repeat(TRUNK * tree.scale), tree.yaw)
+                                > CLEARANCE
                     })
             })
             .collect();
@@ -411,7 +415,8 @@ impl Author {
             }) {
                 panic!("{name} at {:?} stands against {}", tree.at, near.0);
             }
-            let (center, size) = super::blocking_shells(vec3(0.0, 0.6, 0.0), vec3(0.5, 1.2, 0.5));
+            let (center, size) =
+                super::blocking_shells(vec3(0.0, 0.6, 0.0), vec3(TRUNK, 1.2, TRUNK));
             self.collider(root, &format!("{name} collision"), center, size);
         }
     }

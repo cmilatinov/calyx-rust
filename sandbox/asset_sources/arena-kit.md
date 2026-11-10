@@ -321,7 +321,9 @@ used.
 ## Orchard
 
 The north-west corner is the orchard, built by `remake_arena`'s `orchard`
-module (#580):
+module (#580). It is kept open: the border's lobe was pushed out west and
+north for it, the lanes between the rows are wide enough for two tanks,
+the lobe is a clearing, and the north spawn's exits stay clear.
 
 - **Windmill.** `Arena Cover Windmill`, a generated `windmill` about 11.9 m
   tall at its top sail's tip: an eight-sided, tapering pale stone tower on
@@ -335,21 +337,24 @@ module (#580):
   side.
 - **Rows.** Generated `orchard_tree`s, low broad fruit trees about 2.7 m
   high hung with red fruit (the `berries` role), in rows at 37 degrees,
-  2.7 m apart along a row, so no tank slips between two neighbours, the
-  rows 4 m apart, so the lanes between them are wider than a tank. Every
-  fifth tree in a row is left out, staggered from row to row, where tanks
-  cross the rows. Each tree is scaled 0.88 to 1.12 and turned at random;
+  3 m apart along a row, the rows 6 m apart, so the lanes between them
+  leave 5.5 m of clear ground. Every fifth tree in a row is left out,
+  staggered from row to row, where tanks cross the rows, so every lane has
+  more than one way in and out. Each tree is scaled 0.88 to 1.12 and turned at random;
   inside the border its trunk has a 0.5 m solid, its crown is decoration.
   The rows keep clear of the north spawn and its lanes, the layout's cover,
   hedgerow, wall and brush, and the remake checks every tree against the
-  arena's solids. Under each row the ground is darker, uncut grass.
+  arena's solids; a flood fill on the reachability test's grid (0.25 m,
+  1.2 m clearance) then leaves out any trunk that would close off ground
+  a tank fits on. Under each row the ground is darker, uncut grass.
 - **Track and clearing.** A worn dirt track runs from the windmill's door
-  down the alley between two rows towards the north spawn, and a clearing
-  of open ground, 3 m in radius round local `(-19.3, 23.1)`, is left in the
-  windmill's yard beside it, free of trees and cover, for objectives.
+  down an alley towards the north spawn. The clearing fills the border's
+  lobe, 5.5 m in radius round local `(-34, 23)`, open ground where two
+  tanks can fight and manoeuvre, free of trees and cover, for objectives.
 - **Crates.** Two stacks of crates of picked fruit (`Arena Cover Orchard
   Crate ...`: a large crate, a framed one on top and one at its foot) stand
-  in the lanes, in the lobe and to the north, each crate its own object,
+  in open ground, by the windmill's track and to the north, each crate its
+  own object,
   stopping rounds and sight. They are dressing rather than the corner's
   essential cover: the crates, the windmill's hay bales and its sacks are
   expected to become loose physical objects that tanks shove and shots
