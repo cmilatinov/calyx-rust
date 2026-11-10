@@ -380,7 +380,17 @@ the rest of the scene. It draws no ink outline (style 0).
   the field's direction.
 - **Marks.** The material multiplies its colour by a world-space marks
   texture over a world rectangle (`marks_texture`, `marks_rect`): white, the
-  default, leaves it as is. Tank tracks (#577) darken the ground through it.
+  default, leaves it as is. Tank tracks darken the ground through it.
+- **Tracks.** A moving tank prints two parallel tread bands, 36 cm wide with
+  their centres 1.1 m apart, that follow its real path and curve with its
+  turns; turning in place sweeps them into a round scuff. Grousers every
+  half metre make a print 30 % lighter between them. A fresh print takes
+  off about a third of the ground's colour, a little more of its green
+  than its red, so grass reads trodden into the soil and the lanes read
+  pressed, and Moonlit's darker ground takes a little more; then it fades
+  evenly to nothing over 25 s. Prints are part of the ground, so they never
+  flicker or show on bridges, water or props, and a tank fog of war hides
+  prints nothing.
 - **Paving.** The south spawn's paving keeps its kit tiles, raised 3 cm off
   the ground.
 

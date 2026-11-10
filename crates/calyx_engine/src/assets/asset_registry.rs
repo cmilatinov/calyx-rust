@@ -1444,7 +1444,9 @@ impl AssetRegistry {
         }
     }
 
-    fn asset_context(&self) -> ReadOnlyAssetContext {
+    /// The render context and registries asset constructors take, for code that builds
+    /// GPU assets at run time, such as a texture gameplay draws into.
+    pub fn asset_context(&self) -> ReadOnlyAssetContext {
         ReadOnlyAssetContext {
             render_context: self.render_context.clone(),
             registries: self.registry_context(),

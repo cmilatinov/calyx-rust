@@ -29,7 +29,7 @@ pub enum BindingType {
 }
 
 /// One editable shader variable exposed by a material asset.
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ShaderVariable {
     /// Bind group index.
     pub group: u32,
@@ -113,7 +113,7 @@ impl MaterialTexture {
 }
 
 /// Editable value payload for a [`ShaderVariable`].
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub enum ShaderVariableValue {
     /// Signed integer value.
     Int(i32),
@@ -328,6 +328,19 @@ impl Material {
         };
         material.init(assets);
         material
+    }
+
+    /// A new material on the same shader with the same variable values, and GPU buffers of
+    /// its own, so changing one leaves the other as it is.
+    pub fn duplicate(&self, assets: &ReadOnlyAssetContext) -> Self {
+        (
+            assets,
+            MaterialData {
+                shader: self.shader.clone(),
+                variables: self.variables.clone(),
+            },
+        )
+            .into()
     }
 
     /// Builds a material on `shader`, the PBR scene shader, from an imported glTF-style
@@ -1160,6 +1173,28 @@ mod tests {
                 ShaderVariableValue::Sampler
             ));
         }
+    }
+
+    #[test]
+    fn a_duplicate_starts_with_the_values_and_changes_apart_from_the_original() {
+        let assets = TestAssets::engine();
+        let context = assets.asset_context();
+        let context = context.lock_read();
+        let mut original = pbr_from_shader(&context);
+        assert!(original.set_variable("roughness", ShaderVariableValue::Float(0.25)));
+
+        let mut copy = original.duplicate(&context);
+        assert_eq!(float(&copy, "roughness"), 0.25);
+        assert_eq!(copy.shader.id(), original.shader.id());
+        assert!(copy.set_variable("roughness", ShaderVariableValue::Float(0.75)));
+        assert_eq!(float(&original, "roughness"), 0.25);
+        let original_buffers = original.buffers.values().collect::<Vec<_>>();
+        assert!(
+            copy.buffers
+                .values()
+                .all(|buffer| !original_buffers.contains(&buffer)),
+            "the copy writes its own buffers"
+        );
     }
 
     #[test]
