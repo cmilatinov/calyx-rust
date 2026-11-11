@@ -7,7 +7,7 @@ use calyx_engine::math::Transform;
 use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::scene::{GameObject, Scene};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use nalgebra_glm::vec3;
+use nalgebra_glm::{vec3, Vec2};
 use rapier3d::dynamics::RigidBodyType;
 use serde::{Deserialize, Serialize};
 
@@ -29,6 +29,15 @@ pub struct ComponentArena {
     pub columns: u32,
     pub rows: u32,
     pub cell_size: f32,
+    /// The inner face of the wall round an authored arena, as one closed
+    /// ring of ground points `(x, z)` in the arena's frame, which fog of
+    /// war bounds sight by along with [`Self::border_outer`]; empty when
+    /// the border's solids bound sight one by one, as a generated arena's
+    /// do. The arena's generator writes both from the outline it builds
+    /// the wall along.
+    pub border_inner: Vec<Vec2>,
+    /// The outer face of that wall, round the inner one.
+    pub border_outer: Vec<Vec2>,
 }
 
 impl Default for ComponentArena {
@@ -40,6 +49,8 @@ impl Default for ComponentArena {
             columns: 15,
             rows: 16,
             cell_size: 2.0,
+            border_inner: Vec::new(),
+            border_outer: Vec::new(),
         }
     }
 }

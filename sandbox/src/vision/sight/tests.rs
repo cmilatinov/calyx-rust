@@ -14,6 +14,7 @@ fn vision(viewers: Vec<Viewer>, cover: Vec<GroundRect>) -> TeamVision {
     TeamVision {
         viewers,
         cover,
+        border: Default::default(),
         concealed: Vec::new(),
     }
 }

@@ -754,6 +754,9 @@ fn main() {
         .write_component::<ComponentArena, _>(arena, |arena| {
             arena.columns = columns;
             arena.rows = rows;
+            // Fog of war bounds sight by the wall's faces, from the outline
+            // the wall is built along.
+            (arena.border_inner, arena.border_outer) = border::faces();
         });
     // One uninterrupted collision floor at the ground's level, y = 0, under
     // the whole border: the ground is drawn by one terrain (`ground.rs`),

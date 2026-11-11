@@ -101,7 +101,12 @@ does not see is darkened with near-black ink by the renderer's fog of war
 `sandbox/src/vision/sight.rs`), under the HUD and health bars: each pixel by
 the ground position of the surface it shows, so cover a tank sees is lit up
 to its top. Only walls and boxes (crates and supply crates) block sight;
-low cover such as barriers, sandbags and rocks does not. Sight fades out with
+low cover such as barriers, sandbags and rocks does not. The arena's border
+blocks sight as one wall, from its two faces the arena carries
+(`ComponentArena::border_inner` and `border_outer`, written by
+`remake_arena` from the outline it builds the wall along): the wall is seen
+up to its outer face, nothing outside it ever is, and the creek's gaps in
+it are closed to sight. Sight fades out with
 distance, fully lit to 8 m inside a tank's vision range and fading along an
 exponential to dark 12 m past it, and cover shadows have hard, radial sides,
 traced per pixel so they stay crisp and antialiased while tanks move. Fog

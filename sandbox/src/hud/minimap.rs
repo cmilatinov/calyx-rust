@@ -882,6 +882,7 @@ mod tests {
                 center: vec2(4.0, 0.0),
                 half_axes: [vec2(1.0, 0.0), vec2(0.0, 1.0)],
             }],
+            border: Default::default(),
         };
         let mut cache = BoundaryCache::default();
         let first = cache.sight_rays(&sight, 64).to_vec();

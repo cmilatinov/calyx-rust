@@ -3,7 +3,7 @@
 
 use super::*;
 use crate::assets::texture::Texture;
-use crate::component::{FogOfWarBlocker, FogOfWarViewer};
+use crate::component::{FogOfWarBlocker, FogOfWarBorder, FogOfWarViewer};
 use crate::math::Transform;
 use crate::render::postprocess::{ChainPlan, ChainTargets, PostProcessChain};
 use crate::render::scene_renderer::half_to_f32;
@@ -351,6 +351,7 @@ fn each_pixel_is_fogged_by_the_ground_position_of_the_surface_it_shows() {
                 half_axes: [vec2(turned, turned), vec2(-0.5 * turned, 0.5 * turned)],
             },
         ],
+        border: Default::default(),
     }));
     let depth = planes().depth_of(16.0);
 
@@ -392,6 +393,7 @@ fn blockers_all_around_a_viewer_shade_as_the_cpu_rules_say() {
     let fog = fog(Some(FogOfWarSight {
         viewers: vec![viewer(vec2(0.2, 0.1))],
         blockers,
+        border: Default::default(),
     }));
     let depth = planes().depth_of(22.0);
 
@@ -416,6 +418,7 @@ fn the_same_pixel_is_clear_on_a_surface_in_sight_and_fogged_on_one_in_shadow() {
     let fog = fog(Some(FogOfWarSight {
         viewers: vec![viewer(Vec2::zeros())],
         blockers: vec![block(vec2(4.0, 0.0), vec2(1.0, 3.0))],
+        border: Default::default(),
     }));
     let centre = (SIZE.0 / 2, SIZE.1 / 2);
     let at = |depth: f32| {
@@ -455,6 +458,7 @@ fn a_wall_face_turned_from_the_viewer_is_lit_or_fogged_whole() {
         let fog = fog(Some(FogOfWarSight {
             viewers: vec![viewer(vec2(8.0, 0.0))],
             blockers,
+            border: Default::default(),
         }));
         let output = run(&context, fog.clone(), &view, depth).expect("the pass runs");
         let mut pixels = Vec::new();
@@ -494,6 +498,61 @@ fn a_wall_face_turned_from_the_viewer_is_lit_or_fogged_whole() {
             &format!("the face in shadow at {world:?}"),
         );
     }
+}
+
+/// A 20 by 20 area walled round, 1 unit thick, with a finger of wall
+/// reaching down into it from the north, 3 wide, round a slot of outside
+/// 1 wide.
+fn walled() -> FogOfWarBorder {
+    FogOfWarBorder {
+        inner: vec![
+            vec2(-10.0, -10.0),
+            vec2(10.0, -10.0),
+            vec2(10.0, 10.0),
+            vec2(1.5, 10.0),
+            vec2(1.5, 0.0),
+            vec2(-1.5, 0.0),
+            vec2(-1.5, 10.0),
+            vec2(-10.0, 10.0),
+        ],
+        outer: vec![
+            vec2(-11.0, -11.0),
+            vec2(11.0, -11.0),
+            vec2(11.0, 11.0),
+            vec2(0.5, 11.0),
+            vec2(0.5, 1.0),
+            vec2(-0.5, 1.0),
+            vec2(-0.5, 11.0),
+            vec2(-11.0, 11.0),
+        ],
+    }
+}
+
+#[test]
+fn the_border_bounds_sight_as_the_cpu_rules_say() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    // Looking down on the finger of wall from above, a viewer in the cove
+    // east of it, another past the east wall, outside, and a block in the
+    // cove: the wall's shadow over the far cove, the slot of outside
+    // between its two stretches and the ground past the east wall all
+    // shade as the CPU rules say.
+    let view = looking(vec3(2.0, 26.0, -4.0), vec3(2.0, 0.0, 3.0));
+    let fog = fog(Some(FogOfWarSight {
+        viewers: vec![viewer(vec2(5.0, 4.0)), viewer(vec2(12.0, 2.0))],
+        blockers: vec![block(vec2(6.5, 0.5), vec2(1.0, 1.0))],
+        border: walled(),
+    }));
+    let depth = planes().depth_of(26.0);
+
+    let output = run(&context, fog.clone(), &view, depth).expect("the pass runs");
+
+    let [clear, partial, dark] = check_pixels(&output, &fog, &view, depth);
+    assert!(
+        clear > 20 && dark > 20,
+        "the view shows ground in sight and past the border: {clear}, {partial}, {dark}"
+    );
 }
 
 #[test]
@@ -564,6 +623,7 @@ fn packing_turns_blockers_into_the_shaders_local_frames() {
                 half_axes: [vec2(1.0, 1.0), vec2(2.0, 2.0)],
             },
         ],
+        border: Default::default(),
     };
     let mut tables = SightTables {
         viewers: vec![GpuViewer::default(); 5],
@@ -598,14 +658,53 @@ fn packing_turns_blockers_into_the_shaders_local_frames() {
     );
 }
 
+#[test]
+fn packing_lists_the_border_s_edges_and_drops_viewers_outside_it() {
+    let sight = FogOfWarSight {
+        viewers: vec![viewer(vec2(12.0, 0.0)), viewer(vec2(5.0, 4.0))],
+        blockers: Vec::new(),
+        border: walled(),
+    };
+    let mut tables = SightTables::default();
+
+    pack_sight(&sight, &mut tables);
+
+    assert_eq!(tables.viewers.len(), 1, "the viewer outside sees nothing");
+    assert_eq!(tables.viewers[0].position, [5.0, 4.0]);
+    assert_eq!(tables.edges.len(), 16);
+    assert_eq!(tables.inner_edge_count, 8);
+    assert_eq!(tables.edges[0], [-10.0, -10.0, 10.0, -10.0]);
+    assert_eq!(tables.edges[8], [-11.0, -11.0, 11.0, -11.0]);
+    // Every line of sight from the viewer to a point within its reach
+    // points into a sector listing each edge it crosses.
+    let viewer = vec2(5.0, 4.0);
+    let sector_angle = std::f32::consts::TAU / SIGHT_SECTORS as f32;
+    for step in 0..720 {
+        let angle = step as f32 * std::f32::consts::TAU / 720.0;
+        let direction = vec2(angle.cos(), angle.sin());
+        let sector = ((angle / sector_angle).floor() as usize).min(SIGHT_SECTORS - 1);
+        let [_, _, start, count] = tables.sectors[sector];
+        let listed = &tables.sector_entries[start as usize..(start + count) as usize];
+        for (index, edge) in tables.edges.iter().enumerate() {
+            let (a, b) = (vec2(edge[0], edge[1]), vec2(edge[2], edge[3]));
+            if crate::component::edge_crossing(viewer, direction, 16.0, a, b).is_some() {
+                assert!(
+                    listed.contains(&(index as u32)),
+                    "edge {index} at {angle} rad is not in sector {sector}"
+                );
+            }
+        }
+    }
+}
+
 /// The sectors of the viewer `viewer` of `tables` that list blocker
 /// `blocker`.
 fn sectors_listing(tables: &SightTables, viewer: usize, blocker: u32) -> Vec<usize> {
     let first = tables.viewers[viewer].first_sector as usize;
     (0..SIGHT_SECTORS)
         .filter(|&sector| {
-            let [start, count] = tables.sectors[first + sector];
-            tables.sector_blockers[start as usize..(start + count) as usize].contains(&blocker)
+            let [start, count, ..] = tables.sectors[first + sector];
+            tables.sector_entries[start as usize..(start + count) as usize].contains(&blocker)
         })
         .collect()
 }
@@ -618,6 +717,7 @@ fn each_viewer_lists_a_blocker_in_the_sectors_its_angular_span_overlaps() {
         // +x axis, where the first sector starts, so it spans the last
         // sector too, and narrower than a sector.
         blockers: vec![block(vec2(10.0, 0.0), vec2(0.2, 0.2))],
+        border: Default::default(),
     };
     let mut tables = SightTables::default();
 
@@ -656,6 +756,7 @@ fn every_line_of_sight_through_a_blocker_lies_in_a_sector_listing_it() {
     let sight = FogOfWarSight {
         viewers: vec![viewer(origin)],
         blockers: blockers.clone(),
+        border: Default::default(),
     };
     let mut tables = SightTables::default();
 

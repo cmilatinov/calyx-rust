@@ -11,7 +11,10 @@
 // shadow sides are exact wherever the viewers stand, and each pixel averages a few samples across
 // its own footprint on the ground to antialias them without softening them. What the side does
 // not see mixes towards the fog colour in sRGB-encoded colour, as a translucent overlay drawn over
-// the image would. `FogOfWarSight` in
+// the image would. A border, the wall round the playable area between two closed rings, its
+// inner and outer faces, bounds it all: a line of sight that leaves the area into the wall sees
+// the wall but nothing past it, whether it comes back into the area or carries on out past the
+// outer face. `FogOfWarSight` in
 // `crates/calyx_engine/src/component/post_process/fog_of_war.rs` holds the same rules on the CPU.
 // Alpha passes through.
 
@@ -26,7 +29,9 @@ struct FogOfWarUniform {
     blocker_count: u32,
     // How many angular sectors each viewer's blockers are sorted into, as `SIGHT_SECTORS`.
     sector_count: u32,
-    _pad: u32,
+    // How many of `edges`, from the first, are the border's inner face; the rest are its outer
+    // face.
+    inner_edge_count: u32,
 };
 
 // One viewer, as `GpuViewer` in `crates/calyx_engine/src/render/postprocess/fog_of_war.rs`.
@@ -71,15 +76,21 @@ var<storage, read> viewers: array<Viewer>;
 @group(0) @binding(4)
 var<storage, read> blockers: array<Blocker>;
 
-// Each viewer's `fog.sector_count` equal angular sectors around it, counted from +x towards +y, as
-// the first index into `sector_blockers` and how many follow: the blockers whose angular span seen
-// from the viewer overlaps the sector. A line of sight from a viewer meets only blockers of the
-// sector its direction lies in.
+// Each viewer's `fog.sector_count` equal angular sectors around it, counted from +x towards +y: in
+// xy the first index into `sector_entries` of the blockers whose angular span seen from the viewer
+// overlaps the sector and how many follow, in zw the same for the border's edges. A line of sight
+// from a viewer meets only blockers and edges of the sector its direction lies in.
 @group(0) @binding(5)
-var<storage, read> sectors: array<vec2u>;
+var<storage, read> sectors: array<vec4u>;
 
+// Indices into `blockers` and `edges`, sector by sector.
 @group(0) @binding(6)
-var<storage, read> sector_blockers: array<u32>;
+var<storage, read> sector_entries: array<u32>;
+
+// The border's edges, each its two ends (x, z) in xy and zw: the inner face's first, then the
+// outer face's.
+@group(0) @binding(7)
+var<storage, read> edges: array<vec4f>;
 
 // How much a pixel's window of directions is widened, in radians, as `SECTOR_SLACK`.
 const SECTOR_SLACK: f32 = 1e-3;
@@ -115,7 +126,7 @@ fn sector_window(viewer: Viewer, axis: vec2f, half_width: f32) -> SectorWindow {
 }
 
 // The entry in `sectors` of the `index`th sector of `window`.
-fn window_sector(window: SectorWindow, index: u32) -> vec2u {
+fn window_sector(window: SectorWindow, index: u32) -> vec4u {
     return sectors[window.base + (window.first + index) % fog.sector_count];
 }
 
@@ -124,11 +135,16 @@ fn window_sector(window: SectorWindow, index: u32) -> vec2u {
 const TOUCHING: f32 = 0.05;
 
 // How far past the side of a blocker a line of sight leaves by a point may lie and still count as
-// on the blocker, as `FogOfWarSight::EDGE`. Every pixel of a wall's face rebuilds to a point on the
+// on the blocker, as `FogOfWarSight::EDGE`, and how far from an edge of the border it crosses a
+// point may lie for the crossing not to count. Every pixel of a wall's face rebuilds to a point on the
 // edge of the wall's footprint, give or take the depth's rounding, so without it the face of a
 // wall in sight turned from the viewer would be lit or fogged row by row, and flicker as the
 // camera or the viewer moves.
 const EDGE: f32 = 0.005;
+
+// How far apart two crossings of the border's inner face must be to count as leaving the area and
+// coming back into it, as `FogOfWarBorder::REENTRY`.
+const REENTRY: f32 = 1e-3;
 
 // Where each pixel samples sight, in pixels from its centre, as `FogOfWarSight::PIXEL_SAMPLES`:
 // across in `SAMPLES_X` and down in `SAMPLES_Y`.
@@ -223,7 +239,7 @@ fn carried_on(
     for (var k = 0u; k < window.count; k++) {
         let sector = window_sector(window, k);
         for (var index = sector.x; index < sector.x + sector.y; index++) {
-            let into = span(blockers[sector_blockers[index]], start, direction, limit);
+            let into = span(blockers[sector_entries[index]], start, direction, limit);
             if into.z != 0.0 && into.x <= leaves_at + TOUCHING && into.y > leaves_at {
                 return true;
             }
@@ -266,9 +282,57 @@ fn spans(blocker: Blocker, start: vec2f, dir_x: vec4f, dir_y: vec4f, limit: vec4
     return Spans(max(near, vec4f(0.0)), min(far, limit), hit);
 }
 
+// Which of the four lines from `start` along the unit directions `(dir_x, dir_y)`, each `distance`
+// long, to the points `(points_x, points_y)`, the border stops, as `FogOfWarBorder::blocks`: those
+// crossing the outer face, or the inner face twice, more than `EDGE` from their point. Only the
+// edges of the sectors of `window` are read.
+fn border_blocks(
+    window: SectorWindow,
+    start: vec2f,
+    dir_x: vec4f,
+    dir_y: vec4f,
+    distance: vec4f,
+    points_x: vec4f,
+    points_y: vec4f,
+) -> vec4<bool> {
+    var out = vec4<bool>(false);
+    var first = vec4f(3.0e38);
+    var last = vec4f(-3.0e38);
+    for (var k = 0u; k < window.count; k++) {
+        let sector = window_sector(window, k);
+        for (var entry = sector.z; entry < sector.z + sector.w; entry++) {
+            let index = sector_entries[entry];
+            let edge = edges[index];
+            let a = edge.xy;
+            let along = edge.zw - edge.xy;
+            let w = a - start;
+            let denom = dir_x * along.y - dir_y * along.x;
+            let t = (w.x * along.y - w.y * along.x) / denom;
+            let u = (w.x * dir_y - w.y * dir_x) / denom;
+            // How far each point lies from the edge.
+            let f = saturate(
+                ((points_x - a.x) * along.x + (points_y - a.y) * along.y)
+                    / max(dot(along, along), 1e-12),
+            );
+            let gap_x = points_x - (a.x + along.x * f);
+            let gap_y = points_y - (a.y + along.y * f);
+            let crosses = abs(denom) >= vec4f(1e-9) & t >= vec4f(0.0) & t <= distance
+                & u >= vec4f(0.0) & u <= vec4f(1.0)
+                & sqrt(gap_x * gap_x + gap_y * gap_y) > vec4f(EDGE);
+            if index < fog.inner_edge_count {
+                first = select(first, min(first, t), crosses);
+                last = select(last, max(last, t), crosses);
+            } else {
+                out = out | crosses;
+            }
+        }
+    }
+    return out | (last - first > vec4f(REENTRY));
+}
+
 // Which of the four sample points `(points_x, points_y)` sight reaches from `viewer`, 1 or 0 each:
-// those whose line from `start` leaves no blocker into open ground more than `EDGE` before
-// reaching them, as `FogOfWarSight::clear_line`. The four lines are traced together, so each
+// those whose line from `start` the border does not stop and that leaves no blocker into open
+// ground more than `EDGE` before reaching them, as `FogOfWarSight::clear_line`. The four lines are traced together, so each
 // blocker is read once for all of them, and one that comes nowhere near the line to the pixel's
 // centre `center`, widened by how far the samples lie from it, `spread`, is skipped for all of
 // them. Only the blockers of the viewer's sectors the four lines lie in are read.
@@ -300,12 +364,12 @@ fn clear_lines(
         half_width = asin(spread / reach) + SECTOR_SLACK;
     }
     let window = sector_window(viewer, axis, half_width);
-    var open = !here;
-    var blocked = vec4<bool>(false);
+    var blocked = border_blocks(window, start, dir_x, dir_y, distance, points_x, points_y) & !here;
+    var open = !here & !blocked;
     for (var k = 0u; k < window.count && any(open); k++) {
         let sector = window_sector(window, k);
         for (var entry = sector.x; entry < sector.x + sector.y; entry++) {
-            let blocker = blockers[sector_blockers[entry]];
+            let blocker = blockers[sector_entries[entry]];
             if !near_line(blocker, start, axis, along, margin) {
                 continue;
             }

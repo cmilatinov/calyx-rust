@@ -28,7 +28,7 @@ use crate::tank::{
 };
 use calyx_engine::component::{
     ColliderShape, ComponentCollider, ComponentID, ComponentParticleSystem, ComponentPointLight,
-    FogOfWarBlocker, FogOfWarSight,
+    FogOfWarBlocker, FogOfWarBorder, FogOfWarSight,
 };
 use calyx_engine::math::Transform;
 use calyx_engine::scene::{GameObject, Scene};
@@ -116,6 +116,12 @@ pub(crate) fn cover_entry(start: Vec2, end: Vec2, cover: GroundRect) -> Option<f
     cover_span(start, end, cover).map(|(near, _)| near)
 }
 
+/// Whether an authored arena collider named `name` is part of the border,
+/// whatever it is built of.
+fn is_border(name: &str) -> bool {
+    name.starts_with("Arena Wall Border") || name.starts_with("Arena Cover Border")
+}
+
 /// Whether an authored arena collider named `name` blocks sight: the walls,
 /// the border, whatever it is built of, the boxes (crates and supply
 /// crates), the hedgerows' dense leaves and the windmill's tower.
@@ -124,7 +130,7 @@ pub(crate) fn cover_entry(start: Vec2, end: Vec2, cover: GroundRect) -> Option<f
 /// sight, whatever its name.
 fn blocks_sight(name: &str) -> bool {
     name.starts_with("Arena Wall")
-        || name.starts_with("Arena Cover Border")
+        || is_border(name)
         || (name.starts_with("Arena Cover")
             && (name.contains("Crate")
                 || name.contains("Supply")
@@ -140,7 +146,12 @@ pub(crate) struct ArenaGeometry {
     /// The cover and interior walls the minimap outlines inside the floor.
     pub cover: Vec<GroundRect>,
     /// The walls and the cover that blocks sight; see [`blocks_sight`].
+    /// When the arena has a [`Self::border`], the border's own solids are
+    /// left out: the border blocks sight as one wall.
     pub sight_blockers: Vec<GroundRect>,
+    /// The wall round the arena, as fog of war bounds sight by it, in
+    /// world ground positions; empty when the arena gives none.
+    pub border: FogOfWarBorder,
     /// Whether the floor's rectangle is the playable area's edge, as a
     /// generated arena's and a walled rectangle's is. An authored arena
     /// whose border is not a rectangle nests its border's solids as cover,
@@ -150,7 +161,7 @@ pub(crate) struct ArenaGeometry {
 
 /// Reads the first arena's ground geometry from its live cover objects.
 pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
-    let (object, transform, ((width, depth), cell_size, cover, generated)) =
+    let (object, transform, ((width, depth), cell_size, cover, generated, border)) =
         scene.objects_with::<ComponentArena>().find_map(|object| {
             scene
                 .read_component::<ComponentArena, _, _>(object, |arena| {
@@ -159,12 +170,19 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
                         arena.cell_size,
                         arena.cover_positions(),
                         arena.generate_on_start,
+                        [arena.border_inner.clone(), arena.border_outer.clone()],
                     ))
                 })
                 .flatten()
                 .map(|arena| (object, scene.world_transform(object), arena))
         })?;
     let floor = GroundRect::placed(&transform, Vec3::zeros(), vec2(width, depth));
+    let [inner, outer] = border.map(|ring| {
+        ring.iter()
+            .map(|point| ground(transform.transform_position(&vec3(point.x, 0.0, point.y))))
+            .collect::<Vec<_>>()
+    });
+    let border = FogOfWarBorder { inner, outer };
     let live = |child: &GameObject| {
         scene.is_visible_in_hierarchy(*child)
             && scene.is_component_enabled::<ComponentCollider>(*child)
@@ -191,6 +209,7 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
                 floor,
                 sight_blockers: cover.clone(),
                 cover,
+                border,
                 floor_is_edge: true,
             });
         }
@@ -216,6 +235,7 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
                 .filter(|(_, blocks)| *blocks)
                 .map(|(rect, _)| *rect)
                 .collect(),
+            border,
             floor_is_edge: true,
         });
     }
@@ -225,12 +245,17 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
     let mut sight_blockers = Vec::new();
     let mut perimeter_strips = false;
     for child in scene.descendants(object) {
-        let (is_cover, blocks_by_name) = scene
+        let (is_cover, blocks_by_name, border_solid) = scene
             .read_component::<ComponentID, _, _>(child, |id| {
-                (id.name.starts_with("Arena Cover"), blocks_sight(&id.name))
+                (
+                    id.name.starts_with("Arena Cover"),
+                    blocks_sight(&id.name),
+                    is_border(&id.name),
+                )
             })
             .unwrap_or_default();
-        let blocks = blocks_by_name && in_sight_group(&child);
+        let blocks =
+            blocks_by_name && in_sight_group(&child) && !(border_solid && !border.is_empty());
         if (!is_cover && !blocks_by_name) || !live(&child) {
             continue;
         }
@@ -260,6 +285,7 @@ pub(crate) fn arena_geometry(scene: &Scene) -> Option<ArenaGeometry> {
         floor,
         cover,
         sight_blockers,
+        border,
         // Without perimeter strips, the border's nested solids bound it.
         floor_is_edge: perimeter_strips,
     })
@@ -306,13 +332,17 @@ impl VisionFrame {
 
     /// What `player`'s side sees now, over the arena read.
     pub fn vision(&self, scene: &Scene, player: GameObject) -> TeamVision {
-        TeamVision::of_tanks(
+        let mut vision = TeamVision::of_tanks(
             scene,
             player,
             self.tanks.iter().copied(),
             self.sight_blockers(),
             &self.brush,
-        )
+        );
+        if let Some(arena) = &self.arena {
+            vision.border.clone_from(&arena.border);
+        }
+        vision
     }
 }
 
@@ -337,7 +367,8 @@ pub(crate) struct Viewer {
 pub(crate) struct SightRays {
     pub viewer: Viewer,
     /// Where each ray meets cover, carried on through the touching blocks
-    /// it meets so the cover itself is not in shadow, or its full range.
+    /// it meets so the cover itself is not in shadow, or where the border
+    /// stops it, or its full range.
     pub through: Vec<f32>,
 }
 
@@ -346,6 +377,8 @@ pub(crate) struct SightRays {
 pub(crate) struct TeamVision {
     pub viewers: Vec<Viewer>,
     pub cover: Vec<GroundRect>,
+    /// The wall round the arena, past which the side sees nothing.
+    pub border: FogOfWarBorder,
     /// The enemy tanks brush hides from the side wherever they are in its
     /// sight; see [`crate::brush`].
     pub concealed: Vec<Uuid>,
@@ -409,6 +442,7 @@ impl TeamVision {
         Self {
             viewers,
             cover,
+            border: FogOfWarBorder::default(),
             concealed,
         }
     }
@@ -420,7 +454,8 @@ impl TeamVision {
 
     /// Whether sight reaches `to` from `from`, by the rule the fog of war
     /// renders: it carries on through the run of touching cover it meets
-    /// first, so only ground past that run's far side is out of sight.
+    /// first, so only ground past that run's far side is out of sight, and
+    /// never past the border.
     pub fn clear_line(&self, from: Vec2, to: Vec2) -> bool {
         FogOfWarSight {
             viewers: Vec::new(),
@@ -432,6 +467,7 @@ impl TeamVision {
                     half_axes: cover.half_axes,
                 })
                 .collect(),
+            border: self.border.clone(),
         }
         .clear_line(from, to)
     }
@@ -479,6 +515,7 @@ impl TeamVision {
                         FogOfWarSight {
                             viewers: Vec::new(),
                             blockers,
+                            border: self.border.clone(),
                         },
                     )
                 })
@@ -503,7 +540,12 @@ impl TeamVision {
                 let through = (0..count)
                     .map(|index| {
                         let angle = index as f32 * std::f32::consts::TAU / count as f32;
-                        ray_through_cover(viewer, vec2(angle.cos(), angle.sin()), &near)
+                        let direction = vec2(angle.cos(), angle.sin());
+                        ray_through_cover(viewer, direction, &near).min(self.border.reach(
+                            viewer.position,
+                            direction,
+                            viewer.range,
+                        ))
                     })
                     .collect();
                 SightRays { viewer, through }
