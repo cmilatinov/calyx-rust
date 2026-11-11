@@ -599,9 +599,12 @@ fn impacts_out_of_sight_stay_hidden_the_frame_they_spawn() {
 }
 
 /// The arena's border, of whatever it is built along each run, stops sight
-/// as its walls do and bounds the minimap: every segment's solid is a sight
-/// blocker, so a line from 3 m inside it to 3 m outside it is blocked, and
-/// the floor's rectangle, which the border does not follow, is no edge.
+/// as one wall and bounds the minimap. The scene carries the wall's two
+/// faces, and every segment's solid lies between them, its long sides on
+/// them, so the faces are the wall the generator built; its solids block
+/// sight no more one by one. A line from 3 m inside each segment to 3 m
+/// outside it is blocked, and the floor's rectangle, which the border does
+/// not follow, is no edge.
 #[test]
 fn the_arena_border_blocks_sight_along_its_whole_length() {
     let copy = calyx_engine::test_support::TestAssets::game();
@@ -625,6 +628,13 @@ fn the_arena_border_blocks_sight_along_its_whole_length() {
         !geometry.floor_is_edge,
         "the border, not the floor, is the edge"
     );
+    let border = &geometry.border;
+    assert!(
+        border.inner.len() >= 50 && border.outer.len() == border.inner.len(),
+        "the arena carries its border's faces: {} and {}",
+        border.inner.len(),
+        border.outer.len()
+    );
     let sight = FogOfWarSight {
         viewers: Vec::new(),
         blockers: geometry
@@ -635,6 +645,18 @@ fn the_arena_border_blocks_sight_along_its_whole_length() {
                 half_axes: rect.half_axes,
             })
             .collect(),
+        border: border.clone(),
+    };
+    // Whether `point` lies on the line of an edge of `ring` running along
+    // `along`, a unit direction.
+    let on_ring = |ring: &[Vec2], point: Vec2, along: Vec2| {
+        (0..ring.len()).any(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % ring.len()]);
+            let edge = (b - a).normalize();
+            let offset = point - a;
+            (edge.x * along.y - edge.y * along.x).abs() < 1e-3
+                && (edge.x * offset.y - edge.y * offset.x).abs() < 0.01
+        })
     };
     let mut segments = 0;
     for object in scene.objects() {
@@ -649,7 +671,56 @@ fn the_arena_border_blocks_sight_along_its_whole_length() {
             !sight.clear_line(center - across, center + across),
             "sight crosses {name}"
         );
+        assert!(
+            !sight
+                .blockers
+                .iter()
+                .any(|blocker| (blocker.center - center).norm() < 1e-3),
+            "{name} blocks sight on its own"
+        );
+        // The solid's long sides lie along the two faces, one on each.
+        let half = scene
+            .read_component::<ComponentCollider, _, _>(object, |collider| match collider.shape {
+                ColliderShape::Cuboid { half_extents } => half_extents.z,
+                _ => 0.0,
+            })
+            .expect("a border solid has a collider");
+        let side = ground(pose.rotation * vec3(0.0, 0.0, half));
+        let along = ground(pose.rotation * vec3(1.0, 0.0, 0.0)).normalize();
+        let (a, b) = (center + side, center - side);
+        assert!(
+            (on_ring(&border.inner, a, along) && on_ring(&border.outer, b, along))
+                || (on_ring(&border.inner, b, along) && on_ring(&border.outer, a, along)),
+            "{name}'s sides at {a:?} and {b:?} are off the border's faces"
+        );
         segments += 1;
     }
     assert!(segments >= 15, "{segments} border segments");
+    // The creek's gaps in the wall are closed to sight: from inside, the
+    // creek is seen up to the gap and not past it. Points are in the
+    // Arena's frame, 22 m north of the world's.
+    let world = |x: f32, z: f32| vec2(x, z + 22.0);
+    for (name, from, near, far) in [
+        (
+            "north inlet",
+            world(2.0, 30.0),
+            world(2.0, 32.0),
+            world(2.0, 35.0),
+        ),
+        (
+            "south inlet",
+            world(14.0, -30.0),
+            world(15.5, -32.0),
+            world(19.0, -38.0),
+        ),
+        (
+            "west gap",
+            world(-29.0, 2.0),
+            world(-32.5, 2.0),
+            world(-37.0, 2.0),
+        ),
+    ] {
+        assert!(sight.clear_line(from, near), "the {name} is seen inside");
+        assert!(!sight.clear_line(from, far), "past the {name} is seen");
+    }
 }

@@ -335,3 +335,46 @@ impl Author {
         assert!(count > 60, "the border has {count} pieces");
     }
 }
+
+/// The border wall's inner and outer faces, as two closed rings in the
+/// Arena's frame, for fog of war: the outline offset either side by half
+/// the thickness of each stretch's solid, the faces of neighbouring
+/// stretches meeting at each bend where the solids' faces cross. The creek
+/// gaps are closed as if a stone stretch stood in them, so sight never
+/// leaves the pen through them.
+pub fn faces() -> (Vec<Vec2>, Vec<Vec2>) {
+    let ring = polygon();
+    let n = ring.len();
+    // Twice the signed area, positive when the outline runs
+    // counterclockwise in (x, z), where the inside lies to the left.
+    let area: f32 = (0..n)
+        .map(|i| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum();
+    let inward = area.signum();
+    let face = |side: f32| -> Vec<Vec2> {
+        // Stretch `i`'s face on `side` (1 inside, -1 outside): a point on
+        // it and its direction.
+        let line = |i: usize| {
+            let (a, b) = (ring[i], ring[(i + 1) % n]);
+            let along = (b - a).normalize();
+            let half = OUTLINE[i].2.piece().2 * 0.5;
+            (a + vec2(-along.y, along.x) * (inward * side * half), along)
+        };
+        (0..n)
+            .map(|i| {
+                let (p, d) = line((i + n - 1) % n);
+                let (q, e) = line(i);
+                let denom = d.x * e.y - d.y * e.x;
+                if denom.abs() < 1e-6 {
+                    return q;
+                }
+                let w = q - p;
+                p + d * ((w.x * e.y - w.y * e.x) / denom)
+            })
+            .collect()
+    };
+    (face(1.0), face(-1.0))
+}

@@ -6,7 +6,9 @@ use super::{
     CameraPlanes, NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass,
     PostProcessSettings, PostProcessStage, SceneInput,
 };
-use crate::component::{ComponentFogOfWar, FogOfWarBlocker, FogOfWarSight};
+use crate::component::{
+    ring_contains, segment_distance, ComponentFogOfWar, FogOfWarBlocker, FogOfWarSight,
+};
 use crate::context::ReadOnlyAssetContext;
 use crate::core::Ref;
 use crate::render::buffer::ResizableBuffer;
@@ -25,7 +27,9 @@ struct FogOfWarUniform {
     blocker_count: u32,
     /// [`SIGHT_SECTORS`], as the shader reads it.
     sector_count: u32,
-    _pad: u32,
+    /// How many of the border's edges, first in the edge table, are its
+    /// inner face; the rest are its outer face.
+    inner_edge_count: u32,
 }
 
 /// How many equal angular sectors around each viewer the pass sorts the
@@ -65,23 +69,35 @@ pub(crate) struct GpuBlocker {
     scale: [f32; 2],
 }
 
-/// The tables the shader reads a sight from: its viewers and blockers, and
-/// for each viewer which blockers lie in each angular sector around it.
+/// One edge of the border, as the shader reads it: its two ends, `(x, z)`.
+pub(crate) type GpuEdge = [f32; 4];
+
+/// The tables the shader reads a sight from: its viewers, blockers and
+/// border edges, and for each viewer which blockers and edges lie in each
+/// angular sector around it.
 #[derive(Debug, Default)]
 pub(crate) struct SightTables {
     pub viewers: Vec<GpuViewer>,
     pub blockers: Vec<GpuBlocker>,
+    /// The border's inner face's edges, then its outer face's.
+    pub edges: Vec<GpuEdge>,
+    /// How many of `edges` are the inner face's.
+    pub inner_edge_count: u32,
     /// [`SIGHT_SECTORS`] entries per viewer, from its `first_sector`: the
-    /// first index into `sector_blockers` and how many follow.
-    pub sectors: Vec<[u32; 2]>,
-    /// Indices into `blockers`, sector by sector.
-    pub sector_blockers: Vec<u32>,
+    /// first index into `sector_entries` of the sector's blockers and how
+    /// many follow, then the same for its edges.
+    pub sectors: Vec<[u32; 4]>,
+    /// Indices into `blockers` and `edges`, sector by sector.
+    pub sector_entries: Vec<u32>,
     /// The blockers of each sector of the viewer being packed, reused.
     buckets: Vec<Vec<u32>>,
+    /// The edges of each sector of the viewer being packed, reused.
+    edge_buckets: Vec<Vec<u32>>,
 }
 
 /// Packs `sight` into the shader's tables, reusing their storage. Flat
-/// blockers, which block nothing, are left out.
+/// blockers, which block nothing, are left out, and so are viewers outside
+/// the border, which see nothing.
 ///
 /// Each viewer's surroundings split into [`SIGHT_SECTORS`] equal angular
 /// sectors, and each sector lists the blockers whose angular span, seen
@@ -89,13 +105,31 @@ pub(crate) struct SightTables {
 /// spans every sector. A line of sight from the viewer meets a blocker only
 /// in a direction within that span, so the shader, testing the blockers of
 /// the sectors a pixel's lines of sight lie in, reaches the answer testing
-/// every blocker would.
+/// every blocker would. The border's edges are sorted the same way, by the
+/// angles each one spans from the viewer; the edges beyond a viewer's
+/// sight's reach are left out of its sectors, as no line of sight it lends
+/// anything along crosses them.
 pub(crate) fn pack_sight(sight: &FogOfWarSight, tables: &mut SightTables) {
     tables.viewers.clear();
     tables.blockers.clear();
+    tables.edges.clear();
     tables.sectors.clear();
-    tables.sector_blockers.clear();
+    tables.sector_entries.clear();
     tables.buckets.resize_with(SIGHT_SECTORS, Vec::new);
+    tables.edge_buckets.resize_with(SIGHT_SECTORS, Vec::new);
+    let border = &sight.border;
+    let faces: [&[Vec2]; 2] = if border.is_empty() {
+        [&[], &[]]
+    } else {
+        [&border.inner, &border.outer]
+    };
+    for face in faces {
+        for i in 0..face.len() {
+            let (a, b) = (face[i], face[(i + 1) % face.len()]);
+            tables.edges.push([a.x, a.y, b.x, b.y]);
+        }
+    }
+    tables.inner_edge_count = faces[0].len() as u32;
     let mut kept = Vec::with_capacity(sight.blockers.len());
     for blocker in &sight.blockers {
         let Some([x, y]) = blocker.to_local() else {
@@ -110,7 +144,10 @@ pub(crate) fn pack_sight(sight: &FogOfWarSight, tables: &mut SightTables) {
         });
     }
     for viewer in &sight.viewers {
-        for bucket in &mut tables.buckets {
+        if !border.is_empty() && !ring_contains(&border.inner, viewer.position) {
+            continue;
+        }
+        for bucket in tables.buckets.iter_mut().chain(&mut tables.edge_buckets) {
             bucket.clear();
         }
         for (index, blocker) in kept.iter().enumerate() {
@@ -119,12 +156,32 @@ pub(crate) fn pack_sight(sight: &FogOfWarSight, tables: &mut SightTables) {
                 tables.buckets[sector.rem_euclid(SIGHT_SECTORS as i64) as usize].push(index as u32);
             }
         }
+        // Past this distance the viewer lends no sight, so no edge further
+        // away can stop a line of sight that matters.
+        let reach = viewer.fade_start.max(viewer.fade_end) + FogOfWarSight::TOUCHING;
+        for (index, edge) in tables.edges.iter().enumerate() {
+            let (a, b) = (Vec2::new(edge[0], edge[1]), Vec2::new(edge[2], edge[3]));
+            if segment_distance(viewer.position, a, b) > reach {
+                continue;
+            }
+            let (first, count) = edge_sectors(a, b, viewer.position);
+            for sector in first..first + count as i64 {
+                tables.edge_buckets[sector.rem_euclid(SIGHT_SECTORS as i64) as usize]
+                    .push(index as u32);
+            }
+        }
         let first_sector = tables.sectors.len() as u32;
-        for bucket in &tables.buckets {
-            tables
-                .sectors
-                .push([tables.sector_blockers.len() as u32, bucket.len() as u32]);
-            tables.sector_blockers.extend_from_slice(bucket);
+        for (bucket, edges) in tables.buckets.iter().zip(&tables.edge_buckets) {
+            let blockers_at = tables.sector_entries.len() as u32;
+            tables.sector_entries.extend_from_slice(bucket);
+            let edges_at = tables.sector_entries.len() as u32;
+            tables.sector_entries.extend_from_slice(edges);
+            tables.sectors.push([
+                blockers_at,
+                bucket.len() as u32,
+                edges_at,
+                edges.len() as u32,
+            ]);
         }
         tables.viewers.push(GpuViewer {
             position: [viewer.position.x, viewer.position.y],
@@ -160,6 +217,28 @@ fn blocker_sectors(blocker: &FogOfWarBlocker, viewer: Vec2) -> (i64, usize) {
     (first, ((last - first + 1) as usize).min(SIGHT_SECTORS))
 }
 
+/// The sectors around `viewer` that the edge from `a` to `b` spans, as
+/// [`blocker_sectors`] gives them: those overlapping the angles between the
+/// directions to its ends, the short way round. A viewer on the edge sees
+/// it in every direction.
+fn edge_sectors(a: Vec2, b: Vec2, viewer: Vec2) -> (i64, usize) {
+    if segment_distance(viewer, a, b) <= 1e-3 {
+        return (0, SIGHT_SECTORS);
+    }
+    let (start, end) = (a - viewer, b - viewer);
+    let sector_angle = std::f32::consts::TAU / SIGHT_SECTORS as f32;
+    let from = start.y.atan2(start.x).rem_euclid(std::f32::consts::TAU);
+    let sweep = (start.x * end.y - start.y * end.x).atan2(start.dot(&end));
+    let (low, high) = if sweep >= 0.0 {
+        (from, from + sweep)
+    } else {
+        (from + sweep, from)
+    };
+    let first = ((low - SECTOR_SLACK) / sector_angle).floor() as i64;
+    let last = ((high + SECTOR_SLACK) / sector_angle).floor() as i64;
+    (first, ((last - first + 1) as usize).min(SIGHT_SECTORS))
+}
+
 /// Fog of war in the `Ldr` stage, after the ink outlines and before FXAA,
 /// which smooths the image's other edges. It reads the scene depth,
 /// rebuilds each pixel's world position, traces lines of sight from the
@@ -173,17 +252,18 @@ pub struct FogOfWarPass {
     uniform_buffer: wgpu::Buffer,
     viewer_buffer: ResizableBuffer,
     blocker_buffer: ResizableBuffer,
+    edge_buffer: ResizableBuffer,
     sector_buffer: ResizableBuffer,
-    sector_blocker_buffer: ResizableBuffer,
+    sector_entry_buffer: ResizableBuffer,
     tables: SightTables,
     /// Keyed by the layout, the input and depth views, and the generations
-    /// of the viewer, blocker, sector and sector blocker buffers.
+    /// of the viewer, blocker, edge, sector and sector entry buffers.
     #[allow(clippy::type_complexity)]
     bind_group: CachedBindGroup<(
         wgpu::BindGroupLayout,
         wgpu::TextureView,
         wgpu::TextureView,
-        [u64; 4],
+        [u64; 5],
     )>,
 }
 
@@ -211,8 +291,9 @@ impl FogOfWarPass {
             uniform_buffer,
             viewer_buffer: storage(),
             blocker_buffer: storage(),
+            edge_buffer: storage(),
             sector_buffer: storage(),
-            sector_blocker_buffer: storage(),
+            sector_entry_buffer: storage(),
             tables: SightTables::default(),
             bind_group: Default::default(),
         })
@@ -258,14 +339,17 @@ impl PostProcessPass for FogOfWarPass {
             .resize(device, size_of::<GpuBlocker>() as u64);
         self.blocker_buffer
             .write_buffer(device, queue, &self.tables.blockers, None);
+        self.edge_buffer.resize(device, size_of::<GpuEdge>() as u64);
+        self.edge_buffer
+            .write_buffer(device, queue, &self.tables.edges, None);
         self.sector_buffer
-            .resize(device, size_of::<[u32; 2]>() as u64);
+            .resize(device, size_of::<[u32; 4]>() as u64);
         self.sector_buffer
             .write_buffer(device, queue, &self.tables.sectors, None);
-        self.sector_blocker_buffer
+        self.sector_entry_buffer
             .resize(device, size_of::<u32>() as u64);
-        self.sector_blocker_buffer
-            .write_buffer(device, queue, &self.tables.sector_blockers, None);
+        self.sector_entry_buffer
+            .write_buffer(device, queue, &self.tables.sector_entries, None);
         let uniform = FogOfWarUniform {
             color: [
                 fog.color.r() as f32 / 255.0,
@@ -278,7 +362,7 @@ impl PostProcessPass for FogOfWarPass {
             viewer_count: self.tables.viewers.len() as u32,
             blocker_count: self.tables.blockers.len() as u32,
             sector_count: SIGHT_SECTORS as u32,
-            _pad: 0,
+            inner_edge_count: self.tables.inner_edge_count,
         };
         queue.write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniform));
     }
@@ -306,8 +390,9 @@ impl PostProcessPass for FogOfWarPass {
         let uniform_buffer = &self.uniform_buffer;
         let viewer_buffer = self.viewer_buffer.get_wgpu_buffer();
         let blocker_buffer = self.blocker_buffer.get_wgpu_buffer();
+        let edge_buffer = self.edge_buffer.get_wgpu_buffer();
         let sector_buffer = self.sector_buffer.get_wgpu_buffer();
-        let sector_blocker_buffer = self.sector_blocker_buffer.get_wgpu_buffer();
+        let sector_entry_buffer = self.sector_entry_buffer.get_wgpu_buffer();
         let bind_group = self.bind_group.get_or_create(
             (
                 layout.clone(),
@@ -316,8 +401,9 @@ impl PostProcessPass for FogOfWarPass {
                 [
                     self.viewer_buffer.generation(),
                     self.blocker_buffer.generation(),
+                    self.edge_buffer.generation(),
                     self.sector_buffer.generation(),
-                    self.sector_blocker_buffer.generation(),
+                    self.sector_entry_buffer.generation(),
                 ],
             ),
             || {
@@ -351,7 +437,11 @@ impl PostProcessPass for FogOfWarPass {
                         },
                         wgpu::BindGroupEntry {
                             binding: 6,
-                            resource: sector_blocker_buffer.as_entire_binding(),
+                            resource: sector_entry_buffer.as_entire_binding(),
+                        },
+                        wgpu::BindGroupEntry {
+                            binding: 7,
+                            resource: edge_buffer.as_entire_binding(),
                         },
                     ],
                 })

@@ -67,6 +67,7 @@ pub(crate) fn sight_rays(sight: &FogOfWarSight, count: usize) -> Vec<SightRays> 
                 half_axes: blocker.half_axes,
             })
             .collect(),
+        border: sight.border.clone(),
         concealed: Vec::new(),
     }
     .sight_rays(count)
@@ -116,7 +117,11 @@ pub(crate) fn side_sight(vision: &TeamVision) -> FogOfWarSight {
         .collect::<Vec<_>>();
     let mut blockers = Vec::new();
     near_blockers(&vision.cover, &viewers, &mut blockers);
-    FogOfWarSight { viewers, blockers }
+    FogOfWarSight {
+        viewers,
+        blockers,
+        border: vision.border.clone(),
+    }
 }
 
 /// The side's sight as fog shows it, with tanks joining and leaving the
@@ -170,6 +175,7 @@ impl FogSight {
             }
         }
         near_blockers(&vision.cover, &self.sight.viewers, &mut self.sight.blockers);
+        self.sight.border.clone_from(&vision.border);
         self.started = true;
     }
 

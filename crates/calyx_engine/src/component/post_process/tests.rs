@@ -130,6 +130,7 @@ fn erased_effect_operations_preserve_all_builtin_blend_rules() {
                     ..Default::default()
                 }],
                 blockers: vec![FogOfWarBlocker::default(); 2],
+                border: Default::default(),
             }),
         },
     );
