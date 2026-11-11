@@ -161,10 +161,9 @@ corner has its own character:
   past the south branch, behind the depot's wall, with a shed, a raised
   fuel tank, a parked tractor and stacked crates round an open gravel yard (footprint `Depot`,
   local x 21..38, z -37..-20; see Supply depot).
-- **Northwest, the orchard**: rows of kit trees at 37 degrees broken by
-  hedgerows, a wall and brush (footprint `Orchard`, x -27..-13.5,
-  z 12..29), with the windmill's footprint in the corner (`Windmill`,
-  x -27..-22, z 24.5..29.5), dressed by #580.
+- **Northwest, the orchard**: an open orchard round a windmill standing in
+  the middle of the corner (`Windmill`, x -29.5..-24.5, z 19.5..24.5), its
+  rows mostly past the hedgerow; see Orchard below.
 - **Northeast, the barn yard**: the raised platform, a red barn against
   its south ramp, a tall silo in the east cove, an open feed yard at the
   ramp's foot (`Barn`, x 12.5..21.5, z 6..12.5), and a stable and a fenced
@@ -428,6 +427,53 @@ use the kit's existing roles: timber in `crate_plank`, `crate_frame`,
 galvanised roof and the tank in `metal_caps`, the tank's hoops in
 `explosive_red`, the tractor and the hazard placard in `hazard_yellow` and
 `hazard_black`, and tyres in `tracks`. No third-party assets are used.
+
+## Orchard
+
+The north-west corner is the orchard, built by `remake_arena`'s `orchard`
+module (#580). It is kept open: the border's lobe was pushed out west and
+north for it, the windmill stands in the middle of the corner in a wide
+clearing, most of the orchard's rows stand past the hedgerow, and the
+north spawn's exits stay clear.
+
+- **Windmill.** `Arena Cover Windmill`, a generated `windmill` about 11.9 m
+  tall at its top sail's tip: an eight-sided, tapering pale stone tower on
+  a rubble plinth, a timber gallery, a red cap and four lattice sails with
+  canvas, its door and sails turned south-east towards the gameplay
+  camera, the windshaft tilted 15 degrees up so the sails read from above.
+  It stands at local `(-27, 22)`, the middle of its footprint and of the
+  corner, at least 9 m from the border, with one 3.9 m square solid round
+  its plinth that stops tanks, rounds and sight (the tower is named among
+  the sight blockers in `sandbox/src/vision.rs`). Sacks of flour
+  (`sandbag_stack`) stand by its door and two hay bales against its side.
+- **Clearing.** Open ground 10 m in radius round the windmill, free of
+  trees, where tanks circle it and fight and manoeuvre, and where the game
+  may put objectives. A worn dirt track runs 9 m from the windmill's door.
+- **Rows.** Generated `orchard_tree`s, low broad fruit trees about 2.7 m
+  high hung with red fruit (the `berries` role), in rows at 37 degrees,
+  3 m apart along a row, the rows 6 m apart, every fifth tree in a row
+  left out, staggered from row to row. Each tree is scaled 0.88 to 1.12
+  and turned at random. Past the border's hedgerow the rows run on up to
+  18 m round the lobe and behind the north spawn, clear of the creek, the
+  fields and the outside copses, so the corner is framed as the edge of a
+  larger orchard, with darker, uncut grass along each row. Inside the
+  border only the rare tree at the corner's edge, beyond the clearing,
+  stands; its trunk has a solid, its crown is decoration. The remake
+  checks every tree against the arena's solids, and a flood fill on the
+  reachability test's grid (0.25 m, 1.2 m clearance) leaves out any trunk
+  that would close off ground a tank fits on.
+- **Crates.** Three stacks of crates of picked fruit (`Arena Cover Orchard
+  Crate ...`: a large crate, a framed one on top and one at its foot)
+  stand round the clearing's edge, each crate its own object, stopping
+  rounds and sight. They are dressing rather than the corner's essential
+  cover: the crates, the windmill's hay bales and its sacks are expected
+  to become loose physical objects that tanks shove and shots knock over,
+  so they stand in open ground clear of the north spawn's exits, with room
+  to scatter.
+
+The orchard's two models are generated in all three palettes like the kit,
+from `models/windmill.toml` and `models/orchard_tree.toml`, in existing
+roles; no third-party assets are used.
 
 ## Brush patches
 

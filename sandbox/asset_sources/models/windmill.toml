@@ -1,0 +1,304 @@
+# Orchard windmill: a pale stone tower mill, eight-sided and tapering, on a
+# rubble plinth, with a timber gallery, a red cap and four lattice sails with
+# canvas, about 11.9 m high at the top sail's tip; the orchard's tall
+# landmark, read from the Far camera by its sails and long shadow. The sails
+# face +Z, the front, where the door is.
+# Regenerate with calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "plinth"
+kind = "cylinder"
+role = "rocks"
+radius = 2.3
+top_radius = 2.15
+height = 0.5
+vertices = 8
+bevel = 0.08
+segments = 2
+
+[[parts]]
+name = "tower"
+kind = "cylinder"
+role = "barriers"
+radius = 1.95
+top_radius = 1.35
+height = 7.0
+vertices = 8
+bevel = 0.1
+segments = 2
+offset = [0, 0.4, 0]
+
+[[parts]]
+name = "gallery"
+kind = "cylinder"
+role = "crate_frame"
+radius = 2.5
+height = 0.18
+vertices = 8
+bevel = 0.04
+segments = 2
+offset = [0, 3.2, 0]
+
+[[parts]]
+name = "railing"
+kind = "ring"
+role = "crate_plank"
+radius = 2.5
+inner_radius = 2.36
+height = 0.55
+vertices = 8
+offset = [0, 3.38, 0]
+
+[[parts]]
+name = "door"
+kind = "box"
+role = "crate_frame"
+size = [0.95, 1.75, 0.34]
+bevel = 0.06
+segments = 2
+offset = [0, 0.45, 1.76]
+
+[[parts]]
+name = "window_front"
+kind = "box"
+role = "metal"
+size = [0.5, 0.7, 0.3]
+bevel = 0.05
+segments = 2
+offset = [0, 4.9, 1.47]
+
+[[parts]]
+name = "window_side"
+kind = "box"
+role = "metal"
+size = [0.3, 0.7, 0.5]
+bevel = 0.05
+segments = 2
+offset = [-1.72, 1.7, 0]
+
+[[parts]]
+name = "window_back"
+kind = "box"
+role = "metal"
+size = [0.5, 0.7, 0.3]
+bevel = 0.05
+segments = 2
+offset = [0, 5.6, -1.4]
+
+[[parts]]
+name = "cap_brim"
+kind = "cylinder"
+role = "crate_frame"
+radius = 1.62
+height = 0.3
+vertices = 8
+bevel = 0.05
+segments = 2
+offset = [0, 7.35, 0]
+
+[[parts]]
+name = "cap"
+kind = "cylinder"
+role = "roof_tiles"
+radius = 1.55
+top_radius = 0.32
+height = 1.75
+vertices = 8
+bevel = 0.06
+segments = 2
+offset = [0, 7.62, 0]
+
+[[parts]]
+name = "finial"
+kind = "cylinder"
+role = "metal"
+radius = 0.12
+height = 0.5
+vertices = 8
+bevel = 0.03
+segments = 2
+offset = [0, 9.3, 0]
+
+[[parts]]
+name = "windshaft"
+kind = "cylinder"
+role = "metal"
+radius = 0.17
+height = 1.45
+vertices = 8
+bevel = 0.03
+segments = 2
+offset = [0, 8.3, 0.85]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "hub"
+kind = "cylinder"
+role = "crate_frame"
+radius = 0.42
+height = 0.42
+vertices = 8
+bevel = 0.05
+segments = 2
+offset = [0, 8.3, 2.1]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "sail_0"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 4.9, 0.16]
+bevel = 0.04
+segments = 2
+offset = [0, 8.3, 2.42]
+rotation = [0, 0, 45]
+
+[[parts]]
+name = "sail_0_cloth"
+kind = "box"
+role = "sandbags"
+size = [1.0, 3.7, 0.07]
+bevel = 0.02
+segments = 2
+parent = "sail_0"
+offset = [0.66, 1.05, -0.02]
+
+[[parts]]
+name = "sail_0_bar_0"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_0"
+offset = [0.6, 2.1, 0.07]
+
+[[parts]]
+name = "sail_0_bar_1"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_0"
+offset = [0.6, 3.6, 0.07]
+
+[[parts]]
+name = "sail_1"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 4.9, 0.16]
+bevel = 0.04
+segments = 2
+offset = [0, 8.3, 2.42]
+rotation = [0, 0, 135]
+
+[[parts]]
+name = "sail_1_cloth"
+kind = "box"
+role = "sandbags"
+size = [1.0, 3.7, 0.07]
+bevel = 0.02
+segments = 2
+parent = "sail_1"
+offset = [0.66, 1.05, -0.02]
+
+[[parts]]
+name = "sail_1_bar_0"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_1"
+offset = [0.6, 2.1, 0.07]
+
+[[parts]]
+name = "sail_1_bar_1"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_1"
+offset = [0.6, 3.6, 0.07]
+
+[[parts]]
+name = "sail_2"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 4.9, 0.16]
+bevel = 0.04
+segments = 2
+offset = [0, 8.3, 2.42]
+rotation = [0, 0, 225]
+
+[[parts]]
+name = "sail_2_cloth"
+kind = "box"
+role = "sandbags"
+size = [1.0, 3.7, 0.07]
+bevel = 0.02
+segments = 2
+parent = "sail_2"
+offset = [0.66, 1.05, -0.02]
+
+[[parts]]
+name = "sail_2_bar_0"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_2"
+offset = [0.6, 2.1, 0.07]
+
+[[parts]]
+name = "sail_2_bar_1"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_2"
+offset = [0.6, 3.6, 0.07]
+
+[[parts]]
+name = "sail_3"
+kind = "box"
+role = "crate_frame"
+size = [0.24, 4.9, 0.16]
+bevel = 0.04
+segments = 2
+offset = [0, 8.3, 2.42]
+rotation = [0, 0, 315]
+
+[[parts]]
+name = "sail_3_cloth"
+kind = "box"
+role = "sandbags"
+size = [1.0, 3.7, 0.07]
+bevel = 0.02
+segments = 2
+parent = "sail_3"
+offset = [0.66, 1.05, -0.02]
+
+[[parts]]
+name = "sail_3_bar_0"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_3"
+offset = [0.6, 2.1, 0.07]
+
+[[parts]]
+name = "sail_3_bar_1"
+kind = "box"
+role = "crate_plank"
+size = [1.32, 0.1, 0.1]
+bevel = 0.02
+segments = 2
+parent = "sail_3"
+offset = [0.6, 3.6, 0.07]

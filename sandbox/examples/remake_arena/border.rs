@@ -48,17 +48,18 @@ impl Kind {
 /// next one is built of. The west gap's last vertex closes the ring back to
 /// the first.
 const OUTLINE: [(f32, f32, Kind); 59] = [
-    // The west side north of the creek, then the orchard's lobe.
+    // The west side north of the creek, then the orchard's lobe, pushed
+    // out west and north so the orchard has room round its windmill (#580).
     (-33.5, 8.5, Kind::Stone),
     (-29.0, 8.5, Kind::Stone),
-    (-28.5, 13.5, Kind::Hedge),
-    (-32.5, 16.0, Kind::Hedge),
-    (-38.0, 18.5, Kind::Hedge),
-    (-39.0, 24.0, Kind::Hedge),
-    (-35.0, 28.5, Kind::Hedge),
-    (-30.5, 29.0, Kind::Hedge),
-    (-27.5, 33.5, Kind::Hedge),
-    (-21.0, 34.0, Kind::Stone),
+    (-30.0, 12.5, Kind::Hedge),
+    (-35.0, 14.5, Kind::Hedge),
+    (-40.0, 19.0, Kind::Hedge),
+    (-40.5, 25.0, Kind::Hedge),
+    (-37.5, 30.5, Kind::Hedge),
+    (-31.5, 31.5, Kind::Hedge),
+    (-28.5, 35.5, Kind::Hedge),
+    (-21.0, 35.5, Kind::Stone),
     // The peninsula behind the north spawn, and the north branch's inlet.
     (-17.0, 38.5, Kind::Stone),
     (-10.5, 41.0, Kind::Stone),

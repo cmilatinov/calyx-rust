@@ -9,8 +9,8 @@
 //! - **Southeast, the supply depot**: a tractor yard in the border's
 //!   south-east lobe, past the south branch, with a shed, a raised fuel
 //!   tank, a parked tractor and crates round an open yard (see `depot.rs`).
-//! - **Northwest, the orchard**: rows of trees broken by hedgerows and a
-//!   wall, with a windmill's footprint in the corner, dressed later by #580.
+//! - **Northwest, the orchard**: an open orchard round a windmill in its
+//!   middle, its rows mostly past the hedgerow (`orchard.rs`, #580).
 //! - **Northeast, the barn yard**: the raised platform, the barn against
 //!   its south ramp, the silo in the east cove, an open feed yard at the
 //!   ramp's foot, and a stable and a paddock in the wide lobe north of the
@@ -46,7 +46,7 @@ pub const FOOTPRINTS: [(&str, f32, f32, f32, f32); 5] = [
     // `barn_yard.rs`).
     ("Barn", 12.5, 6.0, 21.5, 12.5),
     ("Silo", 28.5, 12.0, 33.5, 18.0),
-    ("Windmill", -27.0, 24.5, -22.0, 29.5),
+    ("Windmill", -29.5, 19.5, -24.5, 24.5),
     ("Orchard", -27.0, 12.0, -13.5, 29.0),
     ("Depot", 21.0, -37.0, 38.0, -20.0),
 ];
@@ -133,16 +133,6 @@ const COVER: [(&str, &str, f32, f32, f32); 15] = [
     ("rock_large", "Orchard Boulder", -22.5, 6.5, 60.0),
     ("rock_small", "Farm Stone", -17.0, -11.5, 0.0),
 ];
-
-/// The orchard's rows: trees `ORCHARD_SPACING` apart along rows turned
-/// `ORCHARD_YAW` degrees, the rows `ORCHARD_ROW_GAP` apart, round
-/// `ORCHARD_CENTER`, inside the orchard's footprint and clear of its
-/// hedgerow, its brush and the windmill's footprint: dense rows that break
-/// sight into short lanes, each gap wider than a tank.
-const ORCHARD_CENTER: Vec2 = Vec2::new(-19.25, 15.5);
-const ORCHARD_YAW: f32 = 37.0;
-const ORCHARD_SPACING: f32 = 3.7;
-const ORCHARD_ROW_GAP: f32 = 3.9;
 
 /// One piece of a brush patch's outline, in the patch's frame: a box
 /// `size` across its local X and Z turned `yaw` degrees, or a circle.
@@ -361,31 +351,6 @@ pub fn beyond_rect(p: Vec2, center: Vec2, size: Vec2, yaw: f32, margin: f32) -> 
     edge.x.max(edge.y) - margin
 }
 
-/// The orchard's tree positions.
-pub fn orchard_trees() -> Vec<Vec2> {
-    let (sin, cos) = ORCHARD_YAW.to_radians().sin_cos();
-    let (along, across) = (vec2(cos, -sin), vec2(sin, cos));
-    let mut trees = Vec::new();
-    for row in -5..=5 {
-        for column in -5..=5 {
-            let p = ORCHARD_CENTER
-                + along * (column as f32 * ORCHARD_SPACING)
-                + across * (row as f32 * ORCHARD_ROW_GAP);
-            let inside = p.x > -25.2 && p.x < -14.5 && p.y > 11.5 && p.y < 27.2;
-            let (_, x0, z0, x1, z1) = FOOTPRINTS[2];
-            let windmill = p.x > x0 - 1.0 && p.x < x1 + 1.0 && p.y > z0 - 1.0 && p.y < z1 + 1.0;
-            let clear = HEDGEROWS
-                .iter()
-                .all(|&(_, x, z, yaw)| beyond_rect(p, vec2(x, z), vec2(4.4, 1.3), yaw, 3.0) > 0.0)
-                && BRUSH_PATCHES.iter().all(|patch| patch.beyond(p) > 1.8);
-            if inside && clear && !windmill {
-                trees.push(p);
-            }
-        }
-    }
-    trees
-}
-
 /// The point on a lane's smoothed curve: Catmull-Rom through its points,
 /// the ends extended by reflecting their neighbours.
 pub fn lane_curve(points: &[(f32, f32)]) -> Vec<Vec2> {
@@ -434,7 +399,8 @@ pub fn lane_distance(curves: &[Vec<Vec2>], p: Vec2) -> f32 {
 }
 
 impl Author {
-    /// The layout's walls, hedgerows, cover, orchard and brush.
+    /// The layout's walls, hedgerows, cover and brush; the orchard's rows
+    /// are `orchard.rs`'s.
     pub fn layout(&mut self) {
         for &(name, x, z, yaw, longs) in &WALLS {
             self.straight_wall(name, vec2(x, z), yaw, longs);
@@ -450,16 +416,6 @@ impl Author {
         }
         for &(model, name, x, z, yaw) in &COVER {
             self.prop(model, &format!("Arena Cover {name}"), x, z, yaw);
-        }
-        for (i, tree) in orchard_trees().into_iter().enumerate() {
-            let model = ["tree_small", "tree", "tree_small", "tree_large"][i % 4];
-            self.prop(
-                model,
-                &format!("Arena Prop Orchard Tree {i}"),
-                tree.x,
-                tree.y,
-                (i * 41) as f32,
-            );
         }
         self.brush();
     }
