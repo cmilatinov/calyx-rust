@@ -393,7 +393,7 @@ impl DrawCollection {
     /// batches, with the material its cache fills from the component, and
     /// its banks with their material. Water casts no shadows; banks do.
     fn collect_water(&mut self, scene: &Scene) {
-        self.water.begin_frame(scene.id());
+        self.water.begin_frame(&self.asset_context, scene);
         let mut light = None;
         let mut query = <(Entity, &ComponentWater)>::query();
         for (entity, water) in query.iter(scene.world()) {
@@ -407,10 +407,14 @@ impl DrawCollection {
             }
             let light = light.get_or_insert_with(|| WaterLight::of_scene(scene));
             let uuid = scene.uuid(owner);
-            let Some(draw) = self
-                .water
-                .draw(&self.asset_context, uuid, water, light.as_ref())
-            else {
+            let Some(draw) = self.water.draw(
+                &self.asset_context,
+                scene,
+                owner,
+                uuid,
+                water,
+                light.as_ref(),
+            ) else {
                 continue;
             };
             let transform: [[f32; 4]; 4] = scene.world_transform(owner).matrix().into();

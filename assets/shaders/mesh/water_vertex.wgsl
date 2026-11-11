@@ -19,8 +19,12 @@
 // - uv1, uv2: the next and previous corners' local XZ rest positions;
 // - uv3: the next corner's river coordinates;
 // - tangent: the previous corner's river coordinates, then the vertex's own distance to the
-//   shore and to the nearest obstacle;
-// - normal: the facet's pseudo-random value and its centroid's distance to the shore.
+//   shore and the rounding of the facet's footprint, -1 for a facet with none;
+// - normal: the facet's pseudo-random value and its centroid's distance to the shore and to its
+//   footprint;
+// - bone_weights: the vertex in the frame of the facet's footprint, then the footprint's half
+//   extents. A footprint is what something standing in the water covers of it, a rounded
+//   rectangle (see `math::WaterFootprint`); the water's meshes carry no bones.
 
 struct WaterVertexOut {
     @builtin(position) @invariant position: vec4f,
@@ -34,13 +38,30 @@ struct WaterVertexOut {
     // The facet's pseudo-random value, its centroid's distance to the shore, and the wave's
     // height at its centroid from -1 (trough) to 1 (crest).
     @location(4) @interpolate(flat) facet: vec3f,
-    // The point's river coordinates (s, t), its distance to the shore and to the nearest
-    // obstacle, interpolated across the facet for the per-pixel foam.
-    @location(5) river: vec4f,
+    // The point's river coordinates (s, t) and its distance to the shore, interpolated across
+    // the facet for the per-pixel foam.
+    @location(5) river: vec3f,
     // World normal of the waves at the vertex, from their slope, interpolated: the smooth
     // shading's normal.
     @location(6) smooth_normal: vec3f,
+    // The point in the frame of the facet's footprint, interpolated: linear across the facet,
+    // so the distance to the footprint is exact per pixel.
+    @location(7) footprint: vec2f,
+    // The footprint's half extents and rounding, -1 for none, and the distance from the facet's
+    // centroid to it.
+    @location(8) @interpolate(flat) footprint_shape: vec4f,
 };
+
+// The signed distance from the point to the edge of its facet's footprint, negative inside, or
+// a long way for a facet with none.
+fn water_obstacle_distance(in: WaterVertexOut) -> f32 {
+    let rounding = in.footprint_shape.z;
+    if rounding < 0.0 {
+        return 1e4;
+    }
+    let q = abs(in.footprint) - (in.footprint_shape.xy - vec2f(rounding));
+    return length(max(q, vec2f(0.0))) + min(max(q.x, q.y), 0.0) - rounding;
+}
 
 const WATER_TAU = 6.283185307179586;
 
@@ -125,7 +146,9 @@ fn vs_main(vertex: VertexIn) -> WaterVertexOut {
         vertex.normal.y,
         clamp(centroid.y / max(water.wave_amplitude, 1e-4), -1.0, 1.0),
     );
-    out.river = vec4f(vertex.uv0, vertex.tangent.zw);
+    out.river = vec3f(vertex.uv0, vertex.tangent.z);
+    out.footprint = vertex.bone_weights.xy;
+    out.footprint_shape = vec4f(vertex.bone_weights.zw, vertex.tangent.w, vertex.normal.z);
     let local_smooth = water_smooth_normal(
         vertex.uv0,
         mat2x2f(vertex.uv1 - vertex.position.xz, vertex.uv2 - vertex.position.xz),

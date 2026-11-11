@@ -328,9 +328,11 @@ sandbox --example water_test`) shows it in each palette.
   light from the Far camera. Roughness 0.3: the only glossy ground.
 - Foam: flat foam colour in hard-edged shapes, never a gradient: a broken
   band about 0.45 m wide along both shores whose inner edge swells and
-  breaks, loose flecks past it, patches stretched along the flow, and a
-  thin, broken ring around each rock standing in the water. All of it
-  drifts downstream.
+  breaks, loose flecks past it, patches stretched along the flow, and the
+  same band and flecks around whatever stands in the water, over a ring of
+  shallow colour: rocks and bridge piers, found where their meshes cross the
+  water's surface, never a deck standing clear of it. All of it drifts
+  downstream.
 - Glints: where the waves turn most of the way towards mirroring the sun or
   moon into the camera, the light sparkles as small round points of HDR
   emission in the light's colour, twinkling as they drift (faceted: whole

@@ -28,8 +28,10 @@ struct WaterProperties {
     foam_width: f32,
     // How much of the open water drifting foam patches cover, from 0 to 1.
     foam_patches: f32,
-    // Width of the foam ring around each obstacle.
+    // Width of the foam band around what stands in the water.
     obstacle_foam: f32,
+    // Distance from what stands in the water over which the colour runs from shallow to deep.
+    obstacle_shallows: f32,
     // How much the brightness of neighbouring facets differs.
     facet_variation: f32,
     roughness: f32,

@@ -1,5 +1,5 @@
-use crate::math::catmull_rom;
-use nalgebra_glm::{vec2, vec3, Vec2, Vec3, Vec4};
+use crate::math::{catmull_rom, merge_footprints, WaterFootprint, MAX_FOOTPRINT_SIZE};
+use nalgebra_glm::{vec2, vec3, vec4, Vec2, Vec3, Vec4};
 
 /// Most rows (along the river) a [`WaterPath`] meshes.
 pub const MAX_WATER_ROWS: usize = 8192;
@@ -14,9 +14,12 @@ const VERTEX_JITTER: f32 = 0.3;
 /// Segments each stretch of the centreline is flattened into before it is
 /// resampled at the cell size.
 const CURVE_STEPS: usize = 48;
-/// Obstacle distances are clamped to this, in local units: foam rings never
-/// reach further.
-const MAX_OBSTACLE_DISTANCE: f32 = 50.0;
+/// How far from a footprint, in local units, the water still knows it is
+/// there: its foam ring and shallows never reach further.
+pub const MAX_OBSTACLE_REACH: f32 = 4.0;
+/// The distance to the nearest footprint of water out of every footprint's
+/// reach.
+pub const NO_OBSTACLE: f32 = 1e4;
 
 /// The farthest a vertex lies from the shore when its own shore opens into
 /// other water and no shore meeting land is nearer, in local units.
@@ -59,8 +62,13 @@ pub struct WaterPath {
     pub points: Vec<WaterPathPoint>,
     /// About how long and wide each cell is, in local units.
     pub cell_size: f32,
-    /// What stands in the water.
+    /// What stands in the water, as authored circles.
     pub obstacles: Vec<WaterCircle>,
+    /// Where things standing in the water cut its surface: the points
+    /// around each, in local X and Z, such as [`waterline`](crate::math::waterline)
+    /// finds where a mesh crosses local Y = 0. With `obstacles`, these are
+    /// the water's [footprints](Self::footprints).
+    pub waterlines: Vec<Vec<Vec2>>,
     /// Where the river opens into other water, such as a branch that joins
     /// it: no bank is cut along a shore inside these circles, and the shore
     /// there is open water, not land: the water's distance to the shore is
@@ -96,9 +104,18 @@ pub struct WaterSection {
 ///   next and previous corners, in drawn order (UV1 and UV2);
 /// - `next_river`: the next corner's river coordinates (UV3);
 /// - `extra`: the previous corner's river coordinates, then the vertex's
-///   own distance to the shore and to the nearest obstacle (the tangent);
+///   own distance to the shore and the rounding of the facet's footprint
+///   (the tangent);
 /// - `facets`: the facet's pseudo-random value in `[0, 1)`, its centroid's
-///   distance to the shore, and 0 (the normal).
+///   distance to the shore and to its footprint (the normal);
+/// - `footprint`: the vertex in the frame of the footprint nearest the
+///   facet, then that footprint's half extents (the bone weights).
+///
+/// Each facet knows one footprint, the one nearest its centroid, so the
+/// shader measures the distance to it per pixel, exactly, from the vertex's
+/// position in its frame, which is linear across the facet. A facet out of
+/// every footprint's [reach](MAX_OBSTACLE_REACH) has none: a rounding of -1,
+/// and [`NO_OBSTACLE`] as its centroid's distance.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct WaterGeometry {
     pub positions: Vec<Vec3>,
@@ -108,6 +125,7 @@ pub struct WaterGeometry {
     pub next_river: Vec<Vec2>,
     pub extra: Vec<Vec4>,
     pub facets: Vec<Vec3>,
+    pub footprint: Vec<Vec4>,
     /// Triangle list indices, `0..positions.len()` in order.
     pub indices: Vec<u32>,
 }
@@ -262,14 +280,48 @@ impl WaterPath {
         ((widest / self.cell_size).round() as usize).clamp(1, MAX_WATER_COLUMNS)
     }
 
-    /// The distance from local `point` to the nearest obstacle's edge, 0
-    /// inside one, at most [`MAX_OBSTACLE_DISTANCE`].
-    pub fn obstacle_distance(&self, point: Vec2) -> f32 {
-        self.obstacles
+    /// What stands in the water, as its foam and shallows ring it: a
+    /// footprint around each of `obstacles` and of `waterlines`, those that
+    /// overlap merged into one. A waterline counts only where some of it
+    /// lies over the water, and only when it is at most
+    /// [`MAX_FOOTPRINT_SIZE`] across: a wider one is ground or a shore.
+    /// `None` when the path is not valid.
+    pub fn footprints(&self) -> Option<Vec<WaterFootprint>> {
+        let sections = self.sections()?;
+        Some(self.footprints_over(&sections))
+    }
+
+    fn footprints_over(&self, sections: &[WaterSection]) -> Vec<WaterFootprint> {
+        let mut outlines: Vec<Vec<Vec2>> = self
+            .obstacles
             .iter()
-            .map(|circle| (point - circle.center).norm() - circle.radius)
-            .fold(MAX_OBSTACLE_DISTANCE, f32::min)
-            .max(0.0)
+            .map(|circle| WaterFootprint::circle(circle.center, circle.radius).outline())
+            .collect();
+        outlines.extend(
+            self.waterlines
+                .iter()
+                .filter(|points| {
+                    WaterFootprint::fit(points)
+                        .is_some_and(|footprint| footprint.half.max() * 2.0 <= MAX_FOOTPRINT_SIZE)
+                        && points.iter().any(|&p| beyond(sections, p) < 0.0)
+                })
+                .cloned(),
+        );
+        merge_footprints(outlines)
+    }
+
+    /// The footprint of `footprints` nearest local `point` and the signed
+    /// distance to its edge, or `None` when none lies within
+    /// [`MAX_OBSTACLE_REACH`].
+    pub fn nearest_footprint(
+        footprints: &[WaterFootprint],
+        point: Vec2,
+    ) -> Option<(&WaterFootprint, f32)> {
+        footprints
+            .iter()
+            .map(|footprint| (footprint, footprint.distance(point)))
+            .filter(|(_, distance)| *distance < MAX_OBSTACLE_REACH)
+            .min_by(|a, b| a.1.total_cmp(&b.1))
     }
 
     /// How far inside the nearest opening local `point` lies, 0 outside
@@ -287,6 +339,7 @@ impl WaterPath {
     /// heightfield's do, so the upper side faces outward.
     pub fn geometry(&self) -> Option<WaterGeometry> {
         let sections = self.sections()?;
+        let footprints = self.footprints_over(&sections);
         let columns = self.columns(&sections);
         let rows = sections.len() - 1;
         // Where the shore meets land: the shore at each section, on both
@@ -347,6 +400,7 @@ impl WaterPath {
             next_river: Vec::with_capacity(count),
             extra: Vec::with_capacity(count),
             facets: Vec::with_capacity(count),
+            footprint: Vec::with_capacity(count),
             indices: Vec::with_capacity(count),
         };
         let mut index = 0u32;
@@ -366,24 +420,37 @@ impl WaterPath {
                 for corners in split {
                     let corners = upward(corners);
                     let centroid_shore = (corners[0].2 + corners[1].2 + corners[2].2) / 3.0;
+                    let centroid = (corners[0].0 + corners[1].0 + corners[2].0) / 3.0;
+                    let nearest = Self::nearest_footprint(&footprints, centroid);
                     let random = hash01(index, 0, 0x2c1b);
                     for i in 0..3 {
                         let (position, river, shore) = corners[i];
                         let next = corners[(i + 1) % 3];
                         let previous = corners[(i + 2) % 3];
+                        let (footprint, rounding, centroid_obstacle) = match nearest {
+                            Some((footprint, distance)) => {
+                                let local = footprint.local(position);
+                                (
+                                    vec4(local.x, local.y, footprint.half.x, footprint.half.y),
+                                    footprint.rounding,
+                                    distance,
+                                )
+                            }
+                            None => (Vec4::zeros(), -1.0, NO_OBSTACLE),
+                        };
                         geometry.indices.push(geometry.positions.len() as u32);
                         geometry.positions.push(vec3(position.x, 0.0, position.y));
                         geometry.river.push(river);
                         geometry.next.push(next.0);
                         geometry.previous.push(previous.0);
                         geometry.next_river.push(next.1);
-                        geometry.extra.push(Vec4::new(
-                            previous.1.x,
-                            previous.1.y,
-                            shore,
-                            self.obstacle_distance(position),
-                        ));
-                        geometry.facets.push(vec3(random, centroid_shore, 0.0));
+                        geometry
+                            .extra
+                            .push(Vec4::new(previous.1.x, previous.1.y, shore, rounding));
+                        geometry
+                            .facets
+                            .push(vec3(random, centroid_shore, centroid_obstacle));
+                        geometry.footprint.push(footprint);
                     }
                     index += 1;
                 }
@@ -439,6 +506,40 @@ impl WaterPath {
         }
         Some(geometry)
     }
+}
+
+/// How far local `p` lies beyond the shore of the water through
+/// `sections`: negative over the water.
+fn beyond(sections: &[WaterSection], p: Vec2) -> f32 {
+    let mut beyond = f32::MAX;
+    for pair in sections.windows(2) {
+        let (a, b) = (pair[0].center, pair[1].center);
+        let ab = b - a;
+        let length = ab.norm_squared();
+        let f = if length > 0.0 {
+            ((p - a).dot(&ab) / length).clamp(0.0, 1.0)
+        } else {
+            0.0
+        };
+        let half = pair[0].half_width + (pair[1].half_width - pair[0].half_width) * f;
+        beyond = beyond.min((p - (a + ab * f)).norm() - half);
+    }
+    beyond
+}
+
+/// The local X and Z box around the water through `sections`, from shore to
+/// shore: least corner, then greatest.
+pub fn water_region(sections: &[WaterSection]) -> (Vec2, Vec2) {
+    let mut least = Vec2::repeat(f32::MAX);
+    let mut greatest = Vec2::repeat(f32::MIN);
+    for section in sections {
+        for side in [-1.0, 1.0] {
+            let shore = section.center + section.normal * section.half_width * side;
+            least = least.inf(&shore);
+            greatest = greatest.sup(&shore);
+        }
+    }
+    (least, greatest)
 }
 
 /// Adds the flat-shaded quad `corners` (two triangles), turned to face
@@ -531,6 +632,7 @@ mod tests {
             points: vec![point(0.0, 0.0, 4.0), point(0.0, 10.0, 4.0)],
             cell_size: 1.0,
             obstacles: Vec::new(),
+            waterlines: Vec::new(),
             openings: Vec::new(),
         }
     }
@@ -549,6 +651,7 @@ mod tests {
                 center: vec2(5.0, 12.0),
                 radius: 1.0,
             }],
+            waterlines: Vec::new(),
             openings: Vec::new(),
         }
     }
@@ -591,6 +694,7 @@ mod tests {
             geometry.next_river.len(),
             geometry.extra.len(),
             geometry.facets.len(),
+            geometry.footprint.len(),
         ] {
             assert_eq!(len, vertices);
         }
@@ -640,6 +744,10 @@ mod tests {
                 let extra = geometry.extra[vertex];
                 assert_eq!(vec2(extra.x, extra.y), geometry.river[previous]);
                 assert_eq!(geometry.facets[vertex], geometry.facets[t * 3]);
+                // One footprint per facet: its extents and rounding.
+                let (own, first) = (geometry.footprint[vertex], geometry.footprint[t * 3]);
+                assert_eq!(vec2(own.z, own.w), vec2(first.z, first.w));
+                assert_eq!(extra.w, geometry.extra[t * 3].w);
             }
         }
     }
@@ -746,17 +854,113 @@ mod tests {
         assert!(turns.iter().any(|turn| *turn < -1e-3));
     }
 
+    /// The distance to a facet's footprint, as the shader measures it per
+    /// pixel from the vertex's footprint channels at `vertex`.
+    fn footprint_distance(geometry: &WaterGeometry, vertex: usize) -> f32 {
+        let footprint = geometry.footprint[vertex];
+        let rounding = geometry.extra[vertex].w;
+        if rounding < 0.0 {
+            return NO_OBSTACLE;
+        }
+        crate::math::rounded_box_distance(
+            vec2(footprint.x, footprint.y),
+            vec2(footprint.z, footprint.w),
+            rounding,
+        )
+    }
+
     #[test]
-    fn obstacle_distance_is_to_the_nearest_circles_edge() {
+    fn facets_near_an_obstacle_measure_their_distance_to_it_and_the_rest_have_none() {
         let path = meander();
-        assert_eq!(path.obstacle_distance(vec2(5.0, 12.5)), 0.0);
-        assert_abs_diff_eq!(path.obstacle_distance(vec2(8.0, 12.0)), 2.0, epsilon = 1e-5);
-        assert_eq!(
-            straight().obstacle_distance(vec2(0.0, 0.0)),
-            MAX_OBSTACLE_DISTANCE
-        );
+        let footprints = path.footprints().unwrap();
+        assert_eq!(footprints.len(), 1);
         let geometry = path.geometry().unwrap();
-        assert!(geometry.extra.iter().any(|extra| extra.w < 0.5));
+        let mut near = 0;
+        for (vertex, position) in geometry.positions.iter().enumerate() {
+            let own = (vec2(position.x, position.z) - vec2(5.0, 12.0)).norm() - 1.0;
+            let measured = footprint_distance(&geometry, vertex);
+            if measured == NO_OBSTACLE {
+                // Out of reach: its facet's centroid is.
+                assert!(own > MAX_OBSTACLE_REACH - path.cell_size * 2.0, "{own}");
+                assert_eq!(geometry.facets[vertex].z, NO_OBSTACLE);
+            } else {
+                near += 1;
+                assert_abs_diff_eq!(measured, own, epsilon = 0.02);
+                assert!(geometry.facets[vertex].z < MAX_OBSTACLE_REACH);
+            }
+        }
+        assert!(near > 0 && near < geometry.positions.len());
+        // Nothing in the water, nothing to ring.
+        let geometry = straight().geometry().unwrap();
+        assert!(geometry.extra.iter().all(|extra| extra.w == -1.0));
+        assert!(geometry.facets.iter().all(|facet| facet.z == NO_OBSTACLE));
+    }
+
+    /// The shore the bank foam and shallows run from is the same with
+    /// footprints in the water as without.
+    #[test]
+    fn footprints_leave_the_shore_distance_as_it_was() {
+        let mut path = straight();
+        path.openings.push(WaterCircle {
+            center: vec2(-2.0, 5.0),
+            radius: 2.0,
+        });
+        let before = path.geometry().unwrap();
+        path.obstacles.push(WaterCircle {
+            center: vec2(1.0, 3.0),
+            radius: 0.5,
+        });
+        path.waterlines
+            .push(WaterFootprint::circle(vec2(-1.0, 7.0), 0.4).outline());
+        let after = path.geometry().unwrap();
+        assert_eq!(before.positions, after.positions);
+        for (a, b) in before.extra.iter().zip(&after.extra) {
+            assert_eq!(a.z, b.z);
+        }
+        for (a, b) in before.facets.iter().zip(&after.facets) {
+            assert_eq!((a.x, a.y), (b.x, b.y));
+        }
+        assert_eq!(path.footprints().unwrap().len(), 2);
+    }
+
+    /// A waterline counts where some of it lies over the water and it is no
+    /// wider than a footprint can be; an authored obstacle and a waterline
+    /// around the same rock ring once.
+    #[test]
+    fn waterlines_over_the_water_become_footprints_and_others_do_not() {
+        let mut path = straight();
+        // A rock in the river, a circle authored around its middle, a rock
+        // on the far bank, and the ground's cut along the whole shore.
+        let rock = WaterFootprint {
+            center: vec2(0.5, 4.0),
+            axis: vec2(1.0, 0.0),
+            half: vec2(0.7, 0.6),
+            rounding: 0.3,
+        };
+        path.waterlines.push(rock.outline());
+        path.obstacles.push(WaterCircle {
+            center: vec2(0.5, 4.0),
+            radius: 0.5,
+        });
+        path.waterlines
+            .push(WaterFootprint::circle(vec2(4.0, 5.0), 0.5).outline());
+        path.waterlines.push(vec![
+            vec2(2.1, -1.0),
+            vec2(2.1, 11.0),
+            vec2(1.9, 11.0),
+            vec2(1.9, -1.0),
+        ]);
+        let footprints = path.footprints().unwrap();
+        assert_eq!(footprints.len(), 1, "{footprints:?}");
+        assert_abs_diff_eq!(footprints[0].center, rock.center, epsilon = 1e-3);
+        assert_abs_diff_eq!(footprints[0].half.max(), 0.7, epsilon = 1e-3);
+    }
+
+    #[test]
+    fn the_region_spans_the_water_from_shore_to_shore() {
+        let (least, greatest) = water_region(&straight().sections().unwrap());
+        assert_abs_diff_eq!(least, vec2(-2.0, 0.0), epsilon = 1e-4);
+        assert_abs_diff_eq!(greatest, vec2(2.0, 10.0), epsilon = 1e-4);
     }
 
     #[test]
