@@ -211,17 +211,22 @@ behind the north spawn and south behind the south spawn; coves bite in
 between them, by the silo, above the depot and either side of the creek's
 west gap. The creek comes in through a gap
 on the west and its branches leave through inlets on the north and the
-south. It is a field boundary: a dry-stone wall, the kit's long modules
-stretched to fit each stretch, with a boulder set at every bend
-(`Arena Prop Border Bend ...`, decoration within the overlapping solids),
-and a hedgerow round the orchard's lobe. Each stretch is an object turned
-along it holding its pieces and one solid along its whole length, reaching
-half its thickness past each bend so neighbouring solids overlap, rising
-to the shell-blocking top. Stone stretches are `Arena Wall Border ...`, on
-the terrain's outline layer; the hedgerows `Arena Cover Border Hedgerow
-...`, props, which block sight as the walls do. Where the creek leaves, the
-border's solids stop just past its shore, in the creek's blockers, and its
-pieces stop on the bank. Outside the border the grass grows rank, a band
+south. It is a field boundary: a dry-stone wall, and a hedgerow round the
+orchard's lobe. The stone is one mesh, `Arena Wall Border Stones`, which
+`remake_arena` sweeps along the outline into `generated/border/stone_wall.obj`:
+the kit wall modules' cross-section (1.2 m thick, 1.6 m high, 0.12 m bevel)
+carried along each unbroken line of stone stretches, rounded round the
+outside of every bend and mitred on its inside, so the wall turns any angle
+without a joint, and rounded at each end, where it stops on a creek's bank
+or meets the hedgerow. It takes the palette's `walls` material, on the
+terrain's outline layer. Each stretch is an object turned along it holding
+one solid along its whole length, reaching half its thickness past each
+bend so neighbouring solids overlap, rising to the shell-blocking top.
+Stone stretches are `Arena Wall Border ...`; the hedgerows `Arena Cover
+Border Hedgerow ...`, props, which block sight as the walls do and start
+clear of the stone's rounded ends. Where the creek leaves, the border's
+solids stop just past its shore, in the creek's blockers, and the wall
+stops on the bank. Outside the border the grass grows rank, a band
 of darker verge along the wall, then fields, fences and copses of trees, so
 nothing outside reads as playable. The minimap outlines the border's
 solids, since no rectangle bounds the floor; the Arena's extent, which the

@@ -8,22 +8,23 @@
 //! through inlets on the north and the south, where its blockers close the
 //! border to tanks.
 //!
-//! The border is a farm's field boundary: a dry-stone wall, its modules
-//! stretched along each stretch, with a boulder set at every bend, and a
-//! hedgerow round the orchard's lobe. Positions are on the border's centre
-//! line, in the Arena's frame.
+//! The border is a farm's field boundary: a dry-stone wall, one mesh swept
+//! along the outline and rounded round every bend, and a hedgerow round the
+//! orchard's lobe. Positions are on the border's centre line, in the
+//! Arena's frame.
 
+use calyx_engine::assets::AssetRef;
+use calyx_engine::component::ComponentMesh;
 use calyx_engine::math::Transform;
 use nalgebra::UnitQuaternion;
-use nalgebra_glm::{vec2, vec3, Vec2};
+use nalgebra_glm::{vec2, vec3, Vec2, Vec3};
 
-use super::{blocking_shells, farmland::Creek, Author};
+use super::{asset_id, blocking_shells, farmland::Creek, stable, Author};
 
 /// What the stretch of border from a vertex to the next is built of.
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
-    /// The kit's stone wall modules, stretched to fit each segment, with a
-    /// boulder at each bend.
+    /// The stone wall, swept along each line of stone stretches.
     Stone,
     /// Hedgerows.
     Hedge,
@@ -34,7 +35,8 @@ enum Kind {
 
 impl Kind {
     /// The kit model, how long one stands along the run, and how thick
-    /// the run's solid is.
+    /// the run's solid is. Stone draws no kit model: its wall is swept
+    /// along the outline.
     fn piece(self) -> (&'static str, f32, f32) {
         match self {
             Kind::Stone | Kind::Creek => ("wall_long", 4.0, 1.2),
@@ -223,28 +225,337 @@ pub fn bounds() -> (Vec2, Vec2) {
     (low - vec2(0.7, 0.7), high + vec2(0.7, 0.7))
 }
 
+/// The stone wall's cross-section: half its thickness, its height, and
+/// the radius and segments of the bevel rounding its four long edges, the
+/// kit's wall modules' (`asset_sources/models/wall_long.toml`).
+const WALL_HALF: f32 = 0.6;
+const WALL_TOP: f32 = 1.6;
+const WALL_BEVEL: f32 = 0.12;
+const BEVEL_SEGMENTS: usize = 3;
+/// About how long one block of the wall is between seams, as the kit's
+/// long module.
+const BLOCK_LENGTH: f32 = 4.0;
+/// The shortest stretch the wall sweeps from a rounded end to a bend.
+const MIN_STRETCH: f32 = 1.0;
+/// The most the wall turns between two stations of a rounded bend or end.
+const ARC_STEP: f32 = 10.0;
+
+/// The asset type of a mesh, as the kit's models are registered.
+const MESH_TYPE: &str = "792d264b-de6f-4431-b59f-76f18fdb3bfe";
+
+/// The wall's cross-section, from the foot of its left face (`across`
+/// positive) over the top to the foot of its right: each point's offset
+/// across the centre line, height, and the normal's across and up
+/// components. The first [`HALF_PROFILE`] points run from the left foot to
+/// the top's middle.
+fn profile() -> Vec<[f32; 4]> {
+    let side = WALL_HALF - WALL_BEVEL;
+    let mut points = Vec::new();
+    for (center, from) in [(WALL_BEVEL, -90.0), (WALL_TOP - WALL_BEVEL, 0.0)] {
+        for k in 0..=BEVEL_SEGMENTS {
+            let angle: f32 = from + 90.0 * k as f32 / BEVEL_SEGMENTS as f32;
+            let (sin, cos) = angle.to_radians().sin_cos();
+            points.push([side + WALL_BEVEL * cos, center + WALL_BEVEL * sin, cos, sin]);
+        }
+    }
+    points.push([0.0, WALL_TOP, 0.0, 1.0]);
+    let right: Vec<_> = points[..HALF_PROFILE - 1]
+        .iter()
+        .rev()
+        .map(|&[across, up, normal_across, normal_up]| [-across, up, -normal_across, normal_up])
+        .collect();
+    points.extend(right);
+    points
+}
+
+/// The points of [`profile`] from the left foot to the top's middle.
+const HALF_PROFILE: usize = 2 * (BEVEL_SEGMENTS + 1) + 1;
+
+/// A triangle mesh in the Arena's frame: each corner's position and normal.
+#[derive(Default)]
+struct Mesh {
+    triangles: Vec<[(Vec3, Vec3); 3]>,
+}
+
+impl Mesh {
+    /// The triangle `a`, `b`, `c`, wound to face its corners' normals;
+    /// nothing when it has no area, as where a bend's inner side folds
+    /// onto its mitre.
+    fn triangle(&mut self, a: (Vec3, Vec3), b: (Vec3, Vec3), c: (Vec3, Vec3)) {
+        let face = (b.0 - a.0).cross(&(c.0 - a.0));
+        if face.norm() < 1e-6 {
+            return;
+        }
+        if face.dot(&(a.1 + b.1 + c.1)) < 0.0 {
+            self.triangles.push([a, c, b]);
+        } else {
+            self.triangles.push([a, b, c]);
+        }
+    }
+
+    /// The faces between two stations of the same points.
+    fn strip(&mut self, from: &[(Vec3, Vec3)], to: &[(Vec3, Vec3)]) {
+        for j in 0..from.len() - 1 {
+            self.triangle(from[j], from[j + 1], to[j + 1]);
+            self.triangle(from[j], to[j + 1], to[j]);
+        }
+    }
+
+    /// A stone wall along `line`, its ends rounded: the profile swept
+    /// along each stretch, round the outside of each bend and mitred on
+    /// its inside, so the wall is one surface from end to end.
+    fn wall(&mut self, line: &[Vec2]) {
+        let profile = profile();
+        let lift = |at: Vec2, across: Vec2, point: [f32; 4]| {
+            (
+                vec3(at.x, point[1], at.y),
+                vec3(across.x * point[2], point[3], across.y * point[2]),
+            )
+        };
+        let rotate = |v: Vec2, angle: f32| {
+            let (sin, cos) = angle.sin_cos();
+            vec2(v.x * cos - v.y * sin, v.x * sin + v.y * cos)
+        };
+        let steps = |angle: f32| (angle.abs().to_degrees() / ARC_STEP).ceil().max(1.0) as usize;
+        let along: Vec<Vec2> = line.windows(2).map(|w| (w[1] - w[0]).normalize()).collect();
+        let across: Vec<Vec2> = along.iter().map(|d| vec2(-d.y, d.x)).collect();
+        // Each bend's turn, positive towards `across`.
+        let turn = |i: usize| {
+            let (a, b) = (along[i - 1], along[i]);
+            (a.x * b.y - a.y * b.x).atan2(a.dot(&b))
+        };
+        // How far a point `offset` across the line moves along a stretch
+        // to meet its neighbour's at the bend: only on the bend's inside.
+        let mitre = |turn: f32, offset: f32| {
+            if offset * turn > 0.0 {
+                offset.abs() * (turn.abs() * 0.5).tan()
+            } else {
+                0.0
+            }
+        };
+        let last = line.len() - 1;
+        // Where the point `offset` across the line meets the bend at
+        // `line[j]`, when it is on the bend's inside: one position, worked
+        // out once, for both stretches and the bend.
+        let inner = |j: usize, offset: f32| {
+            let shift = mitre(turn(j), offset);
+            (shift > 0.0).then(|| line[j] + across[j - 1] * offset - along[j - 1] * shift)
+        };
+        for i in 0..last {
+            let station = |j: usize| -> Vec<_> {
+                profile
+                    .iter()
+                    .map(|&point| {
+                        let offset = point[0];
+                        let bend = (j > 0 && j < last).then(|| inner(j, offset)).flatten();
+                        lift(
+                            bend.unwrap_or(line[j] + across[i] * offset),
+                            across[i],
+                            point,
+                        )
+                    })
+                    .collect()
+            };
+            // The stretch, with a seam between blocks about every
+            // [`BLOCK_LENGTH`] along it, as the kit's modules meet: each
+            // block's bevel turns in to the seam, where the two meet in a
+            // crease the ink outlines.
+            let length = (line[i + 1] - line[i]).norm();
+            let blocks = (length / BLOCK_LENGTH).round().max(1.0) as usize;
+            // A station at `x` along the stretch, each point set in
+            // `inset` along its normal, the normal tipped `tip` towards
+            // the stretch's end.
+            let block = |x: f32, inset: f32, tip: f32| -> Vec<_> {
+                let at = line[i] + along[i] * x;
+                profile
+                    .iter()
+                    .map(|&[offset, up, normal_across, normal_up]| {
+                        // The foot's bevel is set in level, so the seam
+                        // runs down to the ground.
+                        let point = if up < WALL_BEVEL {
+                            [
+                                offset - inset * offset.signum(),
+                                up,
+                                normal_across,
+                                normal_up,
+                            ]
+                        } else {
+                            [
+                                offset - inset * normal_across,
+                                up - inset * normal_up,
+                                normal_across,
+                                normal_up,
+                            ]
+                        };
+                        let (sin, cos) = tip.sin_cos();
+                        let (position, normal) = lift(at + across[i] * point[0], across[i], point);
+                        let normal = normal * cos + vec3(along[i].x, 0.0, along[i].y) * sin;
+                        (position, normal)
+                    })
+                    .collect()
+            };
+            let mut from = station(i);
+            for seam in 1..blocks {
+                let x = length * seam as f32 / blocks as f32;
+                // The bevel ending the block before the seam, then the one
+                // starting the block after it.
+                for side in [-1.0f32, 1.0] {
+                    let bevel: Vec<_> = (0..=BEVEL_SEGMENTS)
+                        .map(|k| {
+                            let k = if side < 0.0 { k } else { BEVEL_SEGMENTS - k };
+                            let angle =
+                                std::f32::consts::FRAC_PI_2 * k as f32 / BEVEL_SEGMENTS as f32;
+                            block(
+                                x + side * WALL_BEVEL * (1.0 - angle.sin()),
+                                WALL_BEVEL * (1.0 - angle.cos()),
+                                -side * angle,
+                            )
+                        })
+                        .collect();
+                    self.strip(&from, &bevel[0]);
+                    for pair in bevel.windows(2) {
+                        self.strip(&pair[0], &pair[1]);
+                    }
+                    from = bevel[BEVEL_SEGMENTS].clone();
+                }
+            }
+            self.strip(&from, &station(i + 1));
+        }
+        // Round the outside of each bend; its inside points stay on the
+        // mitre, where their faces fold away.
+        for i in 1..last {
+            let turn = turn(i);
+            let at = line[i];
+            let count = steps(turn);
+            let stations: Vec<Vec<_>> = (0..=count)
+                .map(|k| {
+                    // Its first and last stations are the stretches' own,
+                    // exactly, so the sweeps share their corners.
+                    let side = match k {
+                        0 => across[i - 1],
+                        k if k == count => across[i],
+                        k => rotate(across[i - 1], turn * k as f32 / count as f32),
+                    };
+                    profile
+                        .iter()
+                        .map(|&point| {
+                            let place = inner(i, point[0]).unwrap_or(at + side * point[0]);
+                            lift(place, side, point)
+                        })
+                        .collect()
+                })
+                .collect();
+            for pair in stations.windows(2) {
+                self.strip(&pair[0], &pair[1]);
+            }
+        }
+        // Round each end: the left half of the profile turned half a turn
+        // about the end, behind the first stretch and past the last.
+        let half = &profile[..HALF_PROFILE];
+        for (at, side, sense) in [
+            (line[0], across[0], 1.0),
+            (line[last], across[last - 1], -1.0),
+        ] {
+            let count = steps(std::f32::consts::PI);
+            let stations: Vec<Vec<_>> = (0..=count)
+                .map(|k| {
+                    let side = match k {
+                        0 => side,
+                        k if k == count => -side,
+                        k => rotate(side, sense * std::f32::consts::PI * k as f32 / count as f32),
+                    };
+                    half.iter()
+                        .map(|&point| lift(at + side * point[0], side, point))
+                        .collect()
+                })
+                .collect();
+            for pair in stations.windows(2) {
+                self.strip(&pair[0], &pair[1]);
+            }
+        }
+    }
+
+    /// Writes the mesh as an OBJ, positions and normals shared between
+    /// corners that match.
+    fn write(&self, path: &std::path::Path) {
+        use std::collections::HashMap;
+        use std::fmt::Write;
+        let mut positions: HashMap<String, usize> = HashMap::new();
+        let mut normals: HashMap<String, usize> = HashMap::new();
+        let (mut vertex_lines, mut normal_lines, mut faces) =
+            (String::new(), String::new(), String::new());
+        let index =
+            |table: &mut HashMap<String, usize>, lines: &mut String, prefix, key: String| {
+                let next = table.len() + 1;
+                *table.entry(key.clone()).or_insert_with(|| {
+                    writeln!(lines, "{prefix} {key}").unwrap();
+                    next
+                })
+            };
+        for triangle in &self.triangles {
+            let corners: Vec<String> = triangle
+                .iter()
+                .map(|(p, n)| {
+                    let n = n.normalize();
+                    let v = index(
+                        &mut positions,
+                        &mut vertex_lines,
+                        "v",
+                        // To a tenth of a millimetre, so the stations of
+                        // neighbouring sweeps that meet share their corners.
+                        format!("{:.4} {:.4} {:.4}", p.x + 0.0, p.y + 0.0, p.z + 0.0),
+                    );
+                    let n = index(
+                        &mut normals,
+                        &mut normal_lines,
+                        "vn",
+                        format!("{:.4} {:.4} {:.4}", n.x + 0.0, n.y + 0.0, n.z + 0.0),
+                    );
+                    format!("{v}//{n}")
+                })
+                .collect();
+            writeln!(faces, "f {}", corners.join(" ")).unwrap();
+        }
+        std::fs::write(
+            path,
+            format!(
+                "# Generated by remake_arena's border module from its outline; regenerate rather than edit\n{vertex_lines}{normal_lines}{faces}"
+            ),
+        )
+        .unwrap();
+    }
+}
+
 impl Author {
-    /// The border, segment by segment: each an object turned along it,
-    /// holding the run's pieces spread along the segment and one solid
-    /// along its whole length, to the shell-blocking top, that stops tanks,
-    /// rounds and sight. A segment's solid reaches half its thickness past
+    /// The border, segment by segment: each an object turned along it
+    /// holding one solid along its whole length, to the shell-blocking top,
+    /// that stops tanks, rounds and sight, and a hedge segment its
+    /// hedgerows too. A segment's solid reaches half its thickness past
     /// each bend, so neighbouring solids overlap and no tank slips between
-    /// them; a boulder set at each bend of a stone run hides the joint.
+    /// them. The stone is one mesh, `Arena Wall Border Stones`: a wall
+    /// swept along each unbroken line of stone stretches, rounded round
+    /// the outside of each bend and at each end, where it meets a hedgerow
+    /// or stops on a creek's bank.
     pub fn border(&mut self, creek: &Creek) {
-        let mut count = 0;
+        let mut hedges = 0;
         let mut index = 0;
+        let mut lines: Vec<Vec<Vec2>> = Vec::new();
+        let mut line: Vec<Vec2> = Vec::new();
         let solid_runs = runs(creek, CREEK_SOLID_END);
         let piece_runs = runs(creek, CREEK_PIECE_END);
+        // The last stretch of a run, to the bank, is stone.
+        let kind_of = |kind| {
+            if kind == Kind::Creek {
+                Kind::Stone
+            } else {
+                kind
+            }
+        };
         for (run, pieces) in solid_runs.iter().zip(&piece_runs) {
             for i in 0..run.len() - 1 {
                 let (a, kind, a_bend) = run[i];
                 let (b, _, b_bend) = run[i + 1];
-                // The last stretch of a run, to the bank, is stone.
-                let kind = if kind == Kind::Creek {
-                    Kind::Stone
-                } else {
-                    kind
-                };
+                let kind = kind_of(kind);
                 let (model, step, thickness) = kind.piece();
                 assert!(
                     (b - a).norm() > 1.0,
@@ -276,62 +587,102 @@ impl Author {
                 let (center, size) =
                     blocking_shells(vec3(0.0, 0.8, 0.0), vec3(length, 1.6, thickness));
                 self.collider(segment, &format!("{name} collision"), center, size);
-                // The pieces: from bend to bend, or to the bank at a creek
-                // end, spread evenly.
-                let piece_start = if a_bend {
-                    start
+                if kind == Kind::Stone {
+                    // The stone's line: from its end on a bank, the wall's
+                    // rounded end reaching the pieces' end there, or from
+                    // its meeting with a hedgerow, through each bend.
+                    // Where the bank comes within a stub of a bend, the
+                    // wall's rounded end stands on the bend instead.
+                    let stub = |end: Vec2, bend: Vec2| (end - bend).norm() < MIN_STRETCH;
+                    if line.is_empty() {
+                        let start = pieces[i].0 + along * WALL_HALF;
+                        if a_bend || !stub(start, b) {
+                            line.push(if a_bend { a } else { start });
+                        }
+                    }
+                    if b_bend && kind_of(run[i + 1].1) == Kind::Stone {
+                        line.push(b);
+                    } else {
+                        let end = pieces[i + 1].0 - along * WALL_HALF;
+                        if b_bend || line.len() < 2 || !stub(end, a) {
+                            line.push(if b_bend { b } else { end });
+                        }
+                        lines.push(std::mem::take(&mut line));
+                    }
+                    continue;
+                }
+                // The hedgerows: from bend to bend, overlapping the next
+                // stretch's at a bend between them, and starting clear of
+                // the stone wall's rounded end where they meet it, spread
+                // evenly, each turned a little so the row reads grown, not
+                // laid.
+                let stone_before = i > 0 && kind_of(run[i - 1].1) == Kind::Stone;
+                let stone_after = kind_of(run[i + 1].1) == Kind::Stone;
+                let piece_start = if stone_before { WALL_HALF } else { start };
+                let piece_end = if stone_after {
+                    (b - a).norm() - WALL_HALF
                 } else {
-                    (pieces[i].0 - a).dot(&along)
-                };
-                let piece_end = if b_bend {
                     end
-                } else {
-                    (pieces[i + 1].0 - a).dot(&along)
                 };
                 let span = piece_end - piece_start;
-                let n = (span / step).round().max(1.0) as usize;
+                // Never so few that the row leaves gaps: a hedgerow is
+                // 4.4 m long.
+                let n = (span / step).round().max((span / 4.4).ceil()).max(1.0) as usize;
                 let spacing = span / n as f32;
                 let mid = (start + end) * 0.5;
                 for k in 0..n {
                     let x = piece_start + spacing * (k as f32 + 0.5) - mid;
-                    // Stone modules stretch to meet; hedges keep their size,
-                    // turned a little so the row reads grown, not laid.
-                    let jitter = match kind {
-                        Kind::Hedge => [0.0, 3.0, -2.0][k % 3],
-                        _ => 0.0,
-                    };
-                    let piece = self.kit_under(
+                    let jitter = [0.0, 3.0, -2.0][k % 3];
+                    self.kit_under(
                         segment,
                         model,
                         &format!("{name} Piece {k}"),
                         vec3(x, 0.0, 0.0),
                         jitter,
                     );
-                    if kind == Kind::Stone {
-                        let mut pose = self.scene.transform(piece);
-                        pose.scale = vec3(spacing / step, 1.0, 1.0);
-                        self.scene.set_transform(piece, &pose.matrix());
-                    }
-                    count += 1;
-                }
-                // A boulder at the segment's far bend, set into the wall's
-                // joint, turned and sized by the bend so no two match. It
-                // stands within the overlapping solids, so it needs none.
-                if b_bend && kind == Kind::Stone {
-                    let model = ["rock_medium", "rock_large", "rock_medium"][index % 3];
-                    let rock = self.kit(
-                        model,
-                        &format!("Arena Prop Border Bend {index}"),
-                        vec3(b.x, -0.08, b.y),
-                        (index * 67 % 360) as f32,
-                    );
-                    let mut pose = self.scene.transform(rock);
-                    pose.scale =
-                        vec3(1.0, 1.0, 1.0) * if model == "rock_large" { 0.95 } else { 1.2 };
-                    self.scene.set_transform(rock, &pose.matrix());
+                    hedges += 1;
                 }
             }
         }
-        assert!(count > 60, "the border has {count} pieces");
+        assert!(hedges > 8, "the border has {hedges} hedgerows");
+        assert!(line.is_empty(), "a stone line is left open");
+        let mut mesh = Mesh::default();
+        for line in &lines {
+            mesh.wall(line);
+        }
+        let folder = self.assets.join("generated/border");
+        std::fs::create_dir_all(&folder).unwrap();
+        let path = folder.join("stone_wall.obj");
+        mesh.write(&path);
+        // Its meta as the kit's models' are written, so the editor keeps it.
+        let mesh_id = stable("asset/generated/border/stone_wall");
+        std::fs::write(
+            path.with_extension("meta"),
+            format!(
+                "{{
+  \"main\": {{
+    \"id\": \"{mesh_id}\",
+    \"name\": \"generated/border/stone_wall\",
+    \"display_name\": \"stone_wall\",
+    \"type_uuid\": \"{MESH_TYPE}\"
+  }},
+  \"inner\": []
+}}"
+            ),
+        )
+        .unwrap();
+        let material = asset_id(&self.assets.join(format!(
+            "generated/materials/{}/walls.cxmat",
+            self.palette.folder()
+        )));
+        let stones = self.object("Arena Wall Border Stones", self.arena, Vec3::zeros());
+        self.scene.add_component(
+            stones,
+            ComponentMesh {
+                mesh: AssetRef::from_id(mesh_id),
+                material: AssetRef::from_id(material),
+                cast_shadows: true,
+            },
+        );
     }
 }

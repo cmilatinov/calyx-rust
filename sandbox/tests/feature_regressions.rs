@@ -2205,6 +2205,70 @@ fn the_border_is_an_irregular_closed_outline() {
     );
 }
 
+/// The border's stone is one wall, not modules clipping into each other
+/// at its bends: one mesh, with no boulders or other props set at the
+/// bends to hide joints, and drawn only where the border's solids stand,
+/// so a tank meets the wall where it sees it.
+#[test]
+fn the_border_stone_is_one_wall_with_no_props_at_its_bends() {
+    use calyx_engine::component::{ColliderShape, ComponentCollider, ComponentMesh};
+    let (copy, assets) = sandbox_assets();
+    let scene = load_sandbox_scene(&copy, &assets);
+    for object in scene.objects() {
+        let name = scene.name(object);
+        assert!(
+            !(name.starts_with("Arena Prop Border")
+                || name.starts_with("Arena Wall Border") && name.contains(" Piece ")),
+            "{name} dresses the stone border"
+        );
+    }
+    let stones = object_named(&scene, "Arena Wall Border Stones");
+    assert!(
+        scene
+            .read_component::<ComponentMesh, _, _>(stones, |_| ())
+            .is_some(),
+        "the stone border has no mesh"
+    );
+    let boxes: Vec<_> = scene
+        .objects()
+        .filter(|&object| {
+            let name = scene.name(object);
+            name.starts_with("Arena Wall Border ") && name.ends_with(" collision")
+        })
+        .map(|object| {
+            let Some(ColliderShape::Cuboid { half_extents }) =
+                scene.read_component::<ComponentCollider, _, _>(object, |c| c.shape)
+            else {
+                panic!("{} is not a box", scene.name(object));
+            };
+            (scene.world_transform(object), half_extents)
+        })
+        .collect();
+    let obj = std::fs::read_to_string(
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("assets/generated/border/stone_wall.obj"),
+    )
+    .unwrap();
+    let to_world = scene.world_transform(stones);
+    let mut vertices = 0;
+    for line in obj.lines().filter(|line| line.starts_with("v ")) {
+        let v: Vec<f32> = line[2..]
+            .split_whitespace()
+            .map(|c| c.parse().unwrap())
+            .collect();
+        let p = to_world.transform_position(&vec3(v[0], v[1], v[2]));
+        assert!(
+            boxes.iter().any(|(pose, half)| {
+                let local = pose.inverse_transform_position(&p);
+                local.x.abs() <= half.x + 1e-3 && local.z.abs() <= half.z + 1e-3
+            }),
+            "the stone wall reaches {p:?}, past every border solid"
+        );
+        vertices += 1;
+    }
+    assert!(vertices > 1000, "the stone wall has {vertices} vertices");
+}
+
 /// Every patch of brush is the union of its volumes, of whatever outline,
 /// and its grass grows only inside it: the area each clump of a patch may
 /// stand in lies wholly inside the patch's volumes, so a tank among the
