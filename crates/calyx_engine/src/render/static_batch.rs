@@ -41,6 +41,41 @@ pub(crate) const CHUNK_SIZE: f32 = 32.0;
 /// A world-space axis-aligned box, its least and greatest corners.
 pub(crate) type Bounds = [Vec3; 2];
 
+/// The objects where a mesh may draw differently after the journal's
+/// `changes`: an object whose mesh changed, and every object under one
+/// whose transform or id, which holds its visibility, changed or which left
+/// the scene.
+pub(crate) fn touched_mesh_objects(
+    scene: &Scene,
+    changes: impl Iterator<Item = (Entity, ComponentTypeId)>,
+) -> Vec<Entity> {
+    let transform = ComponentTypeId::of::<ComponentTransform>();
+    let id = ComponentTypeId::of::<ComponentID>();
+    let mesh = ComponentTypeId::of::<ComponentMesh>();
+    let mut seen = HashSet::new();
+    let mut touched = Vec::new();
+    let mut touch = |entity: Entity| {
+        if seen.insert(entity) {
+            touched.push(entity);
+        }
+    };
+    for (entity, component) in changes {
+        if component == mesh {
+            touch(entity);
+        } else if component == transform || component == id {
+            match scene.game_object_from_entity(entity) {
+                Some(game_object) => {
+                    for object in scene.descendants(game_object) {
+                        touch(object.entity);
+                    }
+                }
+                None => touch(entity),
+            }
+        }
+    }
+    touched
+}
+
 /// Whether the box `bounds` lies wholly outside the view of `clip_from_world`,
 /// a camera's projection times its view: past one of the four side planes of
 /// its frustum. A box that may show is never outside, so culling by it never
@@ -179,7 +214,7 @@ impl StaticBatches {
         let changed = (self.scene == Some(scene.id()))
             .then(|| journal.since(self.cursor))
             .flatten()
-            .map(|changes| self.touched(scene, changes));
+            .map(|changes| touched_mesh_objects(scene, changes));
         let rebuilt = changed.is_none();
         match changed {
             None => self.rebuild(scene, context),
@@ -241,42 +276,6 @@ impl StaticBatches {
             merges: self.merges,
             ..Default::default()
         };
-    }
-
-    /// The objects whose drawing the journal's `changes` may change: an
-    /// object whose mesh changed, and every object under one whose
-    /// transform or id, which holds its visibility, changed or which left
-    /// the scene.
-    fn touched(
-        &self,
-        scene: &Scene,
-        changes: impl Iterator<Item = (Entity, ComponentTypeId)>,
-    ) -> Vec<Entity> {
-        let transform = ComponentTypeId::of::<ComponentTransform>();
-        let id = ComponentTypeId::of::<ComponentID>();
-        let mesh = ComponentTypeId::of::<ComponentMesh>();
-        let mut seen = HashSet::new();
-        let mut touched = Vec::new();
-        let mut touch = |entity: Entity| {
-            if seen.insert(entity) {
-                touched.push(entity);
-            }
-        };
-        for (entity, component) in changes {
-            if component == mesh {
-                touch(entity);
-            } else if component == transform || component == id {
-                match scene.game_object_from_entity(entity) {
-                    Some(game_object) => {
-                        for object in scene.descendants(game_object) {
-                            touch(object.entity);
-                        }
-                    }
-                    None => touch(entity),
-                }
-            }
-        }
-        touched
     }
 
     /// Takes `entity` out of its batch when it no longer draws as it was

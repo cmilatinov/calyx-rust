@@ -6952,6 +6952,7 @@
         "foam_width": 0.44999998807907104,
         "glint_strength": 1.5,
         "obstacle_foam": 0.30000001192092896,
+        "obstacle_shallows": 1.2000000476837158,
         "obstacles": [
           {
             "position": [
@@ -10080,6 +10081,7 @@
         "foam_width": 0.44999998807907104,
         "glint_strength": 5.0,
         "obstacle_foam": 0.30000001192092896,
+        "obstacle_shallows": 1.2000000476837158,
         "obstacles": [
           {
             "position": [
@@ -20710,6 +20712,7 @@
         "foam_width": 0.44999998807907104,
         "glint_strength": 1.5,
         "obstacle_foam": 0.30000001192092896,
+        "obstacle_shallows": 1.2000000476837158,
         "obstacles": [
           {
             "position": [

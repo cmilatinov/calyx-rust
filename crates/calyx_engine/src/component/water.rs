@@ -27,8 +27,16 @@ use serde::{Deserialize, Serialize};
 /// The colour runs from `shallow_color` at the shore to `deep_color` over
 /// `shore_distance`. Foam is drawn per pixel over it, in hard-edged shapes:
 /// a broken band about `foam_width` wide along both shores, patches drifting
-/// downstream, and broken rings around each of `obstacles`, all moving with
-/// the flow. The scene's brightest directional light glints where the waves
+/// downstream, and a band like the shore's around everything standing in the
+/// water, all moving with the flow.
+///
+/// What stands in the water is found, not authored: every visible mesh that
+/// crosses the water's rest surface (its owner's local Y = 0) over the water,
+/// such as a rock or a bridge's pier, cuts a waterline there, and the water
+/// rings each, with its own shallows over `obstacle_shallows` and a band of
+/// foam about `obstacle_foam` wide. Something clear of the surface, such as a
+/// bridge's deck, cuts none. `obstacles` adds circles of its own, for what
+/// has no mesh. The scene's brightest directional light glints where the waves
 /// turn towards its mirror direction, as HDR emission of `glint_strength`,
 /// so bloom halos them.
 ///
@@ -53,7 +61,9 @@ pub struct ComponentWater {
     /// Whether the surface is shaded as flat facets or as smooth, rounded
     /// waves.
     pub shading: WaterShading,
-    /// What stands in the water, which the foam rings.
+    /// Circles standing in the water, which the foam rings as it rings the
+    /// meshes that cross its surface: for what has no mesh of its own. One
+    /// overlapping a mesh's waterline rings once with it.
     pub obstacles: Vec<WaterObstacle>,
     /// Where the river opens into other water, such as where a branch
     /// joins it: inside these circles no bank is drawn along the shore, and
@@ -89,9 +99,14 @@ pub struct ComponentWater {
     /// to 1.
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.005)]
     pub foam_patches: f32,
-    /// Width of the foam ring around each obstacle, in local units.
+    /// Width of the foam band around what stands in the water, in local
+    /// units; it breaks and swells around this, as the shore's does.
     #[reflect_attr(min = 0.0, speed = 0.01)]
     pub obstacle_foam: f32,
+    /// Distance from what stands in the water over which the colour runs
+    /// from shallow to deep, in local units, at most 4.
+    #[reflect_attr(min = 0.0, max = 4.0, speed = 0.05)]
+    pub obstacle_shallows: f32,
     /// How much the brightness of neighbouring facets differs, from 0 (none)
     /// to 1 (each facet up to twice or none as bright).
     #[reflect_attr(min = 0.0, max = 1.0, speed = 0.005)]
@@ -223,6 +238,7 @@ impl Default for ComponentWater {
             foam_width: 0.45,
             foam_patches: 0.35,
             obstacle_foam: 0.3,
+            obstacle_shallows: 1.2,
             facet_variation: 0.1,
             roughness: 0.3,
             glint_strength: 2.5,
@@ -292,6 +308,7 @@ impl ComponentWater {
                     radius: obstacle.radius,
                 })
                 .collect(),
+            waterlines: Vec::new(),
             openings: self
                 .openings
                 .iter()
@@ -362,6 +379,7 @@ mod tests {
             foam_width: 0.75,
             foam_patches: 0.6,
             obstacle_foam: 0.3,
+            obstacle_shallows: 0.8,
             facet_variation: 0.3,
             roughness: 0.45,
             glint_strength: 4.0,
@@ -419,6 +437,7 @@ mod tests {
                 "foam_width",
                 "foam_patches",
                 "obstacle_foam",
+                "obstacle_shallows",
                 "facet_variation",
                 "roughness",
                 "glint_strength",

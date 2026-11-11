@@ -16,6 +16,8 @@ pub use heightfield::*;
 pub use transform::*;
 /// Faceted water surfaces, meshed for their vertex waves.
 pub use water::*;
+/// Where meshes standing in water cut its surface, and the footprints foam rings.
+pub use waterline::*;
 
 mod curve;
 mod dist;
@@ -23,6 +25,7 @@ mod gradient;
 mod heightfield;
 mod transform;
 mod water;
+mod waterline;
 
 /// Composes a transform matrix from translation, rotation, and scale.
 pub fn compose_transform(translation: &Vec3, rotation: &UnitQuaternion<f32>, scale: &Vec3) -> Mat4 {

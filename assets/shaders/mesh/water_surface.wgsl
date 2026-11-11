@@ -13,31 +13,36 @@ fn water_normal(in: WaterVertexOut) -> vec3f {
     return select(in.normal, normalize(in.smooth_normal), water_is_smooth());
 }
 
-// The water's linear base colour, shallow at the shore running to deep over `shore_distance`.
-// Faceted, it is one colour per facet, from the facet's centroid, each facet a little lighter or
-// darker than its neighbours; smooth, it follows each point's distance to the shore.
+// The water's linear base colour, shallow at the shore running to deep over `shore_distance`,
+// and shallow again around what stands in it, over `obstacle_shallows`. Faceted, it is one
+// colour per facet, from the facet's centroid, each facet a little lighter or darker than its
+// neighbours; smooth, it follows each point's distance to the shore and its footprint.
 fn water_base_color(in: WaterVertexOut) -> vec3f {
     let is_smooth = water_is_smooth();
     let shore = select(in.facet.y, in.river.z, is_smooth);
-    let depth = smoothstep(0.0, max(water.shore_distance, 1e-4), shore);
+    let obstacle = select(in.footprint_shape.w, water_obstacle_distance(in), is_smooth);
+    let depth = min(
+        smoothstep(0.0, max(water.shore_distance, 1e-4), shore),
+        smoothstep(0.0, max(water.obstacle_shallows, 1e-4), obstacle),
+    );
     var color = mix(water.shallow_color.rgb, water.deep_color.rgb, depth);
     let variation = select(water.facet_variation, 0.0, is_smooth);
     color *= 1.0 + (in.facet.x * 2.0 - 1.0) * variation;
     return max(color, vec3f(0.0));
 }
 
-// Whether there is foam at a point with river coordinates and distances `river` (s, t, distance
-// to the shore, distance to the nearest obstacle): 1 or 0, so the foam has hard edges, in the
-// flat-colour style. All of it drifts downstream with the flow:
+// Whether there is foam at a point with river coordinates and distance to the shore `river`
+// (s, t, shore) and signed distance `obstacle` to what stands in the water there: 1 or 0, so
+// the foam has hard edges, in the flat-colour style. All of it drifts downstream with the flow:
 // - a band along both shores, about `foam_width` wide, whose inner edge swells and breaks;
 // - loose flecks just past the band;
 // - patches in the open water, stretched along the flow, covering about `foam_patches` of it;
-// - a thin, broken ring about `obstacle_foam` wide around each obstacle.
-fn water_foam(river: vec4f) -> f32 {
+// - around what stands in the water, the shore's band again, about `obstacle_foam` wide, its
+//   outer edge swelling and breaking, with flecks past it.
+fn water_foam(river: vec3f, obstacle: f32) -> f32 {
     let s = river.x;
     let t = river.y;
     let shore = river.z;
-    let obstacle = river.w;
     let drift = water.flow_speed * water.time;
     let edge = water_noise(vec2f(s * 0.9 - drift * 0.9, t * 0.4 + water.time * 0.15));
     let band = water.foam_width * (0.35 + 1.0 * edge);
@@ -48,18 +53,20 @@ fn water_foam(river: vec4f) -> f32 {
         + 0.35 * water_noise(vec2f(s * 1.1 - drift * 1.1, t * 2.2 + 5.0));
     let patch_threshold = mix(1.01, 0.55, clamp(water.foam_patches, 0.0, 1.0));
     foam = max(foam, step(patch_threshold, patch_shape));
-    // The ring hugs the obstacle: a thin band whose outer edge swells with the flow, broken
-    // into pieces that drift downstream.
-    let swell = water_noise(vec2f(s * 1.8 - drift * 1.6, t * 1.8 + 31.0));
-    let pieces = water_noise(vec2f(s * 3.0 - drift * 1.4, t * 3.0 + 11.0));
-    let ring = water.obstacle_foam * (0.3 + 0.9 * swell);
-    foam = max(foam, step(obstacle, ring) * step(0.35, pieces));
+    // Around what stands in the water, the same band and flecks, measured from its footprint
+    // instead of the shore. The band's edge has noise of its own, so a ring does not swell and
+    // break in step with the bank beside it.
+    let ring_edge = water_noise(vec2f(s * 0.9 - drift * 0.9, t * 0.4 + water.time * 0.15 + 23.0));
+    let ring = water.obstacle_foam * (0.35 + 1.0 * ring_edge);
+    foam = max(foam, step(obstacle, ring));
+    foam = max(foam, step(obstacle, water.obstacle_foam * 2.2) * step(0.8, fleck));
     return foam;
 }
 
 // The point's linear base colour: the water's, or foam.
 fn water_albedo(in: WaterVertexOut) -> vec3f {
-    return mix(water_base_color(in), water.foam_color.rgb, water_foam(in.river));
+    let foam = water_foam(in.river, water_obstacle_distance(in));
+    return mix(water_base_color(in), water.foam_color.rgb, foam);
 }
 
 // The glint of the light on the water, as HDR emission, where the waves turn from rest most of the
