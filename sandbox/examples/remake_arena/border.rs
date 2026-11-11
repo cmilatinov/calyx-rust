@@ -1,8 +1,9 @@
 //! The arena's border: an irregular outline with no straight side, every
 //! stretch of it turning: lobes push out round the orchard in the
-//! northwest, the barn yard in the northeast, the middle of the east and
-//! the farm in the southwest, a peninsula reaches north behind the north
-//! spawn and south behind the south spawn, and coves bite in between them.
+//! northwest, the barn yard in the northeast, the middle of the east, the
+//! supply depot in the southeast and the farm in the southwest, a
+//! peninsula reaches north behind the north spawn and south behind the
+//! south spawn, and coves bite in between them.
 //! The creek comes in through a gap on the west, and its two branches leave
 //! through inlets on the north and the south, where its blockers close the
 //! border to tanks.
@@ -46,7 +47,7 @@ impl Kind {
 /// (west, north, east, south), each vertex with what the stretch to the
 /// next one is built of. The west gap's last vertex closes the ring back to
 /// the first.
-const OUTLINE: [(f32, f32, Kind); 57] = [
+const OUTLINE: [(f32, f32, Kind); 59] = [
     // The west side north of the creek, then the orchard's lobe, pushed
     // out west and north so the orchard has room round its windmill (#580).
     (-33.5, 8.5, Kind::Stone),
@@ -83,15 +84,19 @@ const OUTLINE: [(f32, f32, Kind); 57] = [
     (41.5, -1.0, Kind::Stone),
     (37.0, -4.5, Kind::Stone),
     (33.5, -9.0, Kind::Stone),
-    // A cove above the depot, and the depot's corner.
+    // A cove above the depot, and the depot's lobe pushing out south-east
+    // round its yard, a bay biting into it between the shed and the fuel
+    // tank and another along its south side.
     (30.0, -11.5, Kind::Stone),
-    (33.5, -15.5, Kind::Stone),
-    (34.5, -21.5, Kind::Stone),
-    (32.5, -27.0, Kind::Stone),
-    (35.0, -31.5, Kind::Stone),
-    (29.5, -36.0, Kind::Stone),
-    (24.0, -34.5, Kind::Stone),
-    (22.0, -31.0, Kind::Creek),
+    (34.5, -15.0, Kind::Stone),
+    (39.5, -18.0, Kind::Stone),
+    (41.0, -24.0, Kind::Stone),
+    (38.5, -29.0, Kind::Stone),
+    (42.0, -33.5, Kind::Stone),
+    (37.5, -38.5, Kind::Stone),
+    (31.0, -37.5, Kind::Stone),
+    (26.5, -41.0, Kind::Stone),
+    (22.5, -38.5, Kind::Creek),
     // The south branch's inlet, the peninsula behind the south spawn.
     (10.5, -30.0, Kind::Stone),
     (7.0, -28.0, Kind::Stone),

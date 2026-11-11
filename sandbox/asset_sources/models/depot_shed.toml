@@ -1,0 +1,314 @@
+# Supply depot shed: a closed timber store 5.6 m long and 3.8 m deep on a
+# concrete plinth, corner posts and a rail belt round its planks, timber
+# gables under a pitched galvanised roof with a ridge cap about 4 m up, and
+# a braced sliding door and a window on its front (-Z) face. Regenerate with
+# calyx_model_gen; dimensions in metres.
+
+[[parts]]
+name = "plinth"
+kind = "box"
+role = "rocks"
+size = [5.9, 0.2, 4.1]
+bevel = 0.06
+segments = 2
+
+[[parts]]
+name = "body"
+kind = "box"
+role = "crate_plank"
+size = [5.6, 2.4, 3.8]
+bevel = 0.08
+segments = 2
+offset = [0, 0.2, 0]
+
+[[parts]]
+name = "belt"
+kind = "box"
+role = "crate_frame"
+size = [5.72, 0.18, 3.92]
+bevel = 0.04
+segments = 2
+offset = [0, 1.3, 0]
+
+[[parts]]
+name = "eaves"
+kind = "box"
+role = "crate_frame"
+size = [5.72, 0.16, 3.92]
+bevel = 0.04
+segments = 2
+offset = [0, 2.46, 0]
+
+[[parts]]
+name = "post_0"
+kind = "box"
+role = "crate_frame"
+size = [0.32, 2.5, 0.32]
+bevel = 0.06
+segments = 2
+offset = [-2.76, 0.12, -1.86]
+
+[[parts]]
+name = "post_1"
+kind = "box"
+role = "crate_frame"
+size = [0.32, 2.5, 0.32]
+bevel = 0.06
+segments = 2
+offset = [2.76, 0.12, -1.86]
+
+[[parts]]
+name = "post_2"
+kind = "box"
+role = "crate_frame"
+size = [0.32, 2.5, 0.32]
+bevel = 0.06
+segments = 2
+offset = [-2.76, 0.12, 1.86]
+
+[[parts]]
+name = "post_3"
+kind = "box"
+role = "crate_frame"
+size = [0.32, 2.5, 0.32]
+bevel = 0.06
+segments = 2
+offset = [2.76, 0.12, 1.86]
+
+# The gables: two wedges back to back, rising to the ridge over the middle.
+[[parts]]
+name = "gable_front"
+kind = "wedge"
+role = "crate_plank"
+size = [5.5, 1.4, 1.9]
+bevel = 0.04
+segments = 2
+offset = [0, 2.6, -0.95]
+
+[[parts]]
+name = "gable_back"
+kind = "wedge"
+role = "crate_plank"
+size = [5.5, 1.4, 1.9]
+bevel = 0.04
+segments = 2
+offset = [0, 2.6, 0.95]
+rotation = [0, 180, 0]
+
+# The roof: two galvanised panels pitched 36.4 degrees, overhanging the
+# eaves and the gables, and a ridge cap over their join.
+[[parts]]
+name = "roof_front"
+kind = "box"
+role = "metal_caps"
+size = [6.3, 0.14, 2.75]
+bevel = 0.05
+segments = 2
+offset = [0, 3.28, -1.0]
+rotation = [-36.4, 0, 0]
+
+[[parts]]
+name = "roof_back"
+kind = "box"
+role = "metal_caps"
+size = [6.3, 0.14, 2.75]
+bevel = 0.05
+segments = 2
+offset = [0, 3.28, 1.0]
+rotation = [36.4, 0, 0]
+
+[[parts]]
+name = "ridge"
+kind = "box"
+role = "metal"
+size = [6.4, 0.18, 0.42]
+bevel = 0.06
+segments = 2
+offset = [0, 4.08, 0]
+
+# Corrugation ribs down each roof panel.
+
+[[parts]]
+name = "rib_front_0"
+parent = "roof_front"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [-2.5, 0.13, 0]
+
+[[parts]]
+name = "rib_front_1"
+parent = "roof_front"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [-1.5, 0.13, 0]
+
+[[parts]]
+name = "rib_front_2"
+parent = "roof_front"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [-0.5, 0.13, 0]
+
+[[parts]]
+name = "rib_front_3"
+parent = "roof_front"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [0.5, 0.13, 0]
+
+[[parts]]
+name = "rib_front_4"
+parent = "roof_front"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [1.5, 0.13, 0]
+
+[[parts]]
+name = "rib_front_5"
+parent = "roof_front"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [2.5, 0.13, 0]
+
+[[parts]]
+name = "rib_back_0"
+parent = "roof_back"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [-2.5, 0.13, 0]
+
+[[parts]]
+name = "rib_back_1"
+parent = "roof_back"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [-1.5, 0.13, 0]
+
+[[parts]]
+name = "rib_back_2"
+parent = "roof_back"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [-0.5, 0.13, 0]
+
+[[parts]]
+name = "rib_back_3"
+parent = "roof_back"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [0.5, 0.13, 0]
+
+[[parts]]
+name = "rib_back_4"
+parent = "roof_back"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [1.5, 0.13, 0]
+
+[[parts]]
+name = "rib_back_5"
+parent = "roof_back"
+kind = "box"
+role = "metal"
+size = [0.07, 0.06, 2.7]
+bevel = 0.02
+segments = 1
+offset = [2.5, 0.13, 0]
+
+# The front: a sliding door on its track, Z-braced, and a framed window.
+[[parts]]
+name = "door"
+kind = "box"
+role = "crate_panel"
+size = [2.4, 2.1, 0.14]
+bevel = 0.04
+segments = 2
+offset = [0.7, 0.2, -1.92]
+
+[[parts]]
+name = "door_brace"
+kind = "box"
+role = "crate_brace"
+size = [2.6, 0.18, 0.1]
+bevel = 0.03
+segments = 2
+offset = [0.7, 1.12, -2.0]
+rotation = [0, 0, -36]
+
+[[parts]]
+name = "door_rail_low"
+kind = "box"
+role = "crate_brace"
+size = [2.4, 0.18, 0.1]
+bevel = 0.03
+segments = 2
+offset = [0.7, 0.45, -2.0]
+
+[[parts]]
+name = "door_rail_high"
+kind = "box"
+role = "crate_brace"
+size = [2.4, 0.18, 0.1]
+bevel = 0.03
+segments = 2
+offset = [0.7, 1.95, -2.0]
+
+[[parts]]
+name = "door_track"
+kind = "box"
+role = "metal"
+size = [3.6, 0.14, 0.16]
+bevel = 0.03
+segments = 2
+offset = [0.2, 2.32, -1.98]
+
+[[parts]]
+name = "window_frame"
+kind = "box"
+role = "crate_frame"
+size = [1.1, 0.9, 0.1]
+bevel = 0.03
+segments = 2
+offset = [-1.7, 1.1, -1.92]
+
+[[parts]]
+name = "window"
+kind = "box"
+role = "metal"
+size = [0.82, 0.62, 0.1]
+bevel = 0.02
+segments = 2
+offset = [-1.7, 1.24, -1.96]

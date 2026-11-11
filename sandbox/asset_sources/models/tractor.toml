@@ -1,0 +1,252 @@
+# Supply depot tractor: a farm tractor parked in the yard, nose along +X:
+# big lugged rear wheels and small front ones in dark rubber with yellow
+# hubs, a yellow bonnet over a steel frame with a grille and front weights,
+# mudguards over the rear wheels, an open cab on four posts under a yellow
+# roof, a seat and an exhaust stack. Regenerate with calyx_model_gen;
+# dimensions in metres.
+
+[[parts]]
+name = "wheel_rear_0"
+kind = "cylinder"
+role = "tracks"
+radius = 0.8
+height = 0.45
+vertices = 16
+bevel = 0.1
+segments = 2
+offset = [-0.9, 0.8, 0.5]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "hub_rear_0"
+kind = "cylinder"
+role = "hazard_yellow"
+radius = 0.44
+height = 0.49
+vertices = 12
+bevel = 0.05
+segments = 2
+offset = [-0.9, 0.8, 0.48]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "wheel_rear_1"
+kind = "cylinder"
+role = "tracks"
+radius = 0.8
+height = 0.45
+vertices = 16
+bevel = 0.1
+segments = 2
+offset = [-0.9, 0.8, -0.95]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "hub_rear_1"
+kind = "cylinder"
+role = "hazard_yellow"
+radius = 0.44
+height = 0.49
+vertices = 12
+bevel = 0.05
+segments = 2
+offset = [-0.9, 0.8, -0.97]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "wheel_front_0"
+kind = "cylinder"
+role = "tracks"
+radius = 0.48
+height = 0.32
+vertices = 14
+bevel = 0.07
+segments = 2
+offset = [1.15, 0.48, 0.42]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "hub_front_0"
+kind = "cylinder"
+role = "hazard_yellow"
+radius = 0.25
+height = 0.36
+vertices = 10
+bevel = 0.03
+segments = 2
+offset = [1.15, 0.48, 0.4]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "wheel_front_1"
+kind = "cylinder"
+role = "tracks"
+radius = 0.48
+height = 0.32
+vertices = 14
+bevel = 0.07
+segments = 2
+offset = [1.15, 0.48, -0.74]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "hub_front_1"
+kind = "cylinder"
+role = "hazard_yellow"
+radius = 0.25
+height = 0.36
+vertices = 10
+bevel = 0.03
+segments = 2
+offset = [1.15, 0.48, -0.76]
+rotation = [90, 0, 0]
+
+[[parts]]
+name = "frame"
+kind = "box"
+role = "metal"
+size = [3.2, 0.36, 0.84]
+bevel = 0.06
+segments = 2
+offset = [0.15, 0.42, 0]
+
+[[parts]]
+name = "bonnet"
+kind = "box"
+role = "hazard_yellow"
+size = [1.75, 0.82, 0.9]
+bevel = 0.14
+segments = 3
+offset = [0.95, 0.78, 0]
+
+[[parts]]
+name = "grille"
+kind = "box"
+role = "metal"
+size = [0.12, 0.66, 0.74]
+bevel = 0.03
+segments = 2
+offset = [1.85, 0.84, 0]
+
+[[parts]]
+name = "weights"
+kind = "box"
+role = "metal"
+size = [0.34, 0.42, 1]
+bevel = 0.06
+segments = 2
+offset = [2.02, 0.32, 0]
+
+[[parts]]
+name = "body"
+kind = "box"
+role = "hazard_yellow"
+size = [1.3, 0.55, 1]
+bevel = 0.1
+segments = 2
+offset = [-0.75, 0.95, 0]
+
+[[parts]]
+name = "mudguard_0"
+kind = "box"
+role = "hazard_yellow"
+size = [1.5, 0.12, 0.55]
+bevel = 0.04
+segments = 2
+offset = [-0.9, 1.62, 0.72]
+
+[[parts]]
+name = "mudguard_1"
+kind = "box"
+role = "hazard_yellow"
+size = [1.5, 0.12, 0.55]
+bevel = 0.04
+segments = 2
+offset = [-0.9, 1.62, -0.72]
+
+[[parts]]
+name = "cab_post_0"
+kind = "box"
+role = "metal"
+size = [0.1, 1.2, 0.1]
+bevel = 0.02
+segments = 2
+offset = [-0.2, 1.5, 0.5]
+
+[[parts]]
+name = "cab_post_1"
+kind = "box"
+role = "metal"
+size = [0.1, 1.2, 0.1]
+bevel = 0.02
+segments = 2
+offset = [-0.2, 1.5, -0.5]
+
+[[parts]]
+name = "cab_post_2"
+kind = "box"
+role = "metal"
+size = [0.1, 1.2, 0.1]
+bevel = 0.02
+segments = 2
+offset = [-1.45, 1.5, 0.5]
+
+[[parts]]
+name = "cab_post_3"
+kind = "box"
+role = "metal"
+size = [0.1, 1.2, 0.1]
+bevel = 0.02
+segments = 2
+offset = [-1.45, 1.5, -0.5]
+
+[[parts]]
+name = "cab_roof"
+kind = "box"
+role = "hazard_yellow"
+size = [1.6, 0.14, 1.36]
+bevel = 0.05
+segments = 2
+offset = [-0.82, 2.68, 0]
+
+[[parts]]
+name = "seat"
+kind = "box"
+role = "hazard_black"
+size = [0.5, 0.55, 0.55]
+bevel = 0.08
+segments = 2
+offset = [-0.95, 1.5, 0]
+
+[[parts]]
+name = "wheel_post"
+kind = "box"
+role = "metal"
+size = [0.08, 0.6, 0.08]
+bevel = 0.02
+segments = 2
+offset = [-0.3, 1.5, 0]
+rotation = [0, 0, 25]
+
+[[parts]]
+name = "steering"
+kind = "cylinder"
+role = "hazard_black"
+radius = 0.2
+height = 0.05
+vertices = 10
+bevel = 0.01
+segments = 2
+offset = [-0.42, 2, 0]
+rotation = [0, 0, 25]
+
+[[parts]]
+name = "exhaust"
+kind = "cylinder"
+role = "metal"
+radius = 0.08
+height = 1.15
+vertices = 8
+bevel = 0.03
+segments = 2
+offset = [1.35, 1.55, 0.3]
