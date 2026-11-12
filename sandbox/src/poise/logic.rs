@@ -17,6 +17,9 @@ pub enum Stance {
     Hooked,
 }
 
+/// The longest step the swing's spring integrates at once, in seconds.
+const SWING_STEP: f32 = 1.0 / 240.0;
+
 /// The tuning [`PoiseState`] needs, copied from the tank's poise component.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PoiseTuning {
@@ -167,19 +170,25 @@ impl PoiseState {
     }
 }
 
-/// The tuning a hook swing needs.
+/// The tuning a hook swing needs: the swing chases the angle the player's
+/// turret points at with an angular spring, limited in acceleration and
+/// speed, so a fast turn of the turret whips the hooked tank round.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SwingTuning {
-    /// The radius the swing reels in or pays out to, in metres.
+    /// The radius the swing reels in to, in metres; a shorter line stays.
     pub radius: f32,
     /// How fast the radius changes towards it, in metres per second.
     pub reel_speed: f32,
-    /// Angular acceleration, in radians per second squared.
-    pub acceleration: f32,
+    /// How hard the swing pulls towards the aimed angle, in radians per
+    /// second squared per radian off.
+    pub stiffness: f32,
+    /// How much the swing's own speed is damped, per second.
+    pub damping: f32,
+    /// The most the swing's angular speed changes, in radians per second
+    /// squared.
+    pub max_acceleration: f32,
     /// Top angular speed, in radians per second.
     pub max_speed: f32,
-    /// +1 to swing anticlockwise seen from above, -1 clockwise.
-    pub direction: f32,
 }
 
 /// A hooked tank's swing around the hooking tank: where it is on the circle,
@@ -205,17 +214,34 @@ impl Swing {
         }
     }
 
-    /// Speeds the swing up towards its top speed and moves the radius
-    /// towards the tuned one, over `dt` seconds.
-    pub fn advance(&mut self, dt: f32, tuning: &SwingTuning) {
+    /// Swings towards `target_angle` (from +X towards +Z, in radians) for
+    /// `dt` seconds and reels the line in towards the tuned radius, never
+    /// out. The swing goes the short way round, so a turret turning round
+    /// keeps it circling, and the further the turret is ahead the harder it
+    /// pulls.
+    pub fn follow(&mut self, target_angle: f32, dt: f32, tuning: &SwingTuning) {
+        use std::f32::consts::{PI, TAU};
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
-        let direction = if tuning.direction < 0.0 { -1.0 } else { 1.0 };
-        let target = direction * tuning.max_speed.max(0.0);
-        let step = tuning.acceleration.max(0.0) * dt;
-        self.angular_speed += (target - self.angular_speed).clamp(-step, step);
-        self.angle += self.angular_speed * dt;
+        // Small steps keep the spring stable at any frame rate.
+        let steps = (dt / SWING_STEP).ceil().max(1.0) as u32;
+        let h = dt / steps as f32;
+        let max_acceleration = tuning.max_acceleration.max(0.0);
+        let max_speed = tuning.max_speed.max(0.0);
+        for _ in 0..steps {
+            let error = (target_angle - self.angle + PI).rem_euclid(TAU) - PI;
+            let acceleration = (tuning.stiffness.max(0.0) * error
+                - tuning.damping.max(0.0) * self.angular_speed)
+                .clamp(-max_acceleration, max_acceleration);
+            self.angular_speed =
+                (self.angular_speed + acceleration * h).clamp(-max_speed, max_speed);
+            self.angle += self.angular_speed * h;
+        }
+        // The line only ever shortens: a tank hooked inside the swing radius
+        // stays where it was caught.
         let reel = tuning.reel_speed.max(0.0) * dt;
-        self.radius += (tuning.radius.max(0.0) - self.radius).clamp(-reel, reel);
+        if self.radius > tuning.radius.max(0.0) {
+            self.radius = (self.radius - reel).max(tuning.radius.max(0.0));
+        }
     }
 
     /// The hooked tank's horizontal offset from the centre.
@@ -236,6 +262,39 @@ impl Swing {
     pub fn throw_velocity(&self, strength: f32, lift: f32) -> Vec3 {
         self.velocity() * strength.max(0.0) + Vec3::y() * lift
     }
+}
+
+/// Where along a boot's flight from `origin` along the unit `direction`,
+/// between `from` and `to` metres out, a boot head of `radius` first touches
+/// one of `targets` (each a centre and a radius), and which one. Distances
+/// are measured on the ground plane.
+pub fn boot_hit(
+    origin: Vec3,
+    direction: Vec3,
+    from: f32,
+    to: f32,
+    radius: f32,
+    targets: &[(Vec3, f32)],
+) -> Option<(usize, f32)> {
+    let flat = |v: Vec3| vec3(v.x, 0.0, v.z);
+    let origin = flat(origin);
+    let direction = flat(direction);
+    targets
+        .iter()
+        .enumerate()
+        .filter_map(|(index, &(center, target_radius))| {
+            let reach = radius.max(0.0) + target_radius.max(0.0);
+            let offset = flat(center) - origin;
+            let along = offset.dot(&direction);
+            let across_squared = (offset - direction * along).magnitude_squared();
+            if across_squared > reach * reach {
+                return None;
+            }
+            // The first distance out at which the head is within reach.
+            let entry = (along - (reach * reach - across_squared).sqrt()).max(from);
+            (entry <= to && along + reach >= from).then_some((index, entry))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
 }
 
 #[cfg(test)]
@@ -322,32 +381,109 @@ mod tests {
         assert_eq!(state.stance, Stance::KnockedDown { elapsed: 0.0 });
     }
 
-    fn swing_tuning(direction: f32) -> SwingTuning {
+    fn swing_tuning() -> SwingTuning {
         SwingTuning {
             radius: 5.0,
             reel_speed: 10.0,
-            acceleration: 8.0,
-            max_speed: 4.0,
-            direction,
+            stiffness: 60.0,
+            damping: 9.0,
+            max_acceleration: 80.0,
+            max_speed: 6.0,
         }
     }
 
     #[test]
-    fn a_swing_speeds_up_to_its_top_speed_and_reels_to_its_radius() {
+    fn a_swing_follows_the_turret_the_short_way_and_only_reels_in() {
+        let tuning = swing_tuning();
         let mut swing = Swing::starting_at(Vec3::zeros(), vec3(8.0, 0.0, 0.0));
         assert_eq!(swing.radius, 8.0);
         assert_eq!(swing.angle, 0.0);
-        swing.advance(0.25, &swing_tuning(1.0));
-        assert!((swing.angular_speed - 2.0).abs() < 1e-6);
-        assert!((swing.radius - 5.5).abs() < 1e-6);
-        for _ in 0..20 {
-            swing.advance(0.1, &swing_tuning(1.0));
+        // A turret a quarter turn anticlockwise pulls it anticlockwise...
+        swing.follow(1.5, 0.1, &tuning);
+        assert!(swing.angular_speed > 0.0);
+        assert!((swing.radius - 7.0).abs() < 1e-5);
+        // ...and it settles there.
+        for _ in 0..40 {
+            swing.follow(1.5, 0.05, &tuning);
         }
-        assert!((swing.angular_speed - 4.0).abs() < 1e-6);
-        assert!((swing.radius - 5.0).abs() < 1e-6);
-        let mut clockwise = Swing::starting_at(Vec3::zeros(), vec3(5.0, 0.0, 0.0));
-        clockwise.advance(10.0, &swing_tuning(-1.0));
-        assert!((clockwise.angular_speed + 4.0).abs() < 1e-6);
+        assert!((swing.angle - 1.5).abs() < 0.01, "{swing:?}");
+        assert!(swing.angular_speed.abs() < 0.05);
+        assert!((swing.radius - 5.0).abs() < 1e-5);
+        // A tank caught inside the swing radius is never pushed out.
+        let mut close = Swing {
+            angle: 0.0,
+            angular_speed: 0.0,
+            radius: 3.0,
+        };
+        close.follow(2.0, 1.0, &tuning);
+        assert_eq!(close.radius, 3.0);
+        // A turret just past the +-pi seam is reached the short way.
+        let mut seam = Swing {
+            angle: 3.0,
+            angular_speed: 0.0,
+            radius: 5.0,
+        };
+        seam.follow(-3.0, 0.05, &tuning);
+        assert!(seam.angular_speed > 0.0, "{seam:?}");
+        let mut clockwise = Swing {
+            angle: 0.0,
+            angular_speed: 0.0,
+            radius: 5.0,
+        };
+        clockwise.follow(-1.0, 0.05, &tuning);
+        assert!(clockwise.angular_speed < 0.0);
+    }
+
+    #[test]
+    fn a_fast_turret_turn_whips_faster_up_to_the_top_speed() {
+        let tuning = swing_tuning();
+        // The turret turns at `rate` radians per second; the swing chases it.
+        let chase = |rate: f32, steps: usize| {
+            let mut swing = Swing {
+                angle: 0.0,
+                angular_speed: 0.0,
+                radius: 5.0,
+            };
+            let mut turret = 0.0f32;
+            for _ in 0..steps {
+                turret += rate * 0.02;
+                swing.follow(turret, 0.02, &tuning);
+            }
+            swing.angular_speed
+        };
+        let slow = chase(1.0, 60);
+        let fast = chase(4.0, 60);
+        assert!(fast > slow * 2.0, "slow {slow} fast {fast}");
+        // A turret turning faster than the swing can go: it tops out.
+        assert!((chase(9.0, 20) - tuning.max_speed).abs() < 1e-4);
+        assert!(chase(-4.0, 60) < -3.0);
+    }
+
+    #[test]
+    fn a_boot_kicks_the_first_tank_along_its_flight() {
+        let near = (vec3(0.0, 0.0, 5.0), 1.0);
+        let far = (vec3(0.3, 0.0, 9.0), 1.0);
+        let aside = (vec3(4.0, 0.0, 6.0), 1.0);
+        let targets = [far, aside, near];
+        // Out of reach this step.
+        assert_eq!(
+            boot_hit(Vec3::zeros(), Vec3::z(), 0.0, 3.0, 0.5, &targets),
+            None
+        );
+        let (index, at) = boot_hit(Vec3::zeros(), Vec3::z(), 3.0, 12.0, 0.5, &targets).unwrap();
+        assert_eq!(index, 2, "the nearest along the flight");
+        assert!((at - 3.5).abs() < 1e-4);
+        // A tank to the side is never kicked.
+        assert_eq!(
+            boot_hit(Vec3::zeros(), Vec3::z(), 0.0, 12.0, 0.5, &[aside]),
+            None
+        );
+        // Nor one behind.
+        let behind = (vec3(0.0, 0.0, -4.0), 1.0);
+        assert_eq!(
+            boot_hit(Vec3::zeros(), Vec3::z(), 0.0, 12.0, 0.5, &[behind]),
+            None
+        );
     }
 
     #[test]

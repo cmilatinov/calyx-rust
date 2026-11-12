@@ -496,6 +496,14 @@ pub(crate) fn body_velocity(scene: &Scene, tank: GameObject) -> Vec3 {
 /// Whether the straight line from `from` to `to` is clear of every static
 /// obstacle a hull would stop at, such as walls and cover.
 pub(crate) fn line_clear(scene: &Scene, from: Vec3, to: Vec3) -> bool {
+    let along = to - from;
+    let distance = along.magnitude();
+    distance <= f32::EPSILON || wall_distance(scene, from, along / distance, distance).is_none()
+}
+
+/// How far from `from` along the unit `direction`, within `max` metres, the
+/// first static obstacle a hull would stop at is.
+pub(crate) fn wall_distance(scene: &Scene, from: Vec3, direction: Vec3, max: f32) -> Option<f32> {
     let obstacles = hull_obstacles(scene);
     let is_obstacle = |collider: ColliderHandle, _: &Collider| {
         scene
@@ -503,21 +511,18 @@ pub(crate) fn line_clear(scene: &Scene, from: Vec3, to: Vec3) -> bool {
             .collider_entity(collider)
             .is_some_and(|entity| obstacles.contains(&entity))
     };
-    let along = to - from;
-    let distance = along.magnitude();
-    distance <= f32::EPSILON
-        || scene
-            .physics
-            .cast_ray(
-                from,
-                along,
-                distance,
-                true,
-                crate::collision::HULL
-                    .query_filter()
-                    .predicate(&is_obstacle),
-            )
-            .is_none()
+    scene
+        .physics
+        .cast_ray(
+            from,
+            direction,
+            max,
+            true,
+            crate::collision::HULL
+                .query_filter()
+                .predicate(&is_obstacle),
+        )
+        .map(|hit| hit.toi)
 }
 
 /// Whether a hull moving from `from` to `to` would hit a static obstacle.

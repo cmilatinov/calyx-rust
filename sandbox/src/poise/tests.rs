@@ -127,3 +127,39 @@ fn rounds_drain_poise_then_a_break_turns_the_body_dynamic_and_locks_input() {
         RigidBodyType::Dynamic
     );
 }
+
+#[test]
+fn a_kick_shoves_far_harder_than_a_round_and_breaks_low_poise() {
+    use super::abilities::{kick, ComponentTankAbilities};
+    let mut scene = calyx_engine::test_support::test_scene();
+    let shot = tank(&mut scene, "Shot", vec3(0.0, 0.0, 5.0));
+    let kicked = tank(&mut scene, "Kicked", vec3(10.0, 0.0, 5.0));
+    scene.prepare();
+    let abilities = ComponentTankAbilities::default();
+
+    absorb_round(&mut scene, shot, 35.0, Vec3::z());
+    strike(&mut scene, kicked, kick(&abilities, Vec3::z()));
+    let state = |scene: &Scene, tank| {
+        scene
+            .read_component::<ComponentPoise, _, _>(tank, |poise| {
+                (poise.state.poise, poise.knockback.magnitude())
+            })
+            .unwrap()
+    };
+    let (_, round_shove) = state(&scene, shot);
+    let (kicked_poise, kick_shove) = state(&scene, kicked);
+    assert_eq!(kicked_poise, 100.0 - abilities.boot_poise_damage);
+    assert!(
+        kick_shove > round_shove * 3.0,
+        "{kick_shove} vs {round_shove}"
+    );
+
+    // A second kick breaks what the first left, and launches it.
+    strike(&mut scene, kicked, kick(&abilities, Vec3::z()));
+    assert_eq!(body_type(&scene, kicked), RigidBodyType::Dynamic);
+    let velocity = body_velocity(&scene, kicked);
+    assert!(
+        velocity.z >= abilities.boot_launch_speed - 1e-3,
+        "{velocity:?}"
+    );
+}
