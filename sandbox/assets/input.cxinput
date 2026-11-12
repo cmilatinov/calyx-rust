@@ -20,6 +20,19 @@
         "PointerButton": "Primary"
       }
     ],
+    "boot": [
+      {
+        "Key": "E"
+      }
+    ],
+    "hook": [
+      {
+        "Key": "Q"
+      },
+      {
+        "PointerButton": "Secondary"
+      }
+    ],
     "shoot": [
       {
         "PointerButton": "Primary"

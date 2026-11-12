@@ -10,6 +10,8 @@ pub mod combat_vfx;
 pub mod game_state;
 pub mod hud;
 pub mod match_rules;
+/// PROTOTYPE (#610): poise, knockdowns, the boot and the hook.
+pub mod poise;
 pub mod sentry;
 pub mod spawn;
 pub mod tank;
@@ -78,6 +80,18 @@ mod tests {
             .is_some());
         assert!(registry
             .type_registration::<crate::track_marks::ComponentTrackMarks>()
+            .is_some());
+        assert!(registry
+            .type_registration::<crate::poise::ComponentPoise>()
+            .is_some());
+        assert!(registry
+            .type_registration::<crate::poise::ComponentDummyDriver>()
+            .is_some());
+        assert!(registry
+            .type_registration::<crate::poise::abilities::ComponentTankAbilities>()
+            .is_some());
+        assert!(registry
+            .type_registration::<crate::poise::hud::ComponentPoiseHud>()
             .is_some());
         assert!(registry.type_registration::<ComponentTransform>().is_none());
     }
