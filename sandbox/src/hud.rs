@@ -1,7 +1,7 @@
 mod kill_feed;
 mod menu;
 mod minimap;
-mod paint;
+pub(crate) mod paint;
 mod scoreboard;
 
 pub use menu::{menu_buttons, MenuAction, MenuButton, MenuScreen};
@@ -435,7 +435,7 @@ impl ComponentHud for ComponentTankHud {
     }
 }
 
-fn finish_hud(ui: &mut UiArena, mut p: Painter, viewport: UiRect) -> UiNodeHandle {
+pub(crate) fn finish_hud(ui: &mut UiArena, mut p: Painter, viewport: UiRect) -> UiNodeHandle {
     p.commands.push(PaintCommand::PopClip);
     ui.custom_paint(p.commands)
         .id(ui, "sandbox-ui")
@@ -457,14 +457,14 @@ fn health_ratio(health: f32, max: f32) -> f32 {
     }
 }
 
-struct Projection {
+pub(crate) struct Projection {
     matrix: Mat4,
     width: f32,
     height: f32,
 }
 
 impl Projection {
-    fn scene(scene: &Scene, width: f32, height: f32) -> Option<Self> {
+    pub(crate) fn scene(scene: &Scene, width: f32, height: f32) -> Option<Self> {
         let (object, camera) = scene.main_camera()?;
         Some(Self {
             matrix: camera.camera(width / height).projection
@@ -474,7 +474,7 @@ impl Projection {
         })
     }
 
-    fn point(&self, position: Vec3) -> Option<(f32, f32)> {
+    pub(crate) fn point(&self, position: Vec3) -> Option<(f32, f32)> {
         let clip = self.matrix * vec4(position.x, position.y, position.z, 1.0);
         if clip.w <= 0.0 {
             return None;
@@ -509,14 +509,14 @@ fn damage_tier(amount: f32, max: f32, low: f32, high: f32) -> DamageTier {
 }
 
 #[derive(Clone, Copy, Debug)]
-struct ScreenBounds {
-    left: f32,
-    right: f32,
-    top: f32,
+pub(crate) struct ScreenBounds {
+    pub(crate) left: f32,
+    pub(crate) right: f32,
+    pub(crate) top: f32,
 }
 
 impl Projection {
-    fn visual_bounds(&self, scene: &Scene, object: GameObject) -> Option<ScreenBounds> {
+    pub(crate) fn visual_bounds(&self, scene: &Scene, object: GameObject) -> Option<ScreenBounds> {
         let mut points = scene
             .visual_bound_corners(object)
             .into_iter()

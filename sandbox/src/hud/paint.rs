@@ -4,15 +4,15 @@ use calyx_engine::ui::{
     UiRect, UiSize,
 };
 
-pub(super) const PANEL: UiColor = UiColor::rgba(18, 25, 33, 245);
-pub(super) const STEEL: UiColor = UiColor::rgba(89, 103, 117, 255);
-pub(super) const LIGHT: UiColor = UiColor::rgba(235, 242, 247, 255);
-pub(super) const MUTED: UiColor = UiColor::rgba(143, 157, 170, 255);
-pub(super) const CYAN: UiColor = UiColor::rgba(0, 184, 238, 255);
-pub(super) const RED: UiColor = UiColor::rgba(236, 55, 62, 255);
-pub(super) const BLACK: UiColor = UiColor::rgba(6, 11, 17, 255);
+pub(crate) const PANEL: UiColor = UiColor::rgba(18, 25, 33, 245);
+pub(crate) const STEEL: UiColor = UiColor::rgba(89, 103, 117, 255);
+pub(crate) const LIGHT: UiColor = UiColor::rgba(235, 242, 247, 255);
+pub(crate) const MUTED: UiColor = UiColor::rgba(143, 157, 170, 255);
+pub(crate) const CYAN: UiColor = UiColor::rgba(0, 184, 238, 255);
+pub(crate) const RED: UiColor = UiColor::rgba(236, 55, 62, 255);
+pub(crate) const BLACK: UiColor = UiColor::rgba(6, 11, 17, 255);
 
-pub(super) struct Painter {
+pub(crate) struct Painter {
     pub commands: Vec<PaintCommand>,
     pub scale: f32,
     pub origin: UiPoint,

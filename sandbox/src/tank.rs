@@ -24,8 +24,8 @@ use rapier3d::prelude::{Collider, ColliderHandle, RigidBodyType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
-const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
+pub(crate) const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
+pub(crate) const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
 const COLLISION_SKIN: f32 = 0.01;
 /// How far ahead of and behind its centre the hull feels for the ground,
 /// which sets its pitch on a slope.
@@ -380,7 +380,77 @@ impl ComponentUpdate for ComponentTankController {
 
         let dt = resources.time().delta_time();
         let previous_tank_transform = scene.world_transform(game_object);
-        let tank_transform = update_hull(scene, game_object, input, dt, &mut controller);
+        // PROTOTYPE (poise_poc, #610): a tank with a prototype knockout
+        // meter may be knocked down, hooked, frozen by a hit or driven by a
+        // dummy or bot instead of the player, and oil takes its grip. Tanks
+        // without those components always take the player's input, at full
+        // grip.
+        let traction = crate::poise::traction(scene, game_object);
+        if traction < 1.0 {
+            // Only this frame's copy loses grip; it is never written back.
+            controller.acceleration *= traction;
+            controller.braking *= traction;
+            controller.friction *= traction;
+        }
+        match crate::poise::tank_control(scene, game_object) {
+            crate::poise::TankControl::Player => {}
+            crate::poise::TankControl::Locked { camera_focus } => {
+                // Tumbling, hooked or frozen: no input, but the camera keeps
+                // up.
+                let mut focus = previous_tank_transform;
+                focus.position = camera_focus;
+                update_camera(scene, input, dt, &controller, &focus, &focus);
+                crate::poise::shake_camera(scene, game_object, controller.camera);
+                let _ = this.write(scene, |component| component.speed = 0.0);
+                return;
+            }
+            crate::poise::TankControl::Dummy { throttle, steer } => {
+                update_hull(scene, game_object, throttle, steer, dt, &mut controller);
+                let _ = this.write(scene, |component| component.speed = controller.speed);
+                return;
+            }
+            crate::poise::TankControl::Bot {
+                throttle,
+                steer,
+                aim,
+            } => {
+                let tank_transform =
+                    update_hull(scene, game_object, throttle, steer, dt, &mut controller);
+                update_turret(
+                    scene,
+                    dt,
+                    &controller,
+                    &previous_tank_transform,
+                    &tank_transform,
+                    Some(aim),
+                );
+                let fire = crate::poise::bot_fires(scene, game_object, dt);
+                update_shooting(
+                    scene,
+                    game_object,
+                    fire,
+                    dt,
+                    &mut controller,
+                    &tank_transform,
+                    Some(aim),
+                );
+                let _ = this.write(scene, |component| {
+                    component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
+                    component.reload_remaining = controller.reload_remaining;
+                    component.ammo = controller.ammo;
+                    component.speed = controller.speed;
+                });
+                return;
+            }
+        }
+        let tank_transform = update_hull(
+            scene,
+            game_object,
+            input.axis("move_forward"),
+            input.axis("move_right"),
+            dt,
+            &mut controller,
+        );
         // Follow with the camera first, so the cursor aims through the view
         // this frame draws.
         update_camera(
@@ -391,6 +461,8 @@ impl ComponentUpdate for ComponentTankController {
             &previous_tank_transform,
             &tank_transform,
         );
+        // PROTOTYPE (poise_poc, #610): hits shake a prototype tank's camera.
+        crate::poise::shake_camera(scene, game_object, controller.camera);
         let aim_point = cursor_aim_point(scene, input, &controller, tank_transform.position.y);
         update_crosshair(scene, &controller, aim_point);
         update_turret(
@@ -404,7 +476,7 @@ impl ComponentUpdate for ComponentTankController {
         update_shooting(
             scene,
             game_object,
-            input,
+            input.action("shoot").pressed(),
             dt,
             &mut controller,
             &tank_transform,
@@ -426,7 +498,8 @@ impl ComponentUpdate for ComponentTankController {
 fn update_hull(
     scene: &mut calyx_engine::scene::Scene,
     game_object: calyx_engine::scene::GameObject,
-    input: &Input,
+    throttle: f32,
+    steer: f32,
     dt: TimeType,
     controller: &mut ComponentTankController,
 ) -> Transform {
@@ -434,8 +507,6 @@ fn update_hull(
     let mut transform = initial;
     // Turn and drive the level hull; it tilts to the ground afterwards.
     transform.rotation = level_rotation(&transform.rotation);
-    let throttle = input.axis("move_forward");
-    let steer = input.axis("move_right");
 
     let start_rotation = transform.rotation;
     let yaw = steer * controller.hull_turn_speed * dt;
@@ -515,7 +586,7 @@ fn update_hull(
 
 /// `rotation` without its tilt: the same heading, upright. A rotation that
 /// is already level comes back unchanged.
-fn level_rotation(rotation: &UnitQuaternion<f32>) -> UnitQuaternion<f32> {
+pub(crate) fn level_rotation(rotation: &UnitQuaternion<f32>) -> UnitQuaternion<f32> {
     if hull_tilt(rotation).is_none() {
         *rotation
     } else {
@@ -657,7 +728,7 @@ fn turn_hull(scene: &Scene, transform: &mut Transform, yaw: f32) -> bool {
 /// Static obstacles the hull collides with: all but the drive surfaces it
 /// rides on, so a ramp's slope never catches the front of the hull. Its
 /// queries also skip colliders outside [`crate::collision::HULL_GROUP`].
-fn hull_obstacles(scene: &Scene) -> HashSet<Entity> {
+pub(crate) fn hull_obstacles(scene: &Scene) -> HashSet<Entity> {
     let mut obstacles = static_obstacles(scene);
     for surface in drive_surfaces(scene) {
         obstacles.remove(&surface);
@@ -701,7 +772,11 @@ fn resolve_hull_movement(scene: &Scene, transform: &Transform, movement: Vec3) -
 /// Moves the hull by `movement`, stopping at static obstacles and sliding
 /// along them. Returns the movement it managed and the flattened normal of
 /// the obstacle that opposed `movement` most, when it hit one.
-fn sweep_hull(scene: &Scene, transform: &Transform, movement: Vec3) -> (Vec3, Option<Vec3>) {
+pub(crate) fn sweep_hull(
+    scene: &Scene,
+    transform: &Transform,
+    movement: Vec3,
+) -> (Vec3, Option<Vec3>) {
     let physics = &scene.physics;
     let obstacles = hull_obstacles(scene);
     let is_obstacle = |collider: ColliderHandle, _: &Collider| {
@@ -791,7 +866,7 @@ fn update_turret(
 }
 
 /// Yaw in radians of `rotation`'s forward axis, from +Z towards +X.
-fn rotation_yaw(rotation: &UnitQuaternion<f32>) -> f32 {
+pub(crate) fn rotation_yaw(rotation: &UnitQuaternion<f32>) -> f32 {
     let forward = rotation * Vec3::z();
     forward.x.atan2(forward.z)
 }
@@ -849,7 +924,7 @@ fn update_camera(
 fn update_shooting(
     scene: &mut calyx_engine::scene::Scene,
     tank: calyx_engine::scene::GameObject,
-    input: &Input,
+    shoot_pressed: bool,
     dt: TimeType,
     controller: &mut ComponentTankController,
     tank_transform: &Transform,
@@ -862,7 +937,7 @@ fn update_shooting(
         return;
     }
     if !can_fire(
-        input.action("shoot").pressed(),
+        shoot_pressed,
         controller.fire_cooldown_remaining,
         controller.ammo,
     ) {
@@ -1076,7 +1151,11 @@ pub(crate) fn update_projectile(
         first_projectile_hit(scene, game_object, shooter, start, reach, projectile.radius)
     {
         let impact = crate::combat_vfx::spawn_impact(scene, hit_position, true);
-        apply_projectile_damage(scene, target, projectile.damage, shooter);
+        // PROTOTYPE (poise_poc, #610): a tank with prototype poise takes the
+        // round on its poise instead of its health.
+        if !crate::poise::absorb_round(scene, target, projectile.damage, direction) {
+            apply_projectile_damage(scene, target, projectile.damage, shooter);
+        }
         scene.delete(game_object);
         // A hit out of the player's sight never flashes into view.
         crate::vision::refresh(scene, &[impact]);
@@ -1203,7 +1282,10 @@ fn first_projectile_hit(
         .find_map(|candidate| {
             scene
                 .read_component::<ComponentProjectileTarget, _, _>(candidate, |target| {
-                    let center = scene.world_transform(candidate).position;
+                    // PROTOTYPE (poise_poc, #610): a tank with prototype
+                    // poise is hit around its hull, not its tracks.
+                    let center = scene.world_transform(candidate).position
+                        + crate::poise::hit_center_offset(scene, candidate);
                     segment_sphere_entry(start, end, center, projectile_radius + target.hit_radius)
                         .map(|time| (candidate, start + (end - start) * time))
                 })

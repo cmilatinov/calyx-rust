@@ -1,0 +1,9 @@
+{
+  "inner": [],
+  "main": {
+    "display_name": "poise_player",
+    "id": "9cd42a93-7bb5-07b9-5c26-dddb59d67ecb",
+    "name": "game/prefabs/poise_player",
+    "type_uuid": "960f1d60-3ad4-4f1d-92d3-cceb0e0623d7"
+  }
+}

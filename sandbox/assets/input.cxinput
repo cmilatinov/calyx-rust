@@ -20,12 +20,68 @@
         "PointerButton": "Primary"
       }
     ],
+    "boot": [
+      {
+        "Key": "E"
+      }
+    ],
+    "hook": [
+      {
+        "Key": "Q"
+      },
+      {
+        "PointerButton": "Secondary"
+      }
+    ],
     "shoot": [
       {
         "PointerButton": "Primary"
       },
       {
         "Key": "Space"
+      }
+    ],
+    "boost": [
+      {
+        "Modifier": {
+          "alt": false,
+          "ctrl": false,
+          "shift": true,
+          "mac_cmd": false,
+          "command": false
+        }
+      },
+      {
+        "Key": "Z"
+      }
+    ],
+    "anchor": [
+      {
+        "Modifier": {
+          "alt": false,
+          "ctrl": true,
+          "shift": false,
+          "mac_cmd": false,
+          "command": false
+        }
+      },
+      {
+        "Key": "C"
+      }
+    ],
+    "mine": [
+      {
+        "Key": "R"
+      }
+    ],
+    "oil": [
+      {
+        "Key": "F"
+      }
+    ],
+    "reset": [
+      {
+        "Key": "Backspace"
       }
     ]
   },
