@@ -78,6 +78,11 @@
       {
         "Key": "F"
       }
+    ],
+    "reset": [
+      {
+        "Key": "Backspace"
+      }
     ]
   },
   "axes": {

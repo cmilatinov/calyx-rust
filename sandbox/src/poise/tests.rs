@@ -238,10 +238,148 @@ fn the_sandbox_binds_every_prototype_ability() {
         abilities::ANCHOR_ACTION,
         abilities::MINE_ACTION,
         abilities::OIL_ACTION,
+        abilities::RESET_ACTION,
     ] {
         assert!(
             saved["actions"].get(action).is_some(),
             "{action} is unbound"
         );
     }
+}
+
+/// A fixed box collider of `size` centred at `center`, like a wall.
+fn wall(scene: &mut Scene, center: Vec3, size: Vec3) -> GameObject {
+    let wall = scene.create(None, None);
+    scene.set_world_transform(
+        wall,
+        Transform::from_xyz(center.x, center.y, center.z).matrix(),
+    );
+    scene.add_component(
+        wall,
+        ComponentRigidBody {
+            ty: RigidBodyType::Fixed,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        wall,
+        ComponentCollider {
+            shape: ColliderShape::Cuboid {
+                half_extents: size * 0.5,
+            },
+            ..Default::default()
+        },
+    );
+    wall
+}
+
+#[test]
+fn a_tank_recovering_inside_a_wall_is_moved_clear_towards_the_arena() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    // A wall 1.2 m thick along x, its faces at z = -15.4 and -16.6.
+    wall(&mut scene, vec3(10.0, 0.8, -16.0), vec3(8.0, 1.6, 1.2));
+    scene.prepare();
+    let lying = Transform::from_components(
+        vec3(10.0, 0.0, -16.0),
+        UnitQuaternion::from_euler_angles(0.0, 1.3, 0.0),
+        vec3(1.0, 1.0, 1.0),
+    );
+    assert!(!hull_free(&scene, lying.position, lying.rotation));
+    let (position, rotation) = recovery_pose(&scene, &lying, 0.0, Vec3::zeros());
+    assert!(hull_free(&scene, position, rotation), "{position:?}");
+    assert!(position.z > -15.4, "out on the arena's side: {position:?}");
+    assert!(
+        (position - lying.position).magnitude() < 4.0,
+        "{position:?}"
+    );
+}
+
+#[test]
+fn a_tank_recovering_in_the_open_stays_where_it_is() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    wall(&mut scene, vec3(10.0, 0.8, -16.0), vec3(8.0, 1.6, 1.2));
+    scene.prepare();
+    let lying = Transform::from_components(
+        vec3(10.0, 0.0, -10.0),
+        UnitQuaternion::from_euler_angles(0.0, 0.4, 0.0),
+        vec3(1.0, 1.0, 1.0),
+    );
+    let (position, _) = recovery_pose(&scene, &lying, 0.0, Vec3::zeros());
+    assert_eq!(position, lying.position);
+}
+
+#[test]
+fn a_reset_puts_every_tank_back_at_its_spawn_and_clears_the_round() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    let tank = tank(&mut scene, "Tank", vec3(0.0, 0.0, -10.0));
+    scene.add_component(tank, ComponentTankAbilities::default());
+    scene.prepare();
+    let spawn = scene.world_transform(tank);
+    scene.write_component::<ComponentKnockout, _>(tank, |knockout| {
+        knockout.home = Some(spawn);
+        knockout.state.percent = 140.0;
+        knockout.state.knockouts = 3;
+        knockout.hitstop = 0.05;
+    });
+    scene.write_component::<ComponentTankAbilities, _>(tank, |abilities| {
+        abilities.boot_cooldown_remaining = 1.0;
+        abilities.boot_damage = 30.0;
+    });
+    knock_down(&mut scene, tank, vec3(0.0, 5.0, 10.0), 3.0);
+    scene.set_world_transform(tank, Transform::from_xyz(8.0, 2.0, 4.0).matrix());
+    let mine = scene.create(None, None);
+    scene.add_component(mine, abilities::ComponentBumperMine::default());
+    let oil = scene.create(None, None);
+    scene.add_component(oil, abilities::ComponentOilSlick::default());
+
+    reset_round(&mut scene);
+    scene.flush_deletes();
+
+    let (percent, knockouts, stance, hitstop) = scene
+        .read_component::<ComponentKnockout, _, _>(tank, |knockout| {
+            (
+                knockout.state.percent,
+                knockout.state.knockouts,
+                knockout.state.stance,
+                knockout.hitstop,
+            )
+        })
+        .unwrap();
+    assert_eq!(
+        (percent, knockouts, stance, hitstop),
+        (0.0, 0, Stance::Upright, 0.0)
+    );
+    assert_eq!(scene.world_transform(tank).position, spawn.position);
+    assert_eq!(
+        body_type(&scene, tank),
+        RigidBodyType::KinematicPositionBased
+    );
+    let (cooldown, damage) = scene
+        .read_component::<ComponentTankAbilities, _, _>(tank, |abilities| {
+            (abilities.boot_cooldown_remaining, abilities.boot_damage)
+        })
+        .unwrap();
+    assert_eq!(cooldown, 0.0);
+    assert_eq!(damage, 30.0, "the tuning stays");
+    assert!(scene
+        .objects_with::<abilities::ComponentBumperMine>()
+        .next()
+        .is_none());
+    assert!(scene
+        .objects_with::<abilities::ComponentOilSlick>()
+        .next()
+        .is_none());
+}
+
+#[test]
+fn a_reset_does_nothing_without_prototype_tanks() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    let round = scene.create(None, None);
+    scene.add_component(round, crate::tank::ComponentProjectile::default());
+    reset_round(&mut scene);
+    scene.flush_deletes();
+    assert!(scene
+        .objects_with::<crate::tank::ComponentProjectile>()
+        .next()
+        .is_some());
 }

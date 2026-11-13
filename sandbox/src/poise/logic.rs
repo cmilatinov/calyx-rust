@@ -245,6 +245,46 @@ pub fn bumper_launch(lift: f32, push: f32, growth: f32, percent: f32, away: Vec3
     Vec3::y() * lift.max(0.0) * scale + away * push.max(0.0) * scale
 }
 
+/// Directions tried on each ring of [`nearest_free_spot`]'s search.
+const FREE_SPOT_DIRECTIONS: usize = 16;
+
+/// The free spot nearest `start` on the ground plane, as `is_free` judges
+/// spots: `start` itself when it is free, else the first free spot on rings
+/// `step` metres apart, up to `max_distance` out. On each ring the spots
+/// nearest the way to `toward` are tried first, so a tank is moved back
+/// into the arena rather than out of it. None when nothing within reach is
+/// free.
+pub fn nearest_free_spot(
+    start: Vec3,
+    toward: Vec3,
+    step: f32,
+    max_distance: f32,
+    is_free: impl Fn(Vec3) -> bool,
+) -> Option<Vec3> {
+    if is_free(start) {
+        return Some(start);
+    }
+    let step = step.max(0.01);
+    let preferred = vec3(toward.x - start.x, 0.0, toward.z - start.z)
+        .try_normalize(1e-6)
+        .unwrap_or_else(Vec3::z);
+    let mut directions: Vec<Vec3> = (0..FREE_SPOT_DIRECTIONS)
+        .map(|i| {
+            let angle = i as f32 / FREE_SPOT_DIRECTIONS as f32 * std::f32::consts::TAU;
+            vec3(angle.cos(), 0.0, angle.sin())
+        })
+        .collect();
+    directions.sort_by(|a, b| b.dot(&preferred).total_cmp(&a.dot(&preferred)));
+    let rings = (max_distance / step).floor() as usize;
+    (1..=rings).find_map(|ring| {
+        let radius = ring as f32 * step;
+        directions
+            .iter()
+            .map(|direction| start + direction * radius)
+            .find(|&spot| is_free(spot))
+    })
+}
+
 /// The longest step the swing's spring integrates at once, in seconds.
 const SWING_STEP: f32 = 1.0 / 240.0;
 
@@ -470,6 +510,32 @@ mod tests {
         assert_eq!(state.percent, 16.0);
         state.tick(1.1, &tuning());
         assert_eq!(state.hit(16.0, 40.0, 11.0), Reaction::Launch(40.0));
+    }
+
+    #[test]
+    fn a_blocked_spot_moves_to_the_nearest_free_one_towards_the_arena() {
+        // A wall fills z < -15.4; a hull 1 m deep is free 1 m clear of it.
+        let free = |spot: Vec3| spot.z - 1.0 >= -15.4;
+        let start = vec3(10.0, 0.0, -16.0);
+        let spot = nearest_free_spot(start, Vec3::zeros(), 0.25, 8.0, free).unwrap();
+        assert!(free(spot));
+        assert!((spot - start).magnitude() <= 1.75, "{spot:?}");
+        assert!(spot.z > start.z, "back towards the arena");
+        // A free spot stays where it is.
+        let open = vec3(3.0, 0.0, 2.0);
+        assert_eq!(
+            nearest_free_spot(open, Vec3::zeros(), 0.25, 8.0, free),
+            Some(open)
+        );
+        // Of two equally near ways out, the one towards the arena wins.
+        let pillar = |spot: Vec3| spot.x.abs() >= 1.0;
+        let spot = nearest_free_spot(Vec3::zeros(), vec3(-10.0, 0.0, 0.0), 0.25, 8.0, pillar);
+        assert!(spot.unwrap().x < 0.0);
+        // Nothing within reach is free.
+        assert_eq!(
+            nearest_free_spot(start, Vec3::zeros(), 0.25, 2.0, |_| false),
+            None
+        );
     }
 
     #[test]

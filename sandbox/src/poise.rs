@@ -827,6 +827,89 @@ fn upright_pose(scene: &Scene, pose: &Transform, rest_height: f32) -> (Vec3, Uni
     (position, UnitQuaternion::from_euler_angles(0.0, yaw, 0.0))
 }
 
+/// How far out a recovering tank is searched for a free spot, in metres,
+/// and in what steps.
+const FREE_SPOT_REACH: f32 = 8.0;
+const FREE_SPOT_STEP: f32 = 0.25;
+/// Extra clearance a recovering tank keeps from walls, in metres.
+const FREE_SPOT_MARGIN: f32 = 0.05;
+
+/// Whether an upright tank at `position` facing `rotation` overlaps no wall
+/// or other blocking geometry: neither the box its hull drives with nor the
+/// box it tumbles with.
+pub(crate) fn hull_free(scene: &Scene, position: Vec3, rotation: UnitQuaternion<f32>) -> bool {
+    let obstacles = hull_obstacles(scene);
+    let is_obstacle = |collider: ColliderHandle, _: &Collider| {
+        scene
+            .physics
+            .collider_entity(collider)
+            .is_some_and(|entity| obstacles.contains(&entity))
+    };
+    let margin = Vec3::repeat(FREE_SPOT_MARGIN);
+    let boxes = [
+        (
+            crate::tank::TANK_COLLIDER_OFFSET,
+            crate::tank::TANK_COLLIDER_HALF_EXTENTS,
+        ),
+        (TANK_COLLIDERS[0].1, TANK_COLLIDERS[0].2),
+    ];
+    boxes.iter().all(|&(offset, half_extents)| {
+        scene
+            .physics
+            .intersect_shape(
+                ColliderShape::Cuboid {
+                    half_extents: half_extents + margin,
+                },
+                position + rotation * offset,
+                rotation,
+                crate::collision::HULL
+                    .query_filter()
+                    .predicate(&is_obstacle),
+            )
+            .is_none()
+    })
+}
+
+/// Where a tank lying at `pose` recovers to: upright on the ground under
+/// it, or, when that would leave its hull inside a wall or other cover,
+/// upright at the nearest free spot. It is never moved off the ground or
+/// into a knockout zone, and on equal terms it moves towards `toward`, the
+/// arena's playable side.
+pub(crate) fn recovery_pose(
+    scene: &Scene,
+    pose: &Transform,
+    rest_height: f32,
+    toward: Vec3,
+) -> (Vec3, UnitQuaternion<f32>) {
+    let (position, rotation) = upright_pose(scene, pose, rest_height);
+    let grounded = has_ground(scene);
+    let height_at = |spot: Vec3| {
+        if grounded {
+            ground_height(scene, spot)
+        } else {
+            Some(rest_height)
+        }
+    };
+    let free = |spot: Vec3| {
+        let Some(height) = height_at(spot) else {
+            return false;
+        };
+        let spot = vec3(spot.x, height, spot.z);
+        hull_free(scene, spot, rotation) && !in_knockout_zone(scene, spot + Vec3::y() * 0.6)
+    };
+    // Right where it is when that is free, even at the edge of the ground.
+    if hull_free(scene, position, rotation) {
+        return (position, rotation);
+    }
+    match logic::nearest_free_spot(position, toward, FREE_SPOT_STEP, FREE_SPOT_REACH, free) {
+        Some(spot) => {
+            let height = height_at(spot).unwrap_or(position.y);
+            (vec3(spot.x, height, spot.z), rotation)
+        }
+        None => (position, rotation),
+    }
+}
+
 fn smoothstep(t: f32) -> f32 {
     let t = t.clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
@@ -990,7 +1073,10 @@ impl ComponentUpdate for ComponentKnockout {
                         RigidBodyType::KinematicPositionBased,
                         &knockout,
                     );
-                    let (position, rotation) = upright_pose(scene, &pose, knockout.rest_height);
+                    // Clear of any wall it came to rest against or on.
+                    let toward = home.position;
+                    let (position, rotation) =
+                        recovery_pose(scene, &pose, knockout.rest_height, toward);
                     let upright = Transform::from_components(position, rotation, pose.scale);
                     knockout.righting = Some((pose, upright));
                 }
@@ -1005,6 +1091,78 @@ impl ComponentUpdate for ComponentKnockout {
             Stance::Hooked | Stance::KnockedOut { .. } => {}
         }
         let _ = this.write(scene, |component| *component = knockout);
+    }
+}
+
+/// Resets the prototype round in place: every tank with a meter back at its
+/// spawn, upright, kinematic and at 0% with no knockouts, its abilities and
+/// the bot's timers cleared, and every mine, oil slick and round in flight
+/// gone. Nothing happens in a scene without the prototype's tanks.
+pub fn reset_round(scene: &mut Scene) {
+    let tanks: Vec<_> = scene.objects_with::<ComponentKnockout>().collect();
+    if tanks.is_empty() {
+        return;
+    }
+    let leftovers: Vec<_> = scene
+        .objects_with::<abilities::ComponentBumperMine>()
+        .chain(scene.objects_with::<abilities::ComponentOilSlick>())
+        .chain(scene.objects_with::<crate::tank::ComponentProjectile>())
+        .collect();
+    for object in leftovers {
+        scene.delete(object);
+    }
+    for tank in tanks {
+        let Some(knockout) = scene.write_component::<ComponentKnockout, _>(tank, |knockout| {
+            // Keep the tuning and the spawn; drop every runtime state.
+            *knockout = reset_runtime(knockout.clone());
+            knockout.clone()
+        }) else {
+            continue;
+        };
+        set_body_type(
+            scene,
+            tank,
+            RigidBodyType::KinematicPositionBased,
+            &knockout,
+        );
+        scale_friction(scene, tank, 1.0);
+        show_model(scene, tank, true);
+        if let Some(home) = knockout.home {
+            place(scene, tank, home.position, home.rotation);
+        }
+        let _ = scene.write_component::<abilities::ComponentTankAbilities, _>(tank, |abilities| {
+            *abilities = abilities.reset();
+        });
+        let _ = scene.write_component::<ComponentDummyDriver, _>(tank, |driver| {
+            driver.fire_timer = 0.0;
+        });
+        let _ =
+            scene.write_component::<crate::tank::ComponentTankController, _>(tank, |controller| {
+                controller.speed = 0.0;
+                controller.ammo = controller.max_ammo;
+                controller.fire_cooldown_remaining = 0.0;
+                controller.reload_remaining = 0.0;
+            });
+    }
+}
+
+/// `knockout` with its tuning and home, and every runtime state as new.
+fn reset_runtime(knockout: ComponentKnockout) -> ComponentKnockout {
+    let fresh = ComponentKnockout::default();
+    ComponentKnockout {
+        state: fresh.state,
+        knockback: fresh.knockback,
+        since_launch: fresh.since_launch,
+        rest_height: knockout.home.map_or(0.0, |home| home.position.y),
+        hitstop: fresh.hitstop,
+        pending_launch: fresh.pending_launch,
+        shake: fresh.shake,
+        shake_phase: fresh.shake_phase,
+        boosted: fresh.boosted,
+        oiled: fresh.oiled,
+        righting: fresh.righting,
+        impacted: fresh.impacted,
+        ..knockout
     }
 }
 

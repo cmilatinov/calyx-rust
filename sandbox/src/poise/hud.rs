@@ -446,6 +446,17 @@ fn paint_knockouts(
     p.panel((width - w) * 0.5, 18.0, w, 46.0, 8.0);
     p.label(
         width * 0.5,
+        78.0,
+        "BACKSPACE: RESET",
+        14.0,
+        LIGHT,
+        TextAnchor::Center,
+        None,
+        false,
+        Some(3.0),
+    );
+    p.label(
+        width * 0.5,
         41.0,
         format!("KNOCKED OUT    YOU {yours}    ENEMY {theirs}"),
         20.0,

@@ -24,8 +24,8 @@ use rapier3d::prelude::{Collider, ColliderHandle, RigidBodyType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
-const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
+pub(crate) const TANK_COLLIDER_HALF_EXTENTS: Vec3 = Vec3::new(0.75, 0.5, 1.0);
+pub(crate) const TANK_COLLIDER_OFFSET: Vec3 = Vec3::new(0.0, 0.75, 0.0);
 const COLLISION_SKIN: f32 = 0.01;
 /// How far ahead of and behind its centre the hull feels for the ground,
 /// which sets its pitch on a slope.

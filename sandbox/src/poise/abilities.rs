@@ -35,6 +35,8 @@ pub const ANCHOR_ACTION: &str = "anchor";
 pub const MINE_ACTION: &str = "mine";
 /// The input action that lays an oil slick.
 pub const OIL_ACTION: &str = "oil";
+/// The input action that resets the prototype round.
+pub const RESET_ACTION: &str = "reset";
 
 /// How high above a tank's origin the hook line attaches, in metres.
 const HOOK_HEIGHT: f32 = 1.0;
@@ -383,6 +385,29 @@ impl Default for ComponentTankAbilities {
 impl Component for ComponentTankAbilities {}
 
 impl ComponentTankAbilities {
+    /// These abilities with their tuning and every runtime state as new: no
+    /// cooldowns, no boot out, no hook.
+    pub(crate) fn reset(&self) -> Self {
+        let fresh = Self::default();
+        Self {
+            boot_cooldown_remaining: fresh.boot_cooldown_remaining,
+            hook_cooldown_remaining: fresh.hook_cooldown_remaining,
+            boost_cooldown_remaining: fresh.boost_cooldown_remaining,
+            anchor_cooldown_remaining: fresh.anchor_cooldown_remaining,
+            mine_cooldown_remaining: fresh.mine_cooldown_remaining,
+            oil_cooldown_remaining: fresh.oil_cooldown_remaining,
+            since_kick: fresh.since_kick,
+            boot: fresh.boot,
+            boot_origin: fresh.boot_origin,
+            boot_aim: fresh.boot_aim,
+            hook: fresh.hook,
+            hook_origin: fresh.hook_origin,
+            boost_held: fresh.boost_held,
+            anchor_held: fresh.anchor_held,
+            ..*self
+        }
+    }
+
     fn swing_tuning(&self) -> SwingTuning {
         SwingTuning {
             radius: self.swing_radius,
@@ -479,6 +504,11 @@ impl ComponentUpdate for ComponentTankAbilities {
         {
             Some(super::DummyMode::Bot) => bot_requests(scene, game_object, &abilities),
             Some(_) => return,
+            None if input.action(RESET_ACTION).just_pressed() => {
+                // Everything, this tank's abilities included, starts over.
+                super::reset_round(scene);
+                return;
+            }
             None => {
                 let boost_held = input.action(BOOST_ACTION).pressed();
                 let anchor_held = input.action(ANCHOR_ACTION).pressed();
