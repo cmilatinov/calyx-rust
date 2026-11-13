@@ -1,3 +1,4 @@
+use super::abilities::{kick, ComponentTankAbilities};
 use super::logic::Stance;
 use super::*;
 use calyx_engine::component::ComponentID;
@@ -17,7 +18,7 @@ fn tank(scene: &mut Scene, name: &str, position: Vec3) -> GameObject {
         Transform::from_xyz(position.x, position.y, position.z).matrix(),
     );
     scene.add_component(tank, crate::tank::ComponentTankController::default());
-    scene.add_component(tank, ComponentPoise::default());
+    scene.add_component(tank, ComponentKnockout::default());
     scene.add_component(
         tank,
         ComponentRigidBody {
@@ -52,21 +53,37 @@ fn body_type(scene: &Scene, tank: GameObject) -> RigidBodyType {
     scene.physics.bodies[body_handle(scene, tank).unwrap()].body_type()
 }
 
+fn meter(scene: &Scene, tank: GameObject) -> (f32, f32) {
+    scene
+        .read_component::<ComponentKnockout, _, _>(tank, |knockout| {
+            (knockout.state.percent, knockout.knockback.magnitude())
+        })
+        .unwrap()
+}
+
 #[test]
 fn tanks_without_prototype_components_keep_player_control_and_health() {
     let mut scene = calyx_engine::test_support::test_scene();
     let plain = scene.create(None, None);
     scene.add_component(plain, crate::tank::ComponentTankController::default());
     assert_eq!(tank_control(&scene, plain), TankControl::Player);
-    // A round on a tank without poise is left to its health.
+    assert_eq!(traction(&scene, plain), 1.0);
+    // A round on a tank without a meter is left to its health.
     assert!(!absorb_round(&mut scene, plain, 35.0, Vec3::z()));
 }
 
 #[test]
-fn a_dummy_drives_its_loop_or_stays_put() {
+fn a_dummy_drives_its_loop_stays_put_or_fights() {
     let mut scene = calyx_engine::test_support::test_scene();
+    let player = tank(&mut scene, "Player", vec3(0.0, 0.0, 20.0));
     let dummy = tank(&mut scene, "Dummy", Vec3::zeros());
-    scene.add_component(dummy, ComponentDummyDriver::default());
+    scene.add_component(
+        dummy,
+        ComponentDummyDriver {
+            mode: DummyMode::DriveLoop,
+            ..Default::default()
+        },
+    );
     assert_eq!(
         tank_control(&scene, dummy),
         TankControl::Dummy {
@@ -84,10 +101,19 @@ fn a_dummy_drives_its_loop_or_stays_put() {
             steer: 0.0
         }
     );
+    // The bot heads for the player, and aims at it.
+    scene.write_component::<ComponentDummyDriver, _>(dummy, |driver| {
+        driver.mode = DummyMode::Bot;
+    });
+    let TankControl::Bot { throttle, aim, .. } = tank_control(&scene, dummy) else {
+        panic!("a bot");
+    };
+    assert_eq!(throttle, 1.0);
+    assert_eq!(aim, scene.world_transform(player).position);
 }
 
 #[test]
-fn rounds_drain_poise_then_a_break_turns_the_body_dynamic_and_locks_input() {
+fn rounds_add_to_the_meter_and_shove_and_a_launch_turns_the_body_dynamic() {
     let mut scene = calyx_engine::test_support::test_scene();
     let target = tank(&mut scene, "Target", vec3(0.0, 0.0, 5.0));
     scene.prepare();
@@ -97,29 +123,34 @@ fn rounds_drain_poise_then_a_break_turns_the_body_dynamic_and_locks_input() {
     );
 
     assert!(absorb_round(&mut scene, target, 35.0, Vec3::z()));
-    let (poise, knockback) = scene
-        .read_component::<ComponentPoise, _, _>(target, |poise| {
-            (poise.state.poise, poise.knockback)
-        })
-        .unwrap();
-    assert_eq!(poise, 65.0);
-    assert!(knockback.z > 0.0, "a round that holds still shoves");
+    let (percent, shove) = meter(&scene, target);
+    assert_eq!(percent, 5.0);
+    assert!(shove > 0.0, "a weak round only shoves");
     assert_eq!(tank_control(&scene, target), TankControl::Player);
 
-    absorb_round(&mut scene, target, 35.0, Vec3::z());
-    absorb_round(&mut scene, target, 35.0, Vec3::z());
+    // A kick at a high meter launches.
+    scene.write_component::<ComponentKnockout, _>(target, |knockout| {
+        knockout.state.percent = 120.0;
+    });
+    let abilities = ComponentTankAbilities {
+        boot_hitstop: 0.0,
+        ..Default::default()
+    };
+    let reaction = strike(&mut scene, target, kick(&abilities, Vec3::z())).unwrap();
+    assert!(matches!(reaction, Reaction::Launch(_)), "{reaction:?}");
     let stance = scene
-        .read_component::<ComponentPoise, _, _>(target, |poise| poise.state.stance)
+        .read_component::<ComponentKnockout, _, _>(target, |knockout| knockout.state.stance)
         .unwrap();
     assert_eq!(stance, Stance::KnockedDown { elapsed: 0.0 });
     assert_eq!(body_type(&scene, target), RigidBodyType::Dynamic);
     let velocity = body_velocity(&scene, target);
-    assert!(velocity.z > 0.0 && velocity.y > 0.0, "{velocity:?}");
+    // 11 m/s at 0%, grown by 136% of the meter.
+    assert!(velocity.z > 11.0 * 2.5, "{velocity:?}");
+    assert!(velocity.y > 0.0);
     assert!(matches!(
         tank_control(&scene, target),
         TankControl::Locked { .. }
     ));
-    // The component agrees, so the next physics sync keeps it dynamic.
     assert_eq!(
         scene
             .read_component::<ComponentRigidBody, _, _>(target, |body| body.ty)
@@ -129,8 +160,7 @@ fn rounds_drain_poise_then_a_break_turns_the_body_dynamic_and_locks_input() {
 }
 
 #[test]
-fn a_kick_shoves_far_harder_than_a_round_and_breaks_low_poise() {
-    use super::abilities::{kick, ComponentTankAbilities};
+fn a_kick_hits_far_harder_than_a_round_and_freezes_both_tanks() {
     let mut scene = calyx_engine::test_support::test_scene();
     let shot = tank(&mut scene, "Shot", vec3(0.0, 0.0, 5.0));
     let kicked = tank(&mut scene, "Kicked", vec3(10.0, 0.0, 5.0));
@@ -138,28 +168,80 @@ fn a_kick_shoves_far_harder_than_a_round_and_breaks_low_poise() {
     let abilities = ComponentTankAbilities::default();
 
     absorb_round(&mut scene, shot, 35.0, Vec3::z());
-    strike(&mut scene, kicked, kick(&abilities, Vec3::z()));
-    let state = |scene: &Scene, tank| {
-        scene
-            .read_component::<ComponentPoise, _, _>(tank, |poise| {
-                (poise.state.poise, poise.knockback.magnitude())
-            })
-            .unwrap()
-    };
-    let (_, round_shove) = state(&scene, shot);
-    let (kicked_poise, kick_shove) = state(&scene, kicked);
-    assert_eq!(kicked_poise, 100.0 - abilities.boot_poise_damage);
-    assert!(
-        kick_shove > round_shove * 3.0,
-        "{kick_shove} vs {round_shove}"
+    let reaction = strike(&mut scene, kicked, kick(&abilities, Vec3::z())).unwrap();
+    let (shot_percent, _) = meter(&scene, shot);
+    let (kicked_percent, _) = meter(&scene, kicked);
+    assert!(kicked_percent > shot_percent * 3.0);
+    // Even at 0% a kick launches, but only once the hit-stop ends.
+    assert!(matches!(reaction, Reaction::Launch(_)), "{reaction:?}");
+    assert!(matches!(
+        tank_control(&scene, kicked),
+        TankControl::Locked { .. }
+    ));
+    assert_eq!(
+        body_type(&scene, kicked),
+        RigidBodyType::KinematicPositionBased,
+        "frozen until the hit-stop ends"
     );
+}
 
-    // A second kick breaks what the first left, and launches it.
-    strike(&mut scene, kicked, kick(&abilities, Vec3::z()));
-    assert_eq!(body_type(&scene, kicked), RigidBodyType::Dynamic);
-    let velocity = body_velocity(&scene, kicked);
-    assert!(
-        velocity.z >= abilities.boot_launch_speed - 1e-3,
-        "{velocity:?}"
+#[test]
+fn an_anchored_tank_takes_the_meter_but_no_knockback() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    let anchored = tank(&mut scene, "Anchored", Vec3::zeros());
+    scene.prepare();
+    scene.write_component::<ComponentKnockout, _>(anchored, |knockout| {
+        knockout.state.anchored = 1.0;
+        knockout.state.percent = 150.0;
+    });
+    let abilities = ComponentTankAbilities::default();
+    let reaction = strike(&mut scene, anchored, kick(&abilities, Vec3::z())).unwrap();
+    assert_eq!(reaction, Reaction::Ignored);
+    let (percent, shove) = meter(&scene, anchored);
+    assert_eq!(percent, 150.0 + abilities.boot_damage);
+    assert_eq!(shove, 0.0);
+    // Nor does a bumper launch it.
+    assert!(!launch(&mut scene, anchored, Vec3::y() * 10.0, 0.01, 8.0));
+    assert_eq!(
+        body_type(&scene, anchored),
+        RigidBodyType::KinematicPositionBased
     );
+}
+
+#[test]
+fn oil_takes_the_grip_of_tanks_on_it() {
+    let mut scene = calyx_engine::test_support::test_scene();
+    let oiled = tank(&mut scene, "Oiled", vec3(1.0, 0.0, 1.0));
+    let dry = tank(&mut scene, "Dry", vec3(10.0, 0.0, 0.0));
+    let oil = scene.create(None, None);
+    scene.add_component(
+        oil,
+        abilities::ComponentOilSlick {
+            half_size: 2.0,
+            traction: 0.2,
+            ..Default::default()
+        },
+    );
+    assert_eq!(traction(&scene, oiled), 0.2);
+    assert_eq!(traction(&scene, dry), 1.0);
+}
+
+#[test]
+fn the_sandbox_binds_every_prototype_ability() {
+    let text = include_str!("../../assets/input.cxinput");
+    let map: calyx_engine::input::ActionMap = serde_json::from_str(text).unwrap();
+    let saved = serde_json::to_value(&map).unwrap();
+    for action in [
+        abilities::BOOT_ACTION,
+        abilities::HOOK_ACTION,
+        abilities::BOOST_ACTION,
+        abilities::ANCHOR_ACTION,
+        abilities::MINE_ACTION,
+        abilities::OIL_ACTION,
+    ] {
+        assert!(
+            saved["actions"].get(action).is_some(),
+            "{action} is unbound"
+        );
+    }
 }

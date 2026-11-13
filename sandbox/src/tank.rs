@@ -380,22 +380,66 @@ impl ComponentUpdate for ComponentTankController {
 
         let dt = resources.time().delta_time();
         let previous_tank_transform = scene.world_transform(game_object);
-        // PROTOTYPE (poise_poc, #610): a tank with prototype poise may be
-        // knocked down, hooked or driven by a dummy instead of the player.
-        // Tanks without those components always take the player's input.
+        // PROTOTYPE (poise_poc, #610): a tank with a prototype knockout
+        // meter may be knocked down, hooked, frozen by a hit or driven by a
+        // dummy or bot instead of the player, and oil takes its grip. Tanks
+        // without those components always take the player's input, at full
+        // grip.
+        let traction = crate::poise::traction(scene, game_object);
+        if traction < 1.0 {
+            // Only this frame's copy loses grip; it is never written back.
+            controller.acceleration *= traction;
+            controller.braking *= traction;
+            controller.friction *= traction;
+        }
         match crate::poise::tank_control(scene, game_object) {
             crate::poise::TankControl::Player => {}
             crate::poise::TankControl::Locked { camera_focus } => {
-                // Tumbling or hooked: no input, but the camera keeps up.
+                // Tumbling, hooked or frozen: no input, but the camera keeps
+                // up.
                 let mut focus = previous_tank_transform;
                 focus.position = camera_focus;
                 update_camera(scene, input, dt, &controller, &focus, &focus);
+                crate::poise::shake_camera(scene, game_object, controller.camera);
                 let _ = this.write(scene, |component| component.speed = 0.0);
                 return;
             }
             crate::poise::TankControl::Dummy { throttle, steer } => {
                 update_hull(scene, game_object, throttle, steer, dt, &mut controller);
                 let _ = this.write(scene, |component| component.speed = controller.speed);
+                return;
+            }
+            crate::poise::TankControl::Bot {
+                throttle,
+                steer,
+                aim,
+            } => {
+                let tank_transform =
+                    update_hull(scene, game_object, throttle, steer, dt, &mut controller);
+                update_turret(
+                    scene,
+                    dt,
+                    &controller,
+                    &previous_tank_transform,
+                    &tank_transform,
+                    Some(aim),
+                );
+                let fire = crate::poise::bot_fires(scene, game_object, dt);
+                update_shooting(
+                    scene,
+                    game_object,
+                    fire,
+                    dt,
+                    &mut controller,
+                    &tank_transform,
+                    Some(aim),
+                );
+                let _ = this.write(scene, |component| {
+                    component.fire_cooldown_remaining = controller.fire_cooldown_remaining;
+                    component.reload_remaining = controller.reload_remaining;
+                    component.ammo = controller.ammo;
+                    component.speed = controller.speed;
+                });
                 return;
             }
         }
@@ -417,6 +461,8 @@ impl ComponentUpdate for ComponentTankController {
             &previous_tank_transform,
             &tank_transform,
         );
+        // PROTOTYPE (poise_poc, #610): hits shake a prototype tank's camera.
+        crate::poise::shake_camera(scene, game_object, controller.camera);
         let aim_point = cursor_aim_point(scene, input, &controller, tank_transform.position.y);
         update_crosshair(scene, &controller, aim_point);
         update_turret(
@@ -430,7 +476,7 @@ impl ComponentUpdate for ComponentTankController {
         update_shooting(
             scene,
             game_object,
-            input,
+            input.action("shoot").pressed(),
             dt,
             &mut controller,
             &tank_transform,
@@ -878,7 +924,7 @@ fn update_camera(
 fn update_shooting(
     scene: &mut calyx_engine::scene::Scene,
     tank: calyx_engine::scene::GameObject,
-    input: &Input,
+    shoot_pressed: bool,
     dt: TimeType,
     controller: &mut ComponentTankController,
     tank_transform: &Transform,
@@ -891,7 +937,7 @@ fn update_shooting(
         return;
     }
     if !can_fire(
-        input.action("shoot").pressed(),
+        shoot_pressed,
         controller.fire_cooldown_remaining,
         controller.ammo,
     ) {

@@ -1,129 +1,172 @@
-//! PROTOTYPE (poise_poc, #610): the poise state machine and the grappling
-//! hook's swing, kept free of the scene so they can be tested alone.
+//! PROTOTYPE (poise_poc, #610): the knockout meter's state machine, how
+//! hard a hit knocks a tank back, the grappling hook's swing and the spring
+//! boot's reach, kept free of the scene so they can be tested alone.
 
 use nalgebra_glm::{vec3, Vec3};
 
-/// What a tank with poise is doing.
+/// What a tank with a knockout meter is doing.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum Stance {
-    /// Driving under kinematic control; hits drain poise.
+    /// Driving under kinematic control.
     #[default]
     Upright,
-    /// Tumbling on a dynamic rigid body, `elapsed` seconds after the break.
+    /// Tumbling on a dynamic rigid body, `elapsed` seconds after the launch.
     KnockedDown { elapsed: f32 },
     /// Back on kinematic control, easing upright onto its tracks.
     Righting { elapsed: f32 },
     /// Held and swung by a grappling hook.
     Hooked,
+    /// Out of the arena, `elapsed` seconds ago, waiting to respawn.
+    KnockedOut { elapsed: f32 },
 }
 
-/// The longest step the swing's spring integrates at once, in seconds.
-const SWING_STEP: f32 = 1.0 / 240.0;
-
-/// The tuning [`PoiseState`] needs, copied from the tank's poise component.
+/// The timings [`MeterState`] needs, copied from the tank's component.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PoiseTuning {
-    pub max_poise: f32,
-    pub regen_delay: f32,
-    pub regen_rate: f32,
+pub struct MeterTuning {
     pub recovery_time: f32,
     pub righting_time: f32,
     pub immunity_time: f32,
+    pub respawn_delay: f32,
+    pub respawn_invulnerability: f32,
 }
 
-/// The result of a hit on a tank's poise.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HitOutcome {
-    /// Poise dropped but held.
-    Drained,
-    /// Poise reached zero: the tank goes down.
-    Broken,
-    /// The tank is already down or held; its poise is not touched.
-    AlreadyDown,
-}
-
-/// A change of stance [`PoiseState::tick`] asks the scene to carry out.
+/// A change of stance [`MeterState::tick`] asks the scene to carry out.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Transition {
     /// The recovery time is over: back to kinematic control, and upright.
     StartRighting,
-    /// Upright again, at full poise and immune for a while.
+    /// Upright again, immune to launches for a while.
     Recovered,
+    /// Back at the spawn, at 0% and invulnerable for a while.
+    Respawn,
 }
 
+/// A tank's knockout meter: a percentage that only goes up until it is
+/// knocked out, and the clocks of its knockdowns, shields and respawns.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct PoiseState {
-    pub poise: f32,
+pub struct MeterState {
+    /// Damage taken, in percent; it never caps.
+    pub percent: f32,
     pub stance: Stance,
-    /// Seconds since the last hit.
-    pub since_hit: f32,
-    /// Seconds left in which poise cannot break.
+    /// Seconds left, after righting, in which a hit cannot launch the tank.
     pub immunity: f32,
+    /// Seconds left, after a respawn, in which hits do nothing at all.
+    pub invulnerable: f32,
+    /// Seconds left of an anchor: hits add to the meter but move nothing.
+    pub anchored: f32,
+    /// How many times the tank has been knocked out.
+    pub knockouts: u32,
 }
 
-impl PoiseState {
-    pub fn new(max_poise: f32) -> Self {
+impl Default for MeterState {
+    fn default() -> Self {
         Self {
-            poise: max_poise.max(0.0),
+            percent: 0.0,
             stance: Stance::Upright,
-            since_hit: f32::INFINITY,
             immunity: 0.0,
+            invulnerable: 0.0,
+            anchored: 0.0,
+            knockouts: 0,
         }
     }
+}
 
+/// What a hit does to a tank, besides its meter.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Reaction {
+    /// Nothing: the tank is invulnerable, anchored, righting, hooked or out.
+    Ignored,
+    /// A shove at this speed, in metres per second; the tank keeps driving.
+    Shove(f32),
+    /// A launch at this speed into a tumble.
+    Launch(f32),
+    /// A push at this speed to a tank already tumbling.
+    Juggle(f32),
+}
+
+/// How hard a hit knocks a tank back, Smash-style: `base` metres per second
+/// at 0%, growing by `growth` of that for every percent on the meter.
+pub fn knockback_speed(base: f32, growth: f32, percent: f32) -> f32 {
+    base.max(0.0) * (1.0 + growth.max(0.0) * percent.max(0.0))
+}
+
+impl MeterState {
     pub fn is_upright(&self) -> bool {
         self.stance == Stance::Upright
+    }
+
+    pub fn is_knocked_out(&self) -> bool {
+        matches!(self.stance, Stance::KnockedOut { .. })
     }
 
     pub fn is_immune(&self) -> bool {
         self.is_upright() && self.immunity > 0.0
     }
 
-    /// Drains `amount` of poise. While immune, poise stops at 1 and cannot
-    /// break.
-    pub fn hit(&mut self, amount: f32) -> HitOutcome {
-        if !self.is_upright() {
-            return HitOutcome::AlreadyDown;
+    pub fn is_invulnerable(&self) -> bool {
+        self.invulnerable > 0.0
+    }
+
+    pub fn is_anchored(&self) -> bool {
+        self.anchored > 0.0
+    }
+
+    /// Takes a hit of `damage` percent pushing at `speed` (already scaled by
+    /// the meter, see [`knockback_speed`]) and says what it does. A speed at
+    /// or above `launch_threshold` launches an upright tank, unless it is
+    /// immune; below it only shoves.
+    pub fn hit(&mut self, damage: f32, speed: f32, launch_threshold: f32) -> Reaction {
+        if self.is_invulnerable() || self.is_knocked_out() {
+            return Reaction::Ignored;
         }
-        let amount = if amount.is_finite() {
-            amount.max(0.0)
+        if damage.is_finite() {
+            self.percent += damage.max(0.0);
+        }
+        let speed = if speed.is_finite() {
+            speed.max(0.0)
         } else {
             0.0
         };
-        self.since_hit = 0.0;
-        let floor = if self.immunity > 0.0 {
-            self.poise.min(1.0)
-        } else {
-            0.0
-        };
-        self.poise = (self.poise - amount).max(floor);
-        if self.poise <= 0.0 {
-            self.poise = 0.0;
-            HitOutcome::Broken
-        } else {
-            HitOutcome::Drained
+        if self.is_anchored() {
+            return Reaction::Ignored;
+        }
+        match self.stance {
+            Stance::Upright if speed >= launch_threshold && !self.is_immune() => {
+                Reaction::Launch(speed)
+            }
+            Stance::Upright => Reaction::Shove(speed),
+            Stance::KnockedDown { .. } => Reaction::Juggle(speed),
+            Stance::Righting { .. } | Stance::Hooked | Stance::KnockedOut { .. } => {
+                Reaction::Ignored
+            }
         }
     }
 
-    /// Puts the tank down on physics with no poise, whatever it had.
+    /// Puts the tank down on physics.
     pub fn knock_down(&mut self) {
-        self.poise = 0.0;
         self.immunity = 0.0;
         self.stance = Stance::KnockedDown { elapsed: 0.0 };
     }
 
-    /// Advances the state by `dt` seconds: regeneration while upright, the
-    /// recovery and righting clocks while down.
-    pub fn tick(&mut self, dt: f32, tuning: &PoiseTuning) -> Option<Transition> {
+    /// Takes the tank out of the arena, counting the knockout.
+    pub fn knock_out(&mut self) {
+        if !self.is_knocked_out() {
+            self.knockouts += 1;
+            self.stance = Stance::KnockedOut { elapsed: 0.0 };
+            self.immunity = 0.0;
+            self.anchored = 0.0;
+        }
+    }
+
+    /// Advances the state by `dt` seconds: the shields' clocks, and the
+    /// recovery, righting and respawn clocks.
+    pub fn tick(&mut self, dt: f32, tuning: &MeterTuning) -> Option<Transition> {
         let dt = if dt.is_finite() { dt.max(0.0) } else { 0.0 };
+        self.invulnerable = (self.invulnerable - dt).max(0.0);
+        self.anchored = (self.anchored - dt).max(0.0);
         match self.stance {
             Stance::Upright => {
                 self.immunity = (self.immunity - dt).max(0.0);
-                self.since_hit += dt;
-                if self.since_hit >= tuning.regen_delay {
-                    self.poise = (self.poise + tuning.regen_rate.max(0.0) * dt)
-                        .min(tuning.max_poise.max(0.0));
-                }
                 None
             }
             Stance::KnockedDown { elapsed } => {
@@ -147,19 +190,30 @@ impl PoiseState {
                 }
             }
             Stance::Hooked => None,
+            Stance::KnockedOut { elapsed } => {
+                let elapsed = elapsed + dt;
+                if elapsed >= tuning.respawn_delay {
+                    self.stance = Stance::Upright;
+                    self.percent = 0.0;
+                    self.immunity = 0.0;
+                    self.invulnerable = tuning.respawn_invulnerability.max(0.0);
+                    Some(Transition::Respawn)
+                } else {
+                    self.stance = Stance::KnockedOut { elapsed };
+                    None
+                }
+            }
         }
     }
 
-    /// Upright at full poise, immune for the immunity time.
-    pub fn recover(&mut self, tuning: &PoiseTuning) {
+    /// Upright, immune to launches for the immunity time.
+    pub fn recover(&mut self, tuning: &MeterTuning) {
         self.stance = Stance::Upright;
-        self.poise = tuning.max_poise.max(0.0);
         self.immunity = tuning.immunity_time.max(0.0);
-        self.since_hit = f32::INFINITY;
     }
 
     /// How far through the righting the tank is, 0 to 1.
-    pub fn righting_progress(&self, tuning: &PoiseTuning) -> f32 {
+    pub fn righting_progress(&self, tuning: &MeterTuning) -> f32 {
         match self.stance {
             Stance::Righting { elapsed } if tuning.righting_time > 0.0 => {
                 (elapsed / tuning.righting_time).clamp(0.0, 1.0)
@@ -169,6 +223,30 @@ impl PoiseState {
         }
     }
 }
+
+/// Whether a hook held for `elapsed` seconds lets go: when the key is
+/// released, or when the swing's time limit runs out and the line snaps.
+pub fn hook_lets_go(held: bool, elapsed: f32, time_limit: f32) -> bool {
+    !held || elapsed >= time_limit
+}
+
+/// Whether `position` is on a square patch centred at `center` with
+/// `half_size`, measured on the ground plane.
+pub fn on_patch(center: Vec3, half_size: f32, position: Vec3) -> bool {
+    (position.x - center.x).abs() <= half_size && (position.z - center.z).abs() <= half_size
+}
+
+/// The velocity a bumper mine launches a tank at `percent` with: straight
+/// up and a push out along `away`, both growing with the meter.
+pub fn bumper_launch(lift: f32, push: f32, growth: f32, percent: f32, away: Vec3) -> Vec3 {
+    let scale = knockback_speed(1.0, growth, percent);
+    let away = vec3(away.x, 0.0, away.z);
+    let away = away.try_normalize(1e-6).unwrap_or_else(Vec3::zeros);
+    Vec3::y() * lift.max(0.0) * scale + away * push.max(0.0) * scale
+}
+
+/// The longest step the swing's spring integrates at once, in seconds.
+const SWING_STEP: f32 = 1.0 / 240.0;
 
 /// The tuning a hook swing needs: the swing chases the angle the player's
 /// turret points at with an angular spring, limited in acceleration and
@@ -301,84 +379,121 @@ pub fn boot_hit(
 mod tests {
     use super::*;
 
-    fn tuning() -> PoiseTuning {
-        PoiseTuning {
-            max_poise: 100.0,
-            regen_delay: 1.0,
-            regen_rate: 50.0,
+    fn tuning() -> MeterTuning {
+        MeterTuning {
             recovery_time: 2.0,
             righting_time: 0.5,
-            immunity_time: 1.5,
+            immunity_time: 1.0,
+            respawn_delay: 1.0,
+            respawn_invulnerability: 2.0,
         }
     }
 
     #[test]
-    fn hits_drain_poise_and_it_regenerates_only_after_the_delay() {
-        let tuning = tuning();
-        let mut state = PoiseState::new(100.0);
-        assert_eq!(state.hit(35.0), HitOutcome::Drained);
-        assert_eq!(state.poise, 65.0);
-        state.tick(0.9, &tuning);
-        assert_eq!(state.poise, 65.0, "no regeneration before the delay");
-        state.tick(0.2, &tuning);
-        assert!(state.poise > 65.0, "regenerates once the delay is over");
-        // A hit restarts the delay.
-        let before = state.poise - 10.0;
-        state.hit(10.0);
-        state.tick(0.5, &tuning);
-        assert_eq!(state.poise, before);
-        // Regeneration stops at the maximum.
-        state.tick(10.0, &tuning);
-        state.tick(10.0, &tuning);
-        assert_eq!(state.poise, 100.0);
-        // Invalid damage changes nothing.
+    fn knockback_grows_with_the_meter_and_launches_past_the_threshold() {
+        assert_eq!(knockback_speed(10.0, 0.01, 0.0), 10.0);
+        assert!((knockback_speed(10.0, 0.01, 100.0) - 20.0).abs() < 1e-5);
+        assert!(knockback_speed(10.0, 0.01, 150.0) > knockback_speed(10.0, 0.01, 50.0));
+
+        let mut state = MeterState::default();
+        // A weak hit at a low meter only shoves; the meter counts up.
+        let speed = knockback_speed(2.5, 0.012, state.percent + 5.0);
+        assert_eq!(state.hit(5.0, speed, 11.0), Reaction::Shove(speed));
+        assert_eq!(state.percent, 5.0);
+        // The meter never caps, and the same hit grows with it.
+        for _ in 0..60 {
+            state.hit(5.0, 0.0, 11.0);
+        }
+        assert_eq!(state.percent, 305.0);
+        let speed = knockback_speed(2.5, 0.012, state.percent);
+        assert!(speed >= 11.0);
+        assert_eq!(state.hit(0.0, speed, 11.0), Reaction::Launch(speed));
+        // Invalid damage adds nothing.
         for invalid in [-5.0, f32::NAN, f32::INFINITY] {
-            state.hit(invalid);
+            state.hit(invalid, 0.0, 11.0);
         }
-        assert_eq!(state.poise, 100.0);
+        assert_eq!(state.percent, 305.0);
     }
 
     #[test]
-    fn a_break_knocks_down_recovers_and_grants_immunity() {
+    fn a_launch_tumbles_recovers_and_grants_immunity() {
         let tuning = tuning();
-        let mut state = PoiseState::new(100.0);
-        state.hit(60.0);
-        assert_eq!(state.hit(60.0), HitOutcome::Broken);
-        assert_eq!(state.poise, 0.0);
+        let mut state = MeterState::default();
         state.knock_down();
-        assert!(!state.is_upright());
-        // Hits on a tumbling tank leave its poise alone.
-        assert_eq!(state.hit(30.0), HitOutcome::AlreadyDown);
-
+        // A tumbling tank takes the meter and a push.
+        assert_eq!(state.hit(4.0, 6.0, 11.0), Reaction::Juggle(6.0));
         assert_eq!(state.tick(1.9, &tuning), None);
         assert_eq!(state.tick(0.2, &tuning), Some(Transition::StartRighting));
-        assert_eq!(state.stance, Stance::Righting { elapsed: 0.0 });
-        assert_eq!(state.tick(0.25, &tuning), None);
-        assert!((state.righting_progress(&tuning) - 0.5).abs() < 1e-6);
-        assert_eq!(state.tick(0.3, &tuning), Some(Transition::Recovered));
-        assert!(state.is_upright());
-        assert_eq!(state.poise, 100.0);
+        assert_eq!(state.hit(4.0, 20.0, 11.0), Reaction::Ignored);
+        assert_eq!(state.tick(0.6, &tuning), Some(Transition::Recovered));
         assert!(state.is_immune());
-
-        // Immune: hits drain poise but never break it.
-        assert_eq!(state.hit(150.0), HitOutcome::Drained);
-        assert_eq!(state.poise, 1.0);
-        assert_eq!(state.hit(150.0), HitOutcome::Drained);
-        // Once immunity runs out, poise breaks again.
-        state.tick(1.6, &tuning);
-        assert!(!state.is_immune());
-        assert_eq!(state.hit(100.0), HitOutcome::Broken);
+        // Immune: a strong hit only shoves.
+        assert_eq!(state.hit(10.0, 30.0, 11.0), Reaction::Shove(30.0));
+        state.tick(1.1, &tuning);
+        assert_eq!(state.hit(10.0, 30.0, 11.0), Reaction::Launch(30.0));
+        // The meter did not reset: only a knockout resets it.
+        assert_eq!(state.percent, 28.0);
     }
 
     #[test]
-    fn a_hooked_tank_waits_for_its_release() {
+    fn a_knockout_respawns_at_zero_and_invulnerable() {
         let tuning = tuning();
-        let mut state = PoiseState::new(100.0);
-        state.stance = Stance::Hooked;
-        assert_eq!(state.tick(10.0, &tuning), None);
-        assert_eq!(state.hit(50.0), HitOutcome::AlreadyDown);
-        state.knock_down();
-        assert_eq!(state.stance, Stance::KnockedDown { elapsed: 0.0 });
+        let mut state = MeterState {
+            percent: 120.0,
+            ..Default::default()
+        };
+        state.knock_out();
+        state.knock_out();
+        assert_eq!(state.knockouts, 1, "one knockout, however often asked");
+        assert_eq!(state.hit(10.0, 40.0, 11.0), Reaction::Ignored);
+        assert_eq!(state.percent, 120.0);
+        assert_eq!(state.tick(0.5, &tuning), None);
+        assert_eq!(state.tick(0.6, &tuning), Some(Transition::Respawn));
+        assert!(state.is_upright());
+        assert_eq!(state.percent, 0.0);
+        assert!(state.is_invulnerable());
+        // Invulnerable: hits change nothing at all.
+        assert_eq!(state.hit(10.0, 40.0, 11.0), Reaction::Ignored);
+        assert_eq!(state.percent, 0.0);
+        state.tick(2.1, &tuning);
+        assert!(!state.is_invulnerable());
+        assert_eq!(state.hit(10.0, 4.0, 11.0), Reaction::Shove(4.0));
+    }
+
+    #[test]
+    fn an_anchor_takes_the_meter_but_no_knockback() {
+        let mut state = MeterState {
+            anchored: 1.0,
+            ..Default::default()
+        };
+        assert_eq!(state.hit(16.0, 40.0, 11.0), Reaction::Ignored);
+        assert_eq!(state.percent, 16.0);
+        state.tick(1.1, &tuning());
+        assert_eq!(state.hit(16.0, 40.0, 11.0), Reaction::Launch(40.0));
+    }
+
+    #[test]
+    fn a_hook_snaps_when_its_time_runs_out() {
+        assert!(!hook_lets_go(true, 1.0, 1.75));
+        assert!(hook_lets_go(true, 1.75, 1.75));
+        assert!(hook_lets_go(false, 0.1, 1.75));
+    }
+
+    #[test]
+    fn bumpers_launch_harder_with_the_meter_and_oil_covers_its_patch() {
+        let low = bumper_launch(9.0, 4.0, 0.01, 0.0, vec3(1.0, 0.0, 0.0));
+        let high = bumper_launch(9.0, 4.0, 0.01, 100.0, vec3(1.0, 0.0, 0.0));
+        assert_eq!(low, vec3(4.0, 9.0, 0.0));
+        assert!((high - low * 2.0).magnitude() < 1e-4);
+        // Straight up when the tank sits on the mine's centre.
+        assert_eq!(
+            bumper_launch(9.0, 4.0, 0.0, 0.0, Vec3::zeros()),
+            vec3(0.0, 9.0, 0.0)
+        );
+
+        let center = vec3(2.0, 0.0, 2.0);
+        assert!(on_patch(center, 1.5, vec3(3.0, 0.5, 1.0)));
+        assert!(!on_patch(center, 1.5, vec3(4.0, 0.0, 2.0)));
     }
 
     fn swing_tuning() -> SwingTuning {

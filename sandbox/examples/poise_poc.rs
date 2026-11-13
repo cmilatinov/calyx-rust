@@ -5,12 +5,14 @@
 //! - `assets/game/prefabs/poise_player.cxprefab`: the tank prefab's tank,
 //!   camera rig and crosshair, re-rooted so the tank itself is unscaled (its
 //!   model sits under a scaled `Model` child) and its colliders are in metres,
-//!   with a kinematic rigid body that turns dynamic on a knockdown, poise in
-//!   place of health, the boot and hook, and the prototype HUD.
+//!   with a kinematic rigid body that turns dynamic on a knockdown, a
+//!   knockout meter in place of health, the abilities, and the prototype HUD.
 //! - `assets/game/scenes/poise_poc.cxscene`: flat ground walled in, a few
-//!   walls and obstacles, the player and an enemy dummy, both linked
-//!   instances of that prefab, lit like the arena. It plays straight away,
-//!   with no menu.
+//!   walls and obstacles, the player and an enemy bot, both linked instances
+//!   of that prefab, lit like the arena. Tanks are knocked out in two places
+//!   only: a water channel by the north wall, and an open cliff edge in the
+//!   middle of the east side, where the wall stops and the ground ends. It
+//!   plays straight away, with no menu.
 #![recursion_limit = "256"]
 
 use std::collections::BTreeMap;
@@ -28,7 +30,9 @@ use nalgebra_glm::{vec3, Vec3};
 use rapier3d::dynamics::RigidBodyType;
 use sandbox::poise::abilities::ComponentTankAbilities;
 use sandbox::poise::hud::ComponentPoiseHud;
-use sandbox::poise::{tank_collider, ComponentDummyDriver, ComponentPoise, TANK_COLLIDERS};
+use sandbox::poise::{
+    tank_collider, ComponentDummyDriver, ComponentKnockout, ComponentKnockoutZone, TANK_COLLIDERS,
+};
 use sandbox::tank::{ComponentHealth, ComponentProjectileTarget, ComponentTankController};
 use sandbox::terrain::ComponentDriveSurface;
 use serde_json::{json, Value};
@@ -48,6 +52,22 @@ const CUBE_MESH: &str = "4d2d87eb-60b4-4dcc-b3d4-67bc444396c9";
 const GROUND_MATERIAL: &str = "3a0456d8-d892-5462-b382-823fda3f541d";
 /// `generated/materials/sunny/ground_paving`.
 const PAVING_MATERIAL_PATH: &str = "generated/materials/sunny/ground_paving";
+/// The water: the sky blue of `game/materials/tanks/sunny/player_1`, matte,
+/// where the pickups' blue glows. The channel's banks: Sunny Battlefield's
+/// `ground_dirt`. The canyon floor far below the cliff: `hazard_black`, dark
+/// so the drop reads.
+const WATER_MATERIAL: &str = "35e0c5c9-c703-563c-9a17-c6ad1b0e9482";
+const BANK_MATERIAL: &str = "2828d45b-5505-5a37-85e3-e4c61f4bdb2c";
+const CANYON_MATERIAL: &str = "38294ccb-6ce1-55d1-a7cd-758e8daccc2f";
+/// The water channel along the north wall, as (min x, max x, min z, max z):
+/// it runs up to the wall's face, so a tank thrown over it hits the wall and
+/// drops in.
+const CHANNEL: (f32, f32, f32, f32) = (-16.0, 6.0, 16.0, HALF - WALL_THICKNESS * 0.5);
+/// The stretch of the east side, in z, with no wall and no ground beyond.
+const CLIFF: (f32, f32) = (-8.0, 8.0);
+/// The east edge of the ground, at the outer face of the east wall.
+const EAST_EDGE: f32 = HALF + WALL_THICKNESS * 0.5;
+
 /// Tank body roles, from `game/materials/tanks/sunny`.
 const PLAYER_2_MATERIAL_PATH: &str = "game/materials/tanks/sunny/player_2";
 const TANK_BODY_PARTS: [&str; 3] = ["Body", "Turret Pivot", "Turret Head"];
@@ -142,8 +162,8 @@ fn player_prefab(assets: &Path) -> Value {
     }
     for (type_uuid, component) in [
         (
-            ComponentPoise::type_uuid(),
-            value(ComponentPoise::default()),
+            ComponentKnockout::type_uuid(),
+            value(ComponentKnockout::default()),
         ),
         (
             ComponentTankAbilities::type_uuid(),
@@ -228,6 +248,32 @@ fn remap(value: &mut Value, ids: &BTreeMap<String, String>) {
         }
         _ => {}
     }
+}
+
+/// The rectangle `(x0, x1, z0, z1)` without the hole `(hx0, hx1, hz0, hz1)`
+/// inside it, as up to four rectangles.
+fn without_hole(
+    (x0, x1, z0, z1): (f32, f32, f32, f32),
+    (hx0, hx1, hz0, hz1): (f32, f32, f32, f32),
+) -> Vec<(f32, f32, f32, f32)> {
+    [
+        (x0, x1, z0, hz0),
+        (x0, x1, hz1, z1),
+        (x0, hx0, hz0, hz1),
+        (hx1, x1, hz0, hz1),
+    ]
+    .into_iter()
+    .filter(|&(a, b, c, d)| b > a && d > c)
+    .collect()
+}
+
+/// The centre and size of a slab `thickness` deep, its top at `top`, over
+/// the rectangle `(x0, x1, z0, z1)`.
+fn slab_box((x0, x1, z0, z1): (f32, f32, f32, f32), top: f32, thickness: f32) -> (Vec3, Vec3) {
+    (
+        vec3((x0 + x1) * 0.5, top - thickness * 0.5, (z0 + z1) * 0.5),
+        vec3(x1 - x0, thickness, z1 - z0),
+    )
 }
 
 struct Author {
@@ -351,12 +397,24 @@ impl Author {
         }
     }
 
-    /// One side of the border: kit walls along it and one tall solid.
-    fn border_side(&mut self, parent: GameObject, side: &str, center: Vec3, along_x: bool) {
+    /// One side of the border: kit walls along it and tall solids, except
+    /// across `gap` (from, to along the side), which is left open.
+    fn border_side(
+        &mut self,
+        parent: GameObject,
+        side: &str,
+        center: Vec3,
+        along_x: bool,
+        gap: Option<(f32, f32)>,
+    ) {
         let length = HALF * 2.0;
         let count = (length / 4.0) as i32;
+        let open = |offset: f32| gap.is_some_and(|(from, to)| offset > from && offset < to);
         for i in 0..count {
             let offset = -HALF + 2.0 + i as f32 * 4.0;
+            if open(offset) {
+                continue;
+            }
             let (x, z, yaw) = if along_x {
                 (offset, center.z, 0.0)
             } else {
@@ -370,17 +428,26 @@ impl Author {
                 yaw,
             );
         }
-        let size = if along_x {
-            vec3(length + WALL_THICKNESS, BORDER_HEIGHT, WALL_THICKNESS)
-        } else {
-            vec3(WALL_THICKNESS, BORDER_HEIGHT, length + WALL_THICKNESS)
+        let ends = -HALF - WALL_THICKNESS * 0.5;
+        let runs = match gap {
+            Some((from, to)) => vec![(ends, from), (to, -ends)],
+            None => vec![(ends, -ends)],
         };
-        self.solid(
-            parent,
-            &format!("Border {side} solid"),
-            vec3(center.x, BORDER_HEIGHT * 0.5, center.z),
-            size,
-        );
+        for (i, (from, to)) in runs.into_iter().enumerate() {
+            let middle = (from + to) * 0.5;
+            let (position, size) = if along_x {
+                (
+                    vec3(middle, BORDER_HEIGHT * 0.5, center.z),
+                    vec3(to - from, BORDER_HEIGHT, WALL_THICKNESS),
+                )
+            } else {
+                (
+                    vec3(center.x, BORDER_HEIGHT * 0.5, middle),
+                    vec3(WALL_THICKNESS, BORDER_HEIGHT, to - from),
+                )
+            };
+            self.solid(parent, &format!("Border {side} solid {i}"), position, size);
+        }
     }
 }
 
@@ -440,16 +507,21 @@ fn main() {
         assets: assets.clone(),
     };
 
-    // Flat ground, a paved square in the middle, and the floor tanks drive on.
+    // Flat ground ending at the east wall, a paved square in the middle, and
+    // the floor tanks drive on, with the water channel cut out of both.
     let level = author.object("Test Ground", None, Vec3::zeros());
     let paving = asset_id(&assets, PAVING_MATERIAL_PATH);
-    author.slab(
-        level,
-        "Ground",
-        vec3(0.0, -0.5, 0.0),
-        vec3(120.0, 1.0, 120.0),
-        GROUND_MATERIAL.parse().unwrap(),
-    );
+    let ground_area = (-60.0, EAST_EDGE, -60.0, 60.0);
+    for (i, rect) in without_hole(ground_area, CHANNEL).into_iter().enumerate() {
+        let (center, size) = slab_box(rect, 0.0, 1.0);
+        author.slab(
+            level,
+            &format!("Ground {i}"),
+            center,
+            size,
+            GROUND_MATERIAL.parse().unwrap(),
+        );
+    }
     author.slab(
         level,
         "Ground Square",
@@ -457,41 +529,92 @@ fn main() {
         vec3(16.0, 1.0, 16.0),
         paving,
     );
-    let floor = author.solid(
-        level,
-        "Floor",
-        vec3(0.0, -0.5, 0.0),
-        vec3(HALF * 2.0 + 4.0, 1.0, HALF * 2.0 + 4.0),
-    );
-    author.scene.add_component(floor, ComponentDriveSurface {});
+    let floor_area = (-HALF - 2.0, EAST_EDGE, -HALF - 2.0, HALF + 2.0);
+    for (i, rect) in without_hole(floor_area, CHANNEL).into_iter().enumerate() {
+        let (center, size) = slab_box(rect, 0.0, 1.0);
+        let floor = author.solid(level, &format!("Floor {i}"), center, size);
+        author.scene.add_component(floor, ComponentDriveSurface {});
+    }
 
-    // The border, walled in on every side.
+    // The water channel: a tank that falls in is knocked out.
+    let (cx0, cx1, cz0, cz1) = CHANNEL;
+    let water = author.object("Water Channel", Some(level), Vec3::zeros());
+    let (center, size) = slab_box(CHANNEL, -0.8, 0.2);
+    author.slab(
+        water,
+        "Water",
+        center,
+        size,
+        WATER_MATERIAL.parse().unwrap(),
+    );
+    for (i, rect) in [
+        (cx0, cx0 + 0.05, cz0, cz1),
+        (cx1 - 0.05, cx1, cz0, cz1),
+        (cx0, cx1, cz0, cz0 + 0.05),
+        (cx0, cx1, cz1 - 0.05, cz1),
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let (center, size) = slab_box(rect, 0.0, 0.8);
+        author.slab(
+            water,
+            &format!("Bank {i}"),
+            center,
+            size,
+            BANK_MATERIAL.parse().unwrap(),
+        );
+    }
+    let zone = author.object(
+        "Water Knockout Zone",
+        Some(water),
+        vec3((cx0 + cx1) * 0.5, -2.6, (cz0 + cz1) * 0.5),
+    );
+    author.scene.add_component(
+        zone,
+        ComponentKnockoutZone {
+            half_extents: vec3((cx1 - cx0) * 0.5, 2.4, (cz1 - cz0) * 0.5),
+        },
+    );
+
+    // The canyon far below the cliff: a tank falling past the kill height
+    // is knocked out long before it lands.
+    let (center, size) = slab_box((EAST_EDGE, 90.0, -60.0, 60.0), -16.0, 1.0);
+    author.slab(
+        level,
+        "Canyon Floor",
+        center,
+        size,
+        CANYON_MATERIAL.parse().unwrap(),
+    );
+
+    // The border, walled in on every side but the cliff.
     let border = author.object("Border", Some(level), Vec3::zeros());
-    author.border_side(border, "North", vec3(0.0, 0.0, HALF), true);
-    author.border_side(border, "South", vec3(0.0, 0.0, -HALF), true);
-    author.border_side(border, "East", vec3(HALF, 0.0, 0.0), false);
-    author.border_side(border, "West", vec3(-HALF, 0.0, 0.0), false);
+    author.border_side(border, "North", vec3(0.0, 0.0, HALF), true, None);
+    author.border_side(border, "South", vec3(0.0, 0.0, -HALF), true, None);
+    author.border_side(border, "East", vec3(HALF, 0.0, 0.0), false, Some(CLIFF));
+    author.border_side(border, "West", vec3(-HALF, 0.0, 0.0), false, None);
 
     // A few walls and obstacles to throw tanks into.
     let cover = author.object("Obstacles", Some(level), Vec3::zeros());
     for (model, name, x, z, yaw) in [
         ("wall_long", "Wall West A", -14.0, 6.0, 0.0),
         ("wall_long", "Wall West B", -10.0, 6.0, 0.0),
-        ("wall_long", "Wall East A", 12.0, -6.0, 90.0),
-        ("wall_long", "Wall East B", 12.0, -10.0, 90.0),
-        ("wall_long", "Wall North", 4.0, 15.0, 0.0),
+        ("wall_long", "Wall East A", 8.0, -16.0, 0.0),
+        ("wall_long", "Wall East B", 12.0, -16.0, 0.0),
+        ("wall_long", "Wall West C", -20.0, -4.0, 90.0),
         ("crate_large", "Crates A", -15.0, -12.0, 10.0),
         ("crate_framed", "Crates B", -13.2, -12.6, 35.0),
         ("crate_large", "Crates C", 15.0, 14.0, -15.0),
         ("sandbag_stack", "Sandbags A", -4.0, -15.0, 0.0),
-        ("sandbag_stack", "Sandbags B", 18.0, 3.0, 90.0),
-        ("barrier_hazard", "Barrier A", -17.0, 16.0, 45.0),
+        ("sandbag_stack", "Sandbags B", 16.0, -10.0, 90.0),
+        ("barrier_hazard", "Barrier A", -19.0, 12.0, 45.0),
         ("barrier_hazard", "Barrier B", 6.0, -17.0, 0.0),
     ] {
         author.prop(cover, model, name, x, z, yaw);
     }
 
-    // The player, facing north, and the enemy dummy ahead of it.
+    // The player, facing north, and the enemy bot ahead of it.
     author.instance(prefab_name, "Player", None, vec3(0.0, 0.0, -10.0), 0.0);
     let enemy = author.instance(prefab_name, "Enemy", None, vec3(0.0, 0.0, 4.0), 180.0);
     let player_2 = asset_id(&assets, PLAYER_2_MATERIAL_PATH);

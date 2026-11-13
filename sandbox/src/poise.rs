@@ -1,34 +1,41 @@
-//! PROTOTYPE (poise_poc, #610): poise, physics knockdowns, a boot and a
-//! grappling hook, played in `assets/game/scenes/poise_poc.cxscene` to judge
+//! PROTOTYPE (poise_poc, #610): a Smash-style knockout meter, physics
+//! knockdowns, knockout zones, a spring boot, a grappling hook and a few
+//! more abilities, played in `assets/game/scenes/poise_poc.cxscene` to judge
 //! whether knocking tanks around is fun. Nothing here is production code:
 //! remove it, or rebuild it properly, once play-testing has decided.
 //!
 //! Everything is gated on the prototype's own components, so the arena and
 //! the main game flow never meet it:
 //!
-//! - [`ComponentPoise`] replaces health on a tank: rounds drain it and shove
-//!   the tank, it regenerates after a delay, and at zero the tank's rigid
-//!   body turns dynamic, takes the blow and tumbles. After the recovery time
-//!   it turns kinematic again, rights itself onto its tracks and is immune
-//!   for a while. A tumbling tank that hits an upright one drains its poise.
-//! - [`ComponentDummyDriver`] drives a tank without input: a loop, or not at
-//!   all.
-//! - [`ComponentTankAbilities`](abilities::ComponentTankAbilities) gives the
-//!   player the boot and the hook.
-//! - [`ComponentPoiseHud`](hud::ComponentPoiseHud) draws poise, the
-//!   abilities and the hook line.
+//! - [`ComponentKnockout`] is a tank's knockout meter. Every hit adds to its
+//!   percentage, which never caps, and knocks the tank back harder the
+//!   higher it is. A hard enough hit launches the tank: its rigid body turns
+//!   dynamic and tumbles, the player can steer it a little, and after the
+//!   recovery time it rights itself and is briefly immune to launches. A
+//!   tank that falls past the kill height or into a [`ComponentKnockoutZone`]
+//!   is knocked out: it respawns at its start at 0%, invulnerable for a
+//!   moment.
+//! - [`ComponentDummyDriver`] drives a tank without input: a loop, not at
+//!   all, or a simple bot that fights the player.
+//! - [`ComponentTankAbilities`](abilities::ComponentTankAbilities) gives a
+//!   tank the spring boot, the hook, an air boost, an anchor, bumper mines
+//!   and oil slicks.
+//! - [`ComponentPoiseHud`](hud::ComponentPoiseHud) draws the meters, the
+//!   knockouts, the abilities and their tells.
 //!
-//! The tank controller asks [`tank_control`] who drives, and a round asks
-//! [`absorb_round`] whether poise takes it; both answer as before for a tank
-//! without these components.
+//! The tank controller asks [`tank_control`] who drives and [`traction`] how
+//! much grip it has, and a round asks [`absorb_round`] whether the meter
+//! takes it; all of them answer as before for a tank without these
+//! components.
 
 pub mod abilities;
+pub mod bot;
 pub mod hud;
 pub mod logic;
 
 use crate::tank::{flatten_xz, hull_obstacles, level_rotation, rotation_yaw, sweep_hull};
 use calyx_engine::component::{
-    ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentRef,
+    ColliderShape, Component, ComponentCollider, ComponentEventContext, ComponentID, ComponentRef,
     ComponentRigidBody, ComponentTransform, ComponentUpdate, ReflectComponent,
     ReflectComponentUpdate,
 };
@@ -38,60 +45,56 @@ use calyx_engine::reflect::{Reflect, ReflectDefault};
 use calyx_engine::resource::ResourceMap;
 use calyx_engine::scene::{GameObject, GameObjectRef, Scene};
 use calyx_engine::utils::{ReflectTypeUuidDynamic, TypeUuid};
-use logic::{HitOutcome, PoiseState, PoiseTuning, Stance, Transition};
+use logic::{knockback_speed, MeterState, MeterTuning, Reaction, Stance, Transition};
 use nalgebra::UnitQuaternion;
 use nalgebra_glm::{vec3, Vec3};
 use rapier3d::prelude::{Collider, ColliderHandle, RigidBodyHandle, RigidBodyType};
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
 
-/// Below this height, or this far out, a tumbling tank has left the map and
-/// goes back to where it started.
-const LOST_BELOW: f32 = -10.0;
+/// This far out, a tank has left the map whatever its height.
 const LOST_BEYOND: f32 = 150.0;
-/// The height of a poise tank's hull centre, where rounds hit it.
+/// The height of a tank's hull centre, where rounds hit it.
 const HIT_CENTER_HEIGHT: f32 = 1.2;
+/// The name of the child that holds a prototype tank's model.
+const MODEL_NAME: &str = "Model";
+/// How often an invulnerable tank blinks, per second.
+const BLINK_RATE: f32 = 8.0;
 
-/// PROTOTYPE (#610). A tank's poise, which replaces its health in the
-/// prototype scene, and every tuning value of hits and knockdowns.
+/// PROTOTYPE (#610). A tank's knockout meter, which replaces its health in
+/// the prototype scene, and every tuning value of hits, launches,
+/// knockouts and respawns.
 #[derive(Clone, TypeUuid, Serialize, Deserialize, Component, Reflect)]
-#[uuid = "006104e0-1cb3-4815-9faa-ff88b760c0e8"]
+#[uuid = "f302e8ac-c334-46dd-8339-6a7d878dc8e8"]
 #[reflect(Default, TypeUuidDynamic, Component, ComponentUpdate)]
-#[reflect_attr(name = "Poise (prototype)")]
+#[reflect_attr(name = "Knockout Meter (prototype)")]
 #[serde(default)]
-pub struct ComponentPoise {
-    /// Full poise.
-    #[reflect_attr(min = 1.0, speed = 1.0)]
-    pub max_poise: f32,
-    /// Seconds without a hit before poise regenerates.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub regen_delay: f32,
-    /// Poise regained per second once regenerating.
-    #[reflect_attr(min = 0.0, speed = 1.0)]
-    pub regen_rate: f32,
-    /// Poise a round takes, as a share of the shooter's projectile damage.
-    #[reflect_attr(min = 0.0, speed = 0.05)]
-    pub shot_damage_scale: f32,
-    /// Speed a round that does not break poise shoves the tank at, in metres
-    /// per second.
+pub struct ComponentKnockout {
+    /// Percent a round adds to the meter.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub shot_damage: f32,
+    /// A round's knockback at 0%, in metres per second.
     #[reflect_attr(min = 0.0, speed = 0.1)]
     pub shot_knockback: f32,
+    /// How much a round's knockback grows per percent on the meter.
+    #[reflect_attr(min = 0.0, speed = 0.001)]
+    pub shot_growth: f32,
+    /// Knockback at or above this, in metres per second, launches the tank
+    /// into a tumble; below it, the tank is only shoved.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub launch_threshold: f32,
+    /// A launch's upward speed as a share of its horizontal speed.
+    #[reflect_attr(min = 0.0, speed = 0.01)]
+    pub launch_lift: f32,
+    /// Spin of a launch, in radians per second.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub launch_spin: f32,
+    /// Share of a hit's knockback a tank already tumbling takes.
+    #[reflect_attr(min = 0.0, speed = 0.01)]
+    pub juggle_share: f32,
     /// How fast a shove dies away, in metres per second squared.
     #[reflect_attr(min = 0.0, speed = 0.5)]
     pub knockback_decay: f32,
-    /// Speed a breaking round launches the tank at along its flight, in
-    /// metres per second.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
-    pub knockdown_speed: f32,
-    /// Upward speed of a breaking round's launch, in metres per second.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
-    pub knockdown_lift: f32,
-    /// Spin a break gives the tank, in radians per second.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
-    pub knockdown_spin: f32,
-    /// Speed a round adds to a tank already tumbling, in metres per second.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
-    pub juggle_speed: f32,
     /// Gravity multiplier while tumbling; above 1 lands sooner and heavier.
     #[reflect_attr(min = 0.0, speed = 0.05)]
     pub tumble_gravity_scale: f32,
@@ -101,6 +104,10 @@ pub struct ComponentPoise {
     /// Angular damping while tumbling.
     #[reflect_attr(min = 0.0, speed = 0.01)]
     pub tumble_angular_damping: f32,
+    /// How hard the movement keys steer a tumbling tank, in metres per
+    /// second squared.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub tumble_steering: f32,
     /// Seconds on physics before the tank rights itself.
     #[reflect_attr(min = 0.0, speed = 0.05)]
     pub recovery_time: f32,
@@ -110,79 +117,123 @@ pub struct ComponentPoise {
     /// How high the tank hops while righting itself, in metres.
     #[reflect_attr(min = 0.0, speed = 0.05)]
     pub righting_hop: f32,
-    /// Seconds after righting in which poise cannot break.
+    /// Seconds after righting in which a hit cannot launch the tank.
     #[reflect_attr(min = 0.0, speed = 0.05)]
     pub immunity_time: f32,
-    /// A tumbling tank faster than this, in metres per second, drains the
-    /// poise of an upright tank it hits.
+    /// A tank below this height is knocked out, in metres.
+    #[reflect_attr(speed = 0.1)]
+    pub kill_height: f32,
+    /// Seconds from a knockout to the respawn.
+    #[reflect_attr(min = 0.0, speed = 0.05)]
+    pub respawn_delay: f32,
+    /// Seconds after a respawn in which hits do nothing.
+    #[reflect_attr(min = 0.0, speed = 0.05)]
+    pub respawn_invulnerability: f32,
+    /// A tumbling tank faster than this, in metres per second, hits an
+    /// upright tank it runs into.
     #[reflect_attr(min = 0.0, speed = 0.1)]
     pub impact_min_speed: f32,
-    /// Poise a tumbling tank takes from a tank it hits, per metre per second
-    /// of its speed.
-    #[reflect_attr(min = 0.0, speed = 0.1)]
-    pub impact_poise_per_speed: f32,
+    /// Percent a tumbling tank adds to a tank it runs into, per metre per
+    /// second of its speed.
+    #[reflect_attr(min = 0.0, speed = 0.01)]
+    pub impact_damage_per_speed: f32,
     /// How close, in metres, a tumbling tank's centre must come to another's
     /// to hit it.
     #[reflect_attr(min = 0.0, speed = 0.05)]
     pub impact_radius: f32,
+    /// How fast camera shake dies away, in metres per second.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub shake_decay: f32,
 
     #[serde(skip)]
     #[reflect_skip]
-    pub(crate) state: PoiseState,
+    pub(crate) state: MeterState,
     /// The shove a hit gave the upright tank, in metres per second.
     #[serde(skip)]
     #[reflect_skip]
     pub(crate) knockback: Vec3,
-    /// Seconds since the last break, for the HUD.
+    /// Seconds since the last launch, for the HUD.
     #[serde(skip)]
     #[reflect_skip]
-    pub(crate) since_break: f32,
+    pub(crate) since_launch: f32,
     /// The height the tank stood at when it went down, which the camera
     /// keeps while it tumbles.
     #[serde(skip)]
     #[reflect_skip]
     pub(crate) rest_height: f32,
+    /// Seconds left of a hit-stop freeze.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) hitstop: f32,
+    /// A launch waiting for the hit-stop to end: velocity and spin.
+    #[serde(skip)]
+    #[reflect_skip]
+    pending_launch: Option<(Vec3, f32)>,
+    /// Camera shake, in metres, on the camera of the player in this tank.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) shake: f32,
+    #[serde(skip)]
+    #[reflect_skip]
+    shake_phase: f32,
+    /// Whether this tumble's air boost is spent.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) boosted: bool,
+    /// Whether the tank is on an oil slick.
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) oiled: bool,
     /// The pose righting started from and the upright pose it ends at.
     #[serde(skip)]
     #[reflect_skip]
     righting: Option<(Transform, Transform)>,
-    /// Tanks this knockdown has already hit.
+    /// Tanks this tumble has already hit.
     #[serde(skip)]
     #[reflect_skip]
     impacted: Vec<GameObjectRef>,
-    /// Where the tank started, for when it is thrown off the map.
+    /// Where the tank started: where it respawns.
     #[serde(skip)]
     #[reflect_skip]
     home: Option<Transform>,
 }
 
-impl Default for ComponentPoise {
+impl Default for ComponentKnockout {
     fn default() -> Self {
         Self {
-            max_poise: 100.0,
-            regen_delay: 1.6,
-            regen_rate: 45.0,
-            shot_damage_scale: 1.0,
-            shot_knockback: 3.5,
+            shot_damage: 5.0,
+            shot_knockback: 2.5,
+            shot_growth: 0.012,
+            launch_threshold: 11.0,
+            launch_lift: 0.4,
+            launch_spin: 6.0,
+            juggle_share: 0.5,
             knockback_decay: 22.0,
-            knockdown_speed: 7.0,
-            knockdown_lift: 6.0,
-            knockdown_spin: 6.0,
-            juggle_speed: 3.0,
             tumble_gravity_scale: 1.6,
             tumble_linear_damping: 0.2,
             tumble_angular_damping: 0.5,
-            recovery_time: 2.2,
+            tumble_steering: 7.0,
+            recovery_time: 2.0,
             righting_time: 0.45,
             righting_hop: 0.9,
-            immunity_time: 1.5,
-            impact_min_speed: 4.0,
-            impact_poise_per_speed: 6.0,
+            immunity_time: 1.0,
+            kill_height: -4.0,
+            respawn_delay: 1.2,
+            respawn_invulnerability: 2.0,
+            impact_min_speed: 6.0,
+            impact_damage_per_speed: 0.8,
             impact_radius: 2.6,
-            state: PoiseState::new(100.0),
+            shake_decay: 3.0,
+            state: MeterState::default(),
             knockback: Vec3::zeros(),
-            since_break: f32::INFINITY,
+            since_launch: f32::INFINITY,
             rest_height: 0.0,
+            hitstop: 0.0,
+            pending_launch: None,
+            shake: 0.0,
+            shake_phase: 0.0,
+            boosted: false,
+            oiled: false,
             righting: None,
             impacted: Vec::new(),
             home: None,
@@ -190,48 +241,73 @@ impl Default for ComponentPoise {
     }
 }
 
-impl Component for ComponentPoise {}
+impl Component for ComponentKnockout {}
 
-impl ComponentPoise {
-    pub(crate) fn tuning(&self) -> PoiseTuning {
-        PoiseTuning {
-            max_poise: self.max_poise,
-            regen_delay: self.regen_delay,
-            regen_rate: self.regen_rate,
+impl ComponentKnockout {
+    pub(crate) fn tuning(&self) -> MeterTuning {
+        MeterTuning {
             recovery_time: self.recovery_time,
             righting_time: self.righting_time,
             immunity_time: self.immunity_time,
+            respawn_delay: self.respawn_delay,
+            respawn_invulnerability: self.respawn_invulnerability,
         }
     }
 
-    pub(crate) fn state(&self) -> &PoiseState {
+    pub(crate) fn state(&self) -> &MeterState {
         &self.state
     }
+}
 
-    /// How far through its knockdown the tank is, 0 to 1, counting the
-    /// recovery and the righting.
-    pub(crate) fn down_progress(&self) -> f32 {
-        let total = (self.recovery_time + self.righting_time).max(f32::EPSILON);
-        match self.state.stance {
-            Stance::KnockedDown { elapsed } => (elapsed / total).clamp(0.0, 1.0),
-            Stance::Righting { elapsed } => {
-                ((self.recovery_time + elapsed) / total).clamp(0.0, 1.0)
-            }
-            Stance::Upright | Stance::Hooked => 0.0,
+/// PROTOTYPE (#610). A volume that knocks out any tank whose hull centre
+/// enters it, such as the water channel: a box of `half_extents` around
+/// the object, along the world's axes.
+#[derive(Clone, Copy, TypeUuid, Serialize, Deserialize, Component, Reflect)]
+#[uuid = "12592b36-9c9d-404e-bc3f-1a8ff9557c1e"]
+#[reflect(Default, TypeUuidDynamic, Component)]
+#[reflect_attr(name = "Knockout Zone (prototype)")]
+#[serde(default)]
+pub struct ComponentKnockoutZone {
+    pub half_extents: Vec3,
+}
+
+impl Default for ComponentKnockoutZone {
+    fn default() -> Self {
+        Self {
+            half_extents: vec3(2.0, 2.0, 2.0),
         }
     }
 }
 
-/// PROTOTYPE (#610). Drives a tank without input, so it can be shot, booted
-/// and hooked.
+impl Component for ComponentKnockoutZone {}
+
+/// Whether `position` is inside a knockout zone.
+pub(crate) fn in_knockout_zone(scene: &Scene, position: Vec3) -> bool {
+    scene.objects_with::<ComponentKnockoutZone>().any(|zone| {
+        let center = scene.world_transform(zone).position;
+        scene
+            .read_component::<ComponentKnockoutZone, _, _>(zone, |zone| {
+                let offset = position - center;
+                offset.x.abs() <= zone.half_extents.x
+                    && offset.y.abs() <= zone.half_extents.y
+                    && offset.z.abs() <= zone.half_extents.z
+            })
+            .unwrap_or(false)
+    })
+}
+
+/// PROTOTYPE (#610). How a dummy drives.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, TypeUuid, Serialize, Deserialize, Reflect)]
 #[uuid = "32e77f14-ca1a-4a34-a01f-c496bc48406d"]
 pub enum DummyMode {
     /// Drives round in a loop.
-    #[default]
     DriveLoop,
     /// Stays where it is.
     StayPut,
+    /// Fights the player: chases it, keeps its distance, shoots, boots and
+    /// boosts away from knockout edges.
+    #[default]
+    Bot,
 }
 
 /// PROTOTYPE (#610). A tank with this takes no player input: it drives
@@ -250,14 +326,35 @@ pub struct ComponentDummyDriver {
     /// how wide the loop is.
     #[reflect_attr(min = -1.0, max = 1.0, speed = 0.01)]
     pub steer: f32,
+    /// The distance the bot keeps from the player, in metres.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub bot_distance: f32,
+    /// Seconds between the bot's shots.
+    #[reflect_attr(min = 0.0, speed = 0.05)]
+    pub bot_fire_interval: f32,
+    /// How far the bot shoots, in metres.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub bot_fire_range: f32,
+    /// The bot boots the player within this distance, in metres.
+    #[reflect_attr(min = 0.0, speed = 0.1)]
+    pub bot_boot_range: f32,
+
+    #[serde(skip)]
+    #[reflect_skip]
+    pub(crate) fire_timer: f32,
 }
 
 impl Default for ComponentDummyDriver {
     fn default() -> Self {
         Self {
-            mode: DummyMode::DriveLoop,
+            mode: DummyMode::Bot,
             throttle: 0.6,
             steer: 0.35,
+            bot_distance: 9.0,
+            bot_fire_interval: 1.1,
+            bot_fire_range: 16.0,
+            bot_boot_range: 6.5,
+            fire_timer: 0.0,
         }
     }
 }
@@ -269,22 +366,28 @@ impl Component for ComponentDummyDriver {}
 pub enum TankControl {
     /// The player's input, as for every tank outside the prototype.
     Player,
-    /// Nobody: the tank is knocked down, righting or hooked. The camera
+    /// Nobody: the tank is down, hooked, out or frozen by a hit. The camera
     /// follows `camera_focus`.
     Locked { camera_focus: Vec3 },
     /// The dummy driver, with this throttle and steering.
     Dummy { throttle: f32, steer: f32 },
+    /// The bot, with this throttle and steering, aiming at `aim`.
+    Bot {
+        throttle: f32,
+        steer: f32,
+        aim: Vec3,
+    },
 }
 
 /// Who drives `tank` this frame: [`TankControl::Player`] for any tank
 /// without the prototype's components.
 pub fn tank_control(scene: &Scene, tank: GameObject) -> TankControl {
-    let down = scene
-        .read_component::<ComponentPoise, _, _>(tank, |poise| {
-            (!poise.state.is_upright()).then_some(poise.rest_height)
+    let locked = scene
+        .read_component::<ComponentKnockout, _, _>(tank, |knockout| {
+            (!knockout.state.is_upright() || knockout.hitstop > 0.0).then_some(knockout.rest_height)
         })
         .flatten();
-    if let Some(rest_height) = down {
+    if let Some(rest_height) = locked {
         let mut camera_focus = scene.world_transform(tank).position;
         camera_focus.y = rest_height;
         return TankControl::Locked { camera_focus };
@@ -299,17 +402,60 @@ pub fn tank_control(scene: &Scene, tank: GameObject) -> TankControl {
                 throttle: 0.0,
                 steer: 0.0,
             },
+            DummyMode::Bot => bot::control(scene, tank, &driver),
         },
         None => TankControl::Player,
     }
 }
 
+/// Whether the bot driving `tank` fires this frame, counting its fire
+/// interval down by `dt`.
+pub fn bot_fires(scene: &mut Scene, tank: GameObject, dt: f32) -> bool {
+    bot::fires(scene, tank, dt)
+}
+
+/// The share of its grip `tank` keeps: below 1 on an oil slick, 1 for any
+/// other tank.
+pub fn traction(scene: &Scene, tank: GameObject) -> f32 {
+    if scene
+        .read_component::<ComponentKnockout, _, _>(tank, |_| ())
+        .is_none()
+    {
+        return 1.0;
+    }
+    abilities::oil_under(scene, scene.world_transform(tank).position)
+        .map_or(1.0, |oil| oil.traction.clamp(0.0, 1.0))
+}
+
+/// Shakes the camera of the player in `tank` after it was placed this frame,
+/// as hard as the tank's shake says. Nothing for any other tank.
+pub fn shake_camera(scene: &mut Scene, tank: GameObject, camera: GameObjectRef) {
+    let Some((shake, phase)) = scene
+        .read_component::<ComponentKnockout, _, _>(tank, |knockout| {
+            (knockout.shake, knockout.shake_phase)
+        })
+        .filter(|(shake, _)| *shake > 1e-3)
+    else {
+        return;
+    };
+    let Some(camera) = camera.game_object(scene) else {
+        return;
+    };
+    let pose = scene.world_transform(camera);
+    let offset = vec3(
+        (phase * 53.0).sin() + (phase * 31.0).cos() * 0.5,
+        0.0,
+        (phase * 47.0).cos() + (phase * 29.0).sin() * 0.5,
+    ) * shake;
+    place(scene, camera, pose.position + offset, pose.rotation);
+}
+
 /// How far above a tank's origin rounds aim for: the middle of the hull of
-/// a tank with poise, so rounds flying at gun height meet it. Zero for any
+/// a prototype tank, so rounds flying at gun height meet it. Zero for any
 /// other target.
 pub fn hit_center_offset(scene: &Scene, target: GameObject) -> Vec3 {
     if scene
-        .read_component::<ComponentPoise, _, _>(target, |_| ())
+        .read_component::<ComponentKnockout, _, _>(target, |_| ())
         .is_some()
     {
         Vec3::y() * HIT_CENTER_HEIGHT
@@ -318,30 +464,29 @@ pub fn hit_center_offset(scene: &Scene, target: GameObject) -> Vec3 {
     }
 }
 
-/// A blow to a tank's poise: how much it takes, which way it pushes and how
-/// hard, depending on whether it breaks.
+/// A hit on a tank's meter: what it adds and how hard it knocks back.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct Blow {
-    pub poise_damage: f32,
-    /// Horizontal unit direction of the push.
+pub(crate) struct Hit {
+    /// Percent added to the meter.
+    pub damage: f32,
+    /// Knockback at 0%, in metres per second.
+    pub knockback: f32,
+    /// How much the knockback grows per percent on the meter.
+    pub growth: f32,
+    /// Horizontal unit direction of the knockback.
     pub direction: Vec3,
-    /// Shove speed when poise holds, in metres per second.
-    pub shove: f32,
-    /// Launch speed along `direction` when poise breaks.
-    pub launch: f32,
-    /// Upward launch speed when poise breaks.
-    pub lift: f32,
-    /// Spin when poise breaks, in radians per second.
-    pub spin: f32,
-    /// Speed added to a tank already tumbling.
-    pub juggle: f32,
+    /// Seconds both the hit tank and its attacker freeze for.
+    pub hitstop: f32,
+    /// Camera shake on the hit tank, in metres.
+    pub shake: f32,
 }
 
-/// Lets `target`'s poise take a round of `damage` flying along `direction`.
-/// Returns false, doing nothing, for a target without poise: its health
+/// Lets `target`'s meter take a round of `_damage` flying along `direction`.
+/// Returns false, doing nothing, for a target without a meter: its health
 /// takes the round as before.
-pub fn absorb_round(scene: &mut Scene, target: GameObject, damage: f32, direction: Vec3) -> bool {
-    let Some(poise) = scene.read_component::<ComponentPoise, _, _>(target, Clone::clone) else {
+pub fn absorb_round(scene: &mut Scene, target: GameObject, _damage: f32, direction: Vec3) -> bool {
+    let Some(knockout) = scene.read_component::<ComponentKnockout, _, _>(target, Clone::clone)
+    else {
         return false;
     };
     let mut direction = flatten_xz(direction);
@@ -351,53 +496,104 @@ pub fn absorb_round(scene: &mut Scene, target: GameObject, damage: f32, directio
     strike(
         scene,
         target,
-        Blow {
-            poise_damage: damage * poise.shot_damage_scale,
+        Hit {
+            damage: knockout.shot_damage,
+            knockback: knockout.shot_knockback,
+            growth: knockout.shot_growth,
             direction,
-            shove: poise.shot_knockback,
-            launch: poise.knockdown_speed,
-            lift: poise.knockdown_lift,
-            spin: poise.knockdown_spin,
-            juggle: poise.juggle_speed,
+            hitstop: 0.0,
+            shake: 0.08,
         },
     );
     true
 }
 
-/// Deals `blow` to `target`'s poise: a shove when it holds, a knockdown when
-/// it breaks, and a push to a tank already tumbling.
-pub(crate) fn strike(scene: &mut Scene, target: GameObject, blow: Blow) -> Option<HitOutcome> {
-    let outcome = scene.write_component::<ComponentPoise, _>(target, |poise| {
-        let outcome = poise.state.hit(blow.poise_damage);
-        if outcome == HitOutcome::Drained {
-            poise.knockback += blow.direction * blow.shove;
-        }
-        outcome
-    })?;
-    match outcome {
-        HitOutcome::Drained => {}
-        HitOutcome::Broken => knock_down(
-            scene,
-            target,
-            blow.direction * blow.launch + Vec3::y() * blow.lift,
-            blow.spin,
-        ),
-        HitOutcome::AlreadyDown => {
-            let tumbling = scene
-                .read_component::<ComponentPoise, _, _>(target, |poise| {
-                    matches!(poise.state.stance, Stance::KnockedDown { .. })
-                })
-                .unwrap_or(false);
-            if tumbling {
-                if let Some(body) = body_handle(scene, target) {
-                    let body = &mut scene.physics.bodies[body];
-                    let push = blow.direction * blow.juggle + Vec3::y() * blow.juggle * 0.5;
-                    body.set_linvel(body.linvel() + push, true);
-                }
+/// Deals `hit` to `target`: its meter goes up, and it is shoved, launched
+/// into a tumble or pushed while tumbling, as hard as the meter says.
+pub(crate) fn strike(scene: &mut Scene, target: GameObject, hit: Hit) -> Option<Reaction> {
+    let (reaction, lift, spin, juggle) =
+        scene.write_component::<ComponentKnockout, _>(target, |knockout| {
+            let speed = knockback_speed(
+                hit.knockback,
+                hit.growth,
+                knockout.state.percent + hit.damage.max(0.0),
+            );
+            let reaction = knockout
+                .state
+                .hit(hit.damage, speed, knockout.launch_threshold);
+            if reaction != Reaction::Ignored {
+                knockout.hitstop = knockout.hitstop.max(hit.hitstop);
+                knockout.shake = knockout.shake.max(hit.shake);
+            }
+            if let Reaction::Shove(speed) = reaction {
+                knockout.knockback += hit.direction * speed;
+            }
+            (
+                reaction,
+                knockout.launch_lift,
+                knockout.launch_spin,
+                knockout.juggle_share,
+            )
+        })?;
+    match reaction {
+        Reaction::Launch(speed) => {
+            let velocity = hit.direction * speed + Vec3::y() * speed * lift;
+            if hit.hitstop > 0.0 {
+                let _ = scene.write_component::<ComponentKnockout, _>(target, |knockout| {
+                    knockout.pending_launch = Some((velocity, spin));
+                });
+            } else {
+                knock_down(scene, target, velocity, spin);
             }
         }
+        Reaction::Juggle(speed) => {
+            if let Some(body) = body_handle(scene, target) {
+                let body = &mut scene.physics.bodies[body];
+                let push = (hit.direction + Vec3::y() * lift) * speed * juggle;
+                body.set_linvel(body.linvel() + push, true);
+            }
+        }
+        Reaction::Shove(_) | Reaction::Ignored => {}
     }
-    Some(outcome)
+    Some(reaction)
+}
+
+/// Launches `tank` into a tumble at `velocity` times its meter's growth,
+/// whatever the launch threshold, adding `damage` to its meter. Nothing
+/// happens to an invulnerable, anchored, righting or knocked-out tank but
+/// the meter. Returns whether it was launched.
+pub(crate) fn launch(
+    scene: &mut Scene,
+    tank: GameObject,
+    velocity: Vec3,
+    growth: f32,
+    damage: f32,
+) -> bool {
+    let Some((launchable, scale, spin)) =
+        scene.write_component::<ComponentKnockout, _>(tank, |knockout| {
+            let state = &mut knockout.state;
+            if state.is_invulnerable() || state.is_knocked_out() {
+                return (false, 0.0, 0.0);
+            }
+            state.percent += damage.max(0.0);
+            let launchable = !state.is_anchored()
+                && matches!(
+                    state.stance,
+                    Stance::Upright | Stance::KnockedDown { .. } | Stance::Hooked
+                );
+            (
+                launchable,
+                knockback_speed(1.0, growth, state.percent),
+                knockout.launch_spin,
+            )
+        })
+    else {
+        return false;
+    };
+    if launchable {
+        knock_down(scene, tank, velocity * scale, spin);
+    }
+    launchable
 }
 
 /// Puts `tank` down: its rigid body turns dynamic and flies off at
@@ -405,20 +601,22 @@ pub(crate) fn strike(scene: &mut Scene, target: GameObject, blow: Blow) -> Optio
 /// axis square to it, so it rolls over the way it was hit.
 pub(crate) fn knock_down(scene: &mut Scene, tank: GameObject, velocity: Vec3, spin: f32) {
     let position = scene.world_transform(tank).position;
-    let Some(poise) = scene.write_component::<ComponentPoise, _>(tank, |poise| {
-        if poise.state.is_upright() {
-            poise.rest_height = position.y;
+    let Some(knockout) = scene.write_component::<ComponentKnockout, _>(tank, |knockout| {
+        if knockout.state.is_upright() {
+            knockout.rest_height = position.y;
         }
-        poise.state.knock_down();
-        poise.knockback = Vec3::zeros();
-        poise.since_break = 0.0;
-        poise.righting = None;
-        poise.impacted.clear();
-        poise.clone()
+        knockout.state.knock_down();
+        knockout.knockback = Vec3::zeros();
+        knockout.since_launch = 0.0;
+        knockout.righting = None;
+        knockout.impacted.clear();
+        knockout.boosted = false;
+        knockout.pending_launch = None;
+        knockout.clone()
     }) else {
         return;
     };
-    set_body_type(scene, tank, RigidBodyType::Dynamic, &poise);
+    set_body_type(scene, tank, RigidBodyType::Dynamic, &knockout);
     let Some(body) = body_handle(scene, tank) else {
         return;
     };
@@ -437,10 +635,15 @@ pub(crate) fn knock_down(scene: &mut Scene, tank: GameObject, velocity: Vec3, sp
 /// Switches `tank`'s rigid body between kinematic control and dynamic
 /// physics, both its component and its Rapier body, so the switch takes
 /// effect this frame.
-fn set_body_type(scene: &mut Scene, tank: GameObject, ty: RigidBodyType, poise: &ComponentPoise) {
+pub(crate) fn set_body_type(
+    scene: &mut Scene,
+    tank: GameObject,
+    ty: RigidBodyType,
+    knockout: &ComponentKnockout,
+) {
     let dynamic = ty == RigidBodyType::Dynamic;
     let gravity_scale = if dynamic {
-        poise.tumble_gravity_scale
+        knockout.tumble_gravity_scale
     } else {
         1.0
     };
@@ -456,8 +659,8 @@ fn set_body_type(scene: &mut Scene, tank: GameObject, ty: RigidBodyType, poise: 
     body.set_gravity_scale(gravity_scale, true);
     body.enable_ccd(dynamic);
     if dynamic {
-        body.set_linear_damping(poise.tumble_linear_damping);
-        body.set_angular_damping(poise.tumble_angular_damping);
+        body.set_linear_damping(knockout.tumble_linear_damping);
+        body.set_angular_damping(knockout.tumble_angular_damping);
     } else {
         body.set_linvel(Vec3::zeros(), true);
         body.set_angvel(Vec3::zeros(), true);
@@ -484,6 +687,36 @@ pub(crate) fn body_handle(scene: &Scene, tank: GameObject) -> Option<RigidBodyHa
         })
 }
 
+/// Sets the friction of every collider on `tank` and its descendants: the
+/// components' own, scaled by `scale`.
+fn scale_friction(scene: &mut Scene, tank: GameObject, scale: f32) {
+    let colliders: Vec<_> = scene
+        .descendants(tank)
+        .filter_map(|object| {
+            scene
+                .read_component::<ComponentCollider, _, _>(object, |collider| collider.friction)
+                .map(|friction| (object.entity, friction))
+        })
+        .collect();
+    let handles: Vec<_> = scene
+        .physics
+        .colliders
+        .iter()
+        .filter_map(|(handle, _)| {
+            let entity = scene.physics.collider_entity(handle)?;
+            colliders
+                .iter()
+                .find(|(owner, _)| *owner == entity)
+                .map(|&(_, friction)| (handle, friction))
+        })
+        .collect();
+    for (handle, friction) in handles {
+        if let Some(collider) = scene.physics.colliders.get_mut(handle) {
+            collider.set_friction(friction * scale);
+        }
+    }
+}
+
 /// The velocity of `tank`'s body: the physics' while it tumbles, zero while
 /// kinematic.
 pub(crate) fn body_velocity(scene: &Scene, tank: GameObject) -> Vec3 {
@@ -491,6 +724,16 @@ pub(crate) fn body_velocity(scene: &Scene, tank: GameObject) -> Vec3 {
         .and_then(|handle| scene.physics.bodies.get(handle))
         .filter(|body| body.is_dynamic())
         .map_or_else(Vec3::zeros, |body| *body.linvel())
+}
+
+/// Adds `delta` to the velocity of `tank`'s body while it tumbles.
+pub(crate) fn push_body(scene: &mut Scene, tank: GameObject, delta: Vec3) {
+    if let Some(handle) = body_handle(scene, tank) {
+        let body = &mut scene.physics.bodies[handle];
+        if body.is_dynamic() {
+            body.set_linvel(body.linvel() + delta, true);
+        }
+    }
 }
 
 /// Whether the straight line from `from` to `to` is clear of every static
@@ -555,9 +798,15 @@ pub(crate) fn place(
 
 /// The height of the drive surface under `position`, if there is one within
 /// a few metres.
-fn ground_height(scene: &Scene, position: Vec3) -> Option<f32> {
+pub(crate) fn ground_height(scene: &Scene, position: Vec3) -> Option<f32> {
     let surfaces = crate::terrain::drive_surfaces(scene);
     crate::terrain::surface_height_below(scene, &surfaces, position + Vec3::y() * 3.0, 8.0)
+}
+
+/// Whether the scene has any ground to fall off: a scene without drive
+/// surfaces, such as a test's, never drops its tanks.
+pub(crate) fn has_ground(scene: &Scene) -> bool {
+    !crate::terrain::drive_surfaces(scene).is_empty()
 }
 
 /// The upright pose a tank lying at `pose` rights itself to: on the ground
@@ -583,122 +832,230 @@ fn smoothstep(t: f32) -> f32 {
     t * t * (3.0 - 2.0 * t)
 }
 
-impl ComponentUpdate for ComponentPoise {
+/// Shows or hides `tank`'s model.
+fn show_model(scene: &mut Scene, tank: GameObject, visible: bool) {
+    let model = scene
+        .children(tank)
+        .find(|&child| scene.name(child) == MODEL_NAME);
+    if let Some(model) = model {
+        let _ = scene.write_component::<ComponentID, _>(model, |id| {
+            if id.visible != visible {
+                id.visible = visible;
+            }
+        });
+    }
+}
+
+/// Takes `tank` out: it stops, hides and waits for its respawn.
+fn knock_out(scene: &mut Scene, tank: GameObject, knockout: &mut ComponentKnockout) {
+    let position = scene.world_transform(tank).position;
+    knockout.state.knock_out();
+    knockout.knockback = Vec3::zeros();
+    knockout.righting = None;
+    knockout.pending_launch = None;
+    knockout.hitstop = 0.0;
+    knockout.shake = knockout.shake.max(0.4);
+    set_body_type(scene, tank, RigidBodyType::KinematicPositionBased, knockout);
+    show_model(scene, tank, false);
+    let splash = vec3(position.x, position.y.max(knockout.kill_height), position.z);
+    for offset in [Vec3::zeros(), vec3(0.6, 0.4, 0.0), vec3(-0.5, 0.2, 0.5)] {
+        crate::combat_vfx::spawn_impact(scene, splash + offset, true);
+    }
+}
+
+impl ComponentUpdate for ComponentKnockout {
     fn update(
         this: ComponentRef<Self>,
         ComponentEventContext {
             scene, game_object, ..
         }: ComponentEventContext,
         resources: &mut ResourceMap,
-        _input: &Input,
+        input: &Input,
     ) {
         if crate::game_state::combat_paused(scene) {
             return;
         }
         let dt = resources.time().delta_time().max(0.0);
-        let Some(mut poise) = this.read(scene, Clone::clone) else {
+        let Some(mut knockout) = this.read(scene, Clone::clone) else {
             return;
         };
         let pose = scene.world_transform(game_object);
-        let home = *poise.home.get_or_insert(pose);
-        poise.since_break += dt;
-        let tuning = poise.tuning();
-        let transition = poise.state.tick(dt, &tuning);
+        let home = *knockout.home.get_or_insert(pose);
+        knockout.since_launch += dt;
+        knockout.shake = (knockout.shake - knockout.shake_decay.max(0.0) * dt).max(0.0);
+        knockout.shake_phase += dt;
 
-        // Thrown off the map: back to the start, upright.
-        let lost = pose.position.y < LOST_BELOW
-            || pose.position.x.abs() > LOST_BEYOND
-            || pose.position.z.abs() > LOST_BEYOND;
-        if lost && poise.state.stance != Stance::Hooked {
-            set_body_type(
-                scene,
-                game_object,
-                RigidBodyType::KinematicPositionBased,
-                &poise,
-            );
-            place(scene, game_object, home.position, home.rotation);
-            poise.state.recover(&tuning);
-            poise.righting = None;
-            let _ = this.write(scene, |component| *component = poise);
+        // A hit-stop freezes the tank, and its launch waits for it to end.
+        if knockout.hitstop > 0.0 {
+            knockout.hitstop -= dt;
+            if knockout.hitstop <= 0.0 {
+                knockout.hitstop = 0.0;
+                if let Some((velocity, spin)) = knockout.pending_launch.take() {
+                    let _ = this.write(scene, |component| *component = knockout);
+                    knock_down(scene, game_object, velocity, spin);
+                    return;
+                }
+            }
+            let _ = this.write(scene, |component| *component = knockout);
             return;
         }
 
-        match poise.state.stance {
+        let tuning = knockout.tuning();
+        let transition = knockout.state.tick(dt, &tuning);
+        if transition == Some(Transition::Respawn) {
+            // Back at the start, at 0%, blinking while invulnerable.
+            place(scene, game_object, home.position, home.rotation);
+            knockout.rest_height = home.position.y;
+            knockout.knockback = Vec3::zeros();
+            show_model(scene, game_object, true);
+            let _ = this.write(scene, |component| *component = knockout);
+            return;
+        }
+
+        // Out of the arena: past the kill height, into a knockout zone or
+        // far out of the map.
+        if !knockout.state.is_knocked_out() {
+            let centre = pose.position + Vec3::y() * 0.6;
+            let out = pose.position.y < knockout.kill_height
+                || pose.position.x.abs() > LOST_BEYOND
+                || pose.position.z.abs() > LOST_BEYOND
+                || in_knockout_zone(scene, centre);
+            if out {
+                knock_out(scene, game_object, &mut knockout);
+                let _ = this.write(scene, |component| *component = knockout);
+                return;
+            }
+        }
+
+        // Oil takes the grip of whatever drives or tumbles over it.
+        let oil = abilities::oil_under(scene, pose.position);
+        let oiled = oil.is_some();
+        if oiled != knockout.oiled {
+            let scale = oil.map_or(1.0, |oil| oil.tumble_friction);
+            scale_friction(scene, game_object, scale);
+            knockout.oiled = oiled;
+        }
+
+        match knockout.state.stance {
             Stance::Upright => {
                 if transition == Some(Transition::Recovered) {
-                    if let Some((_, upright)) = poise.righting.take() {
+                    if let Some((_, upright)) = knockout.righting.take() {
                         place(scene, game_object, upright.position, upright.rotation);
                     }
                 }
-                apply_knockback(scene, game_object, &mut poise, dt);
+                // Driven off the ground, it falls.
+                if has_ground(scene) && ground_height(scene, pose.position).is_none() {
+                    let speed = scene
+                        .read_component::<crate::tank::ComponentTankController, _, _>(
+                            game_object,
+                            |controller| controller.speed,
+                        )
+                        .unwrap_or(0.0);
+                    let forward = flatten_xz(pose.rotation * Vec3::z());
+                    let velocity = forward * speed + knockout.knockback;
+                    let _ = this.write(scene, |component| *component = knockout.clone());
+                    knock_down(scene, game_object, velocity, 1.5);
+                    return;
+                }
+                let decay = if oiled {
+                    knockout.knockback_decay * oil.map_or(1.0, |oil| oil.traction)
+                } else {
+                    knockout.knockback_decay
+                };
+                apply_knockback(scene, game_object, &mut knockout, dt, decay);
+                // An invulnerable tank blinks.
+                let blink = knockout.state.is_invulnerable()
+                    && (knockout.state.invulnerable * BLINK_RATE).fract() < 0.5;
+                show_model(scene, game_object, !blink);
             }
             Stance::KnockedDown { .. } => {
-                poise.impacted = impact_tanks(scene, game_object, &poise);
+                // The player steers a tumbling tank a little.
+                let driven_by_player = scene
+                    .read_component::<ComponentDummyDriver, _, _>(game_object, |_| ())
+                    .is_none();
+                if driven_by_player && knockout.tumble_steering > 0.0 {
+                    let steer = vec3(input.axis("move_right"), 0.0, input.axis("move_forward"));
+                    if steer.magnitude_squared() > 1e-4 {
+                        let steer = steer.normalize() * knockout.tumble_steering * dt;
+                        push_body(scene, game_object, steer);
+                    }
+                }
+                knockout.impacted = impact_tanks(scene, game_object, &knockout);
             }
             Stance::Righting { .. } => {
-                if transition == Some(Transition::StartRighting) || poise.righting.is_none() {
+                if transition == Some(Transition::StartRighting) || knockout.righting.is_none() {
                     set_body_type(
                         scene,
                         game_object,
                         RigidBodyType::KinematicPositionBased,
-                        &poise,
+                        &knockout,
                     );
-                    let (position, rotation) = upright_pose(scene, &pose, poise.rest_height);
+                    let (position, rotation) = upright_pose(scene, &pose, knockout.rest_height);
                     let upright = Transform::from_components(position, rotation, pose.scale);
-                    poise.righting = Some((pose, upright));
+                    knockout.righting = Some((pose, upright));
                 }
-                if let Some((from, to)) = poise.righting {
-                    let t = smoothstep(poise.state.righting_progress(&tuning));
-                    let hop = (t * std::f32::consts::PI).sin() * poise.righting_hop;
+                if let Some((from, to)) = knockout.righting {
+                    let t = smoothstep(knockout.state.righting_progress(&tuning));
+                    let hop = (t * std::f32::consts::PI).sin() * knockout.righting_hop;
                     let position = from.position.lerp(&to.position, t) + Vec3::y() * hop;
                     let rotation = from.rotation.slerp(&to.rotation, t);
                     place(scene, game_object, position, rotation);
                 }
             }
-            Stance::Hooked => {}
+            Stance::Hooked | Stance::KnockedOut { .. } => {}
         }
-        let _ = this.write(scene, |component| *component = poise);
+        let _ = this.write(scene, |component| *component = knockout);
     }
 }
 
 /// Moves the upright `tank` by the shove it was given, stopping at walls,
-/// and lets the shove die away.
-fn apply_knockback(scene: &mut Scene, tank: GameObject, poise: &mut ComponentPoise, dt: f32) {
-    let speed = poise.knockback.magnitude();
+/// and lets the shove die away at `decay`.
+fn apply_knockback(
+    scene: &mut Scene,
+    tank: GameObject,
+    knockout: &mut ComponentKnockout,
+    dt: f32,
+    decay: f32,
+) {
+    let speed = knockout.knockback.magnitude();
     if speed <= 1e-3 {
-        poise.knockback = Vec3::zeros();
+        knockout.knockback = Vec3::zeros();
         return;
     }
     let mut transform = scene.world_transform(tank);
     transform.rotation = level_rotation(&transform.rotation);
-    let (movement, contact) = sweep_hull(scene, &transform, poise.knockback * dt);
+    let (movement, contact) = sweep_hull(scene, &transform, knockout.knockback * dt);
     if movement != Vec3::zeros() {
         let pose = scene.world_transform(tank);
         place(scene, tank, pose.position + movement, pose.rotation);
     }
     if let Some(normal) = contact {
         // A wall takes the part of the shove pushing into it.
-        let into = poise.knockback.dot(&normal);
+        let into = knockout.knockback.dot(&normal);
         if into < 0.0 {
-            poise.knockback -= normal * into;
+            knockout.knockback -= normal * into;
         }
     }
-    let slowed = (speed - poise.knockback_decay.max(0.0) * dt).max(0.0);
-    poise.knockback *= slowed / speed;
+    let slowed = (speed - decay.max(0.0) * dt).max(0.0);
+    knockout.knockback *= slowed / speed;
 }
 
-/// Drains the poise of each upright tank the tumbling `tank` runs into fast
-/// enough, once per knockdown. Returns the tanks it has hit so far.
-fn impact_tanks(scene: &mut Scene, tank: GameObject, poise: &ComponentPoise) -> Vec<GameObjectRef> {
-    let mut impacted = poise.impacted.clone();
+/// Hits each upright tank the tumbling `tank` runs into fast enough, once
+/// per tumble. Returns the tanks it has hit so far.
+fn impact_tanks(
+    scene: &mut Scene,
+    tank: GameObject,
+    knockout: &ComponentKnockout,
+) -> Vec<GameObjectRef> {
+    let mut impacted = knockout.impacted.clone();
     let velocity = body_velocity(scene, tank);
     let speed = velocity.magnitude();
-    if speed < poise.impact_min_speed {
+    if speed < knockout.impact_min_speed {
         return impacted;
     }
     let position = scene.world_transform(tank).position;
     let others: Vec<_> = scene
-        .objects_with::<ComponentPoise>()
+        .objects_with::<ComponentKnockout>()
         .filter(|&other| other != tank)
         .collect();
     for other in others {
@@ -707,27 +1064,23 @@ fn impact_tanks(scene: &mut Scene, tank: GameObject, poise: &ComponentPoise) -> 
             continue;
         }
         let offset = scene.world_transform(other).position - position;
-        if offset.magnitude() > poise.impact_radius {
+        if offset.magnitude() > knockout.impact_radius {
             continue;
         }
         let mut direction = flatten_xz(velocity);
         if direction == Vec3::zeros() {
             direction = flatten_xz(offset);
         }
-        let other_tuning = scene
-            .read_component::<ComponentPoise, _, _>(other, Clone::clone)
-            .unwrap_or_default();
         strike(
             scene,
             other,
-            Blow {
-                poise_damage: speed * poise.impact_poise_per_speed,
+            Hit {
+                damage: speed * knockout.impact_damage_per_speed,
+                knockback: speed * 0.6,
+                growth: knockout.shot_growth,
                 direction,
-                shove: speed * 0.5,
-                launch: speed * 0.7,
-                lift: other_tuning.knockdown_lift,
-                spin: other_tuning.knockdown_spin,
-                juggle: 0.0,
+                hitstop: 0.0,
+                shake: 0.25,
             },
         );
         crate::combat_vfx::spawn_impact(scene, position + offset * 0.5 + vec3(0.0, 0.8, 0.0), true);
