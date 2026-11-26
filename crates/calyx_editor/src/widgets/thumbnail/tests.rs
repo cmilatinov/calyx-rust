@@ -1,3 +1,7 @@
+mod handle;
+mod residency;
+mod scene;
+
 use super::cache::ThumbnailCache;
 use super::camera_fit::*;
 use super::generator::SkyboxFrontFaceDownscaler;

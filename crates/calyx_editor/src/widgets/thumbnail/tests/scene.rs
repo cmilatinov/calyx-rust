@@ -1,10 +1,10 @@
 //! Headless scene thumbnail tests: each one renders on the shared test GPU.
 
-use super::cache::read_texture_rgba8;
-use super::camera_fit::*;
-use super::generator::{scene_has_light, scene_thumbnail_view, ThumbnailGenerator};
-use super::pipeline::*;
-use super::*;
+use super::super::cache::read_texture_rgba8;
+use super::super::camera_fit::*;
+use super::super::generator::{scene_has_light, scene_thumbnail_view, ThumbnailGenerator};
+use super::super::pipeline::*;
+use super::super::*;
 use crate::scene_file::write_scene_file;
 use calyx_engine::component::ComponentCamera;
 use calyx_engine::test_support::TestAssets;
@@ -152,7 +152,8 @@ fn scenes_are_a_supported_thumbnail_type_cached_under_scene() {
 
     let fixture = SceneFixture::new();
     let context = fixture.context();
-    let cache = super::cache::ThumbnailCache::new(&context, ThumbnailRenderSettings::default());
+    let cache =
+        super::super::cache::ThumbnailCache::new(&context, ThumbnailRenderSettings::default());
     let request = ThumbnailRequest {
         asset_id: Uuid::from_u128(0x5ce),
         asset_type: Scene::type_uuid(),
@@ -350,7 +351,8 @@ fn changing_the_scene_file_or_an_asset_it_references_changes_its_key() {
     );
 
     let context = fixture.context();
-    let cache = super::cache::ThumbnailCache::new(&context, ThumbnailRenderSettings::default());
+    let cache =
+        super::super::cache::ThumbnailCache::new(&context, ThumbnailRenderSettings::default());
     assert_ne!(
         cache.path(&second),
         cache.path(&third),
@@ -522,7 +524,7 @@ fn a_skinned_mesh_is_fitted_where_the_renderer_draws_it() {
 
 #[test]
 fn pausing_scene_jobs_waits_for_the_scene_in_progress_and_holds_back_new_ones() {
-    use super::service::{finish_worker_job, start_worker_job};
+    use super::super::service::{finish_worker_job, start_worker_job};
     use std::sync::mpsc;
     use std::time::Duration;
 
@@ -560,7 +562,7 @@ fn pausing_scene_jobs_waits_for_the_scene_in_progress_and_holds_back_new_ones() 
     let pauser = {
         let shared = shared.clone();
         thread::spawn(move || {
-            let paused = super::service::pause_scene_jobs(&shared);
+            let paused = super::super::service::pause_scene_jobs(&shared);
             paused_tx.send(()).unwrap();
             paused
         })

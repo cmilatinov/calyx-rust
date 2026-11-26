@@ -1,11 +1,11 @@
 //! What thumbnail jobs leave loaded in the asset registry: each test runs
 //! the worker's job loop by hand on the shared test GPU.
 
-use super::cache::ThumbnailCache;
-use super::generator::ThumbnailGenerator;
-use super::pipeline::*;
-use super::service::{finish_worker_job, process_thumbnail_job, start_worker_job};
-use super::*;
+use super::super::cache::ThumbnailCache;
+use super::super::generator::ThumbnailGenerator;
+use super::super::pipeline::*;
+use super::super::service::{finish_worker_job, process_thumbnail_job, start_worker_job};
+use super::super::*;
 use crate::panel::FolderListings;
 use calyx_engine::context::AssetContext;
 use calyx_engine::test_support::TestAssets;

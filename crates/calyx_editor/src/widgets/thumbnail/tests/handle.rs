@@ -1,7 +1,7 @@
-use super::handle::{thumbnail_view, ThumbnailRequestMemo};
-use super::pipeline::*;
-use super::service::ThumbnailService;
-use super::*;
+use super::super::handle::{thumbnail_view, ThumbnailRequestMemo};
+use super::super::pipeline::*;
+use super::super::service::ThumbnailService;
+use super::super::*;
 use std::cell::Cell;
 use std::time::Duration;
 

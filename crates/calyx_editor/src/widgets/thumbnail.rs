@@ -34,13 +34,7 @@ mod cache;
 mod camera_fit;
 mod generator;
 mod handle;
-#[cfg(test)]
-mod handle_tests;
 mod pipeline;
-#[cfg(test)]
-mod residency_tests;
-#[cfg(test)]
-mod scene_tests;
 mod service;
 #[cfg(test)]
 mod tests;
