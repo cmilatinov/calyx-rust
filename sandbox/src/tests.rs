@@ -1,0 +1,54 @@
+use super::*;
+use crate::arena::ComponentArena;
+use crate::combat::{ComponentCombatStats, ComponentKillFeed};
+use crate::game_state::ComponentGameState;
+use crate::hud::ComponentTankHud;
+use crate::sentry::ComponentSentry;
+use crate::spawn::{ComponentRespawnState, ComponentSpawnPoint};
+use crate::tank::ComponentTankController;
+use crate::tank_camera::ComponentTankCamera;
+use calyx_engine::component::ComponentTransform;
+
+#[test]
+fn plugin_main_exports_only_sandbox_reflection_types() {
+    let mut registry = TypeRegistry {
+        types: Default::default(),
+        identities: Default::default(),
+    };
+
+    plugin_main(&mut registry);
+
+    assert!(registry
+        .type_registration::<ComponentTankController>()
+        .is_some());
+    assert!(registry.type_registration::<ComponentArena>().is_some());
+    assert!(registry
+        .type_registration::<crate::brush::ComponentBrush>()
+        .is_some());
+    assert!(registry
+        .type_registration::<crate::brush::ComponentBrushReveal>()
+        .is_some());
+    assert!(registry.type_registration::<ComponentGameState>().is_some());
+    assert!(registry
+        .type_registration::<crate::match_rules::ComponentMatchRules>()
+        .is_some());
+    assert!(registry.type_registration::<ComponentTankHud>().is_some());
+    assert!(registry.type_registration::<ComponentKillFeed>().is_some());
+    assert!(registry
+        .type_registration::<ComponentCombatStats>()
+        .is_some());
+    assert!(registry.type_registration::<ComponentSentry>().is_some());
+    assert!(registry
+        .type_registration::<ComponentSpawnPoint>()
+        .is_some());
+    assert!(registry
+        .type_registration::<ComponentRespawnState>()
+        .is_some());
+    assert!(registry
+        .type_registration::<ComponentTankCamera>()
+        .is_some());
+    assert!(registry
+        .type_registration::<crate::track_marks::ComponentTrackMarks>()
+        .is_some());
+    assert!(registry.type_registration::<ComponentTransform>().is_none());
+}

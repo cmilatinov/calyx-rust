@@ -1,0 +1,394 @@
+use super::*;
+use calyx_engine::render::Camera;
+use nalgebra_glm::{vec2, vec4, Vec2};
+
+fn far_camera(aspect: f32) -> Camera {
+    Camera::new(aspect, 64.0f32.to_radians(), 0.1, 100.0)
+}
+
+#[test]
+fn aim_ahead_leads_towards_the_aim_point_on_each_side() {
+    let rig = ComponentTankCamera::default();
+    let tank = vec3(2.0, 0.0, 3.0);
+
+    // 10 m away, 6 m past the 4 m dead zone, a quarter of that is 1.5 m.
+    let right = rig.aim_ahead_target(tank, tank + vec3(10.0, 0.0, 0.0));
+    let left = rig.aim_ahead_target(tank, tank + vec3(-10.0, 0.0, 0.0));
+    let ahead = rig.aim_ahead_target(tank, tank + vec3(0.0, 0.0, 10.0));
+
+    assert!(
+        (right - vec3(1.5, 0.0, 0.0)).magnitude() < 1e-5,
+        "{right:?}"
+    );
+    assert!((left - vec3(-1.5, 0.0, 0.0)).magnitude() < 1e-5, "{left:?}");
+    assert!(
+        (ahead - vec3(0.0, 0.0, 1.5)).magnitude() < 1e-5,
+        "{ahead:?}"
+    );
+}
+
+#[test]
+fn aim_ahead_ignores_the_aim_point_height() {
+    let rig = ComponentTankCamera::default();
+    let lead = rig.aim_ahead_target(Vec3::zeros(), vec3(10.0, 5.0, 0.0));
+
+    assert!((lead - vec3(1.5, 0.0, 0.0)).magnitude() < 1e-5, "{lead:?}");
+}
+
+#[test]
+fn aim_ahead_is_capped_at_its_maximum_distance() {
+    let rig = ComponentTankCamera::default();
+    let lead = rig.aim_ahead_target(Vec3::zeros(), vec3(-60.0, 0.0, 80.0));
+
+    assert!((lead - vec3(-3.6, 0.0, 4.8)).magnitude() < 1e-4, "{lead:?}");
+}
+
+#[test]
+fn aiming_near_the_tank_recentres_the_camera() {
+    let rig = ComponentTankCamera::default();
+
+    for aim in [Vec3::zeros(), vec3(3.0, 0.0, 0.0), vec3(0.0, 0.0, -4.0)] {
+        assert_eq!(rig.aim_ahead_target(Vec3::zeros(), aim), Vec3::zeros());
+    }
+}
+
+#[test]
+fn easing_moves_part_way_and_does_not_depend_on_the_frame_rate() {
+    let target = vec3(4.0, 0.0, -2.0);
+
+    let one_frame = ease(Vec3::zeros(), target, 0.35, 0.2);
+    let two_frames = ease(ease(Vec3::zeros(), target, 0.35, 0.1), target, 0.35, 0.1);
+    let settled = (0..600).fold(Vec3::zeros(), |lead, _| {
+        ease(lead, target, 0.35, 1.0 / 60.0)
+    });
+
+    // 1 - e^(-0.2 / 0.35) of the way.
+    assert!(
+        (one_frame - target * 0.435_282).magnitude() < 1e-4,
+        "{one_frame:?}"
+    );
+    assert!((one_frame - two_frames).magnitude() < 1e-5);
+    assert!((settled - target).magnitude() < 1e-4);
+}
+
+#[test]
+fn easing_with_no_smoothing_snaps() {
+    assert_eq!(ease(1.0, 3.0, 0.0, 0.016), 3.0);
+}
+
+#[test]
+fn scrolling_zooms_within_the_limits() {
+    let rig = ComponentTankCamera::default();
+
+    // Scrolling up zooms in: 100 points at 0.002 per point.
+    assert!((rig.zoom_after_scroll(1.0, 100.0) - 0.8).abs() < 1e-5);
+    assert!((rig.zoom_after_scroll(0.8, -50.0) - 0.9).abs() < 1e-5);
+    assert_eq!(rig.zoom_after_scroll(0.8, 10_000.0), 0.6);
+    assert_eq!(rig.zoom_after_scroll(0.8, -10_000.0), 1.0);
+}
+
+#[test]
+fn far_framing_sits_34_m_up_and_13_7_m_back_pitched_68_degrees() {
+    let rig = ComponentTankCamera::default();
+    let transform = rig.camera_transform(vec3(5.0, 0.0, -2.0), 0.0, 1.0);
+    let forward = transform.forward();
+    let pitch = (-forward.y).atan2(forward.z).to_degrees();
+
+    assert!((transform.position - vec3(5.0, 34.0, -15.7)).magnitude() < 1e-4);
+    assert!((pitch - 68.0).abs() < 0.1, "pitch {pitch}");
+    assert!(forward.x.abs() < 1e-5);
+}
+
+#[test]
+fn zoom_scales_the_framing_and_keeps_the_pitch() {
+    let rig = ComponentTankCamera::default();
+    let near = rig.camera_transform(Vec3::zeros(), 0.0, 0.6);
+
+    assert!((near.position - vec3(0.0, 20.4, -8.22)).magnitude() < 1e-4);
+    assert!(
+        near.rotation
+            .angle_to(&rig.camera_transform(Vec3::zeros(), 0.0, 1.0).rotation)
+            < 1e-5
+    );
+}
+
+#[test]
+fn yaw_turns_the_framing_about_the_focus() {
+    let rig = ComponentTankCamera::default();
+    let turned = rig.camera_transform(Vec3::zeros(), std::f32::consts::FRAC_PI_2, 1.0);
+
+    // Turned to look down +X, the camera sits back along -X.
+    assert!((turned.position - vec3(-13.7, 34.0, 0.0)).magnitude() < 1e-4);
+    assert!(turned.forward().x > 0.0);
+}
+
+#[test]
+fn far_framing_shows_about_46_m_of_ground_across_the_tank() {
+    let rig = ComponentTankCamera::default();
+    let transform = rig.camera_transform(Vec3::zeros(), 0.0, 1.0);
+    let viewport = vec2(1920.0, 1080.0);
+    let camera = far_camera(viewport.x / viewport.y);
+    let edge = |x: f32| {
+        let ray = camera
+            .screen_ray(&transform, vec2(x, viewport.y * 0.5), viewport)
+            .expect("edge ray");
+        ground_intersection(&ray, 0.0).expect("edge ray meets the ground")
+    };
+
+    let width = (edge(viewport.x) - edge(0.0)).magnitude();
+
+    assert!((width - 45.8).abs() < 0.1, "width {width}");
+}
+
+/// The components of the object named "Camera" in a saved scene or
+/// prefab.
+fn saved_camera(source: &str) -> serde_json::Value {
+    let file: serde_json::Value = serde_json::from_str(source).expect("valid JSON");
+    let components = file
+        .get("data")
+        .unwrap_or(&file)
+        .get("components")
+        .and_then(|components| components.as_object())
+        .expect("component data");
+    components
+        .values()
+        .find(|components| {
+            components[calyx_engine::component::ComponentID::type_uuid().to_string()]["name"]
+                == "Camera"
+        })
+        .expect("a Camera object")
+        .clone()
+}
+
+#[test]
+fn the_tank_prefab_and_the_arena_frame_the_tank_from_far() {
+    for source in [
+        include_str!("../../assets/game/prefabs/tank.cxprefab"),
+        include_str!("../../assets/game/scenes/arena.cxscene"),
+    ] {
+        let camera = saved_camera(source);
+        let rig: ComponentTankCamera =
+            serde_json::from_value(camera[ComponentTankCamera::type_uuid().to_string()].clone())
+                .expect("the camera has a tank camera rig");
+        let lens: ComponentCamera =
+            serde_json::from_value(camera[ComponentCamera::type_uuid().to_string()].clone())
+                .expect("the camera has a camera");
+        let transform: calyx_engine::component::ComponentTransform = serde_json::from_value(
+            camera[calyx_engine::component::ComponentTransform::type_uuid().to_string()].clone(),
+        )
+        .expect("the camera has a transform");
+
+        assert_eq!((rig.height, rig.back, rig.zoom), (34.0, 13.7, 1.0));
+        assert!((lens.fov.to_degrees() - 64.0).abs() < 1e-3);
+        // Saved where its first frame puts it, so starting play does not
+        // jump the view.
+        let framed = rig.camera_transform(Vec3::zeros(), 0.0, 1.0);
+        assert!((transform.transform.position - framed.position).magnitude() < 1e-4);
+        assert!(transform.transform.rotation.angle_to(&framed.rotation) < 1e-4);
+    }
+}
+
+/// The pixel `point` is drawn at by `camera` placed at `transform`.
+fn project(camera: &Camera, transform: &Transform, point: Vec3, viewport: Vec2) -> Vec2 {
+    let clip =
+        camera.projection * transform.inverse_matrix() * vec4(point.x, point.y, point.z, 1.0);
+    let ndc = clip.xyz() / clip.w;
+    vec2(
+        (ndc.x + 1.0) * 0.5 * viewport.x,
+        (1.0 - ndc.y) * 0.5 * viewport.y,
+    )
+}
+
+#[test]
+fn the_cursor_ray_hits_the_ground_under_the_cursor_at_every_framing() {
+    let rig = ComponentTankCamera::default();
+    let viewport = vec2(1600.0, 900.0);
+    let camera = far_camera(viewport.x / viewport.y);
+    let tank = vec3(12.0, 0.0, -7.0);
+
+    for zoom in [rig.min_zoom, 0.8, rig.max_zoom] {
+        for lead in [Vec3::zeros(), vec3(6.0, 0.0, 0.0), vec3(-6.0, 0.0, 0.0)] {
+            let transform = rig.camera_transform(tank + lead, 0.0, zoom);
+            for offset in [
+                vec3(0.0, 0.0, 0.0),
+                vec3(9.0, 0.0, 4.0),
+                vec3(-11.0, 0.0, -5.0),
+            ] {
+                let point = tank + lead + offset * zoom;
+                let pixel = project(&camera, &transform, point, viewport);
+                assert!(
+                    pixel.x > 0.0 && pixel.x < viewport.x && pixel.y > 0.0 && pixel.y < viewport.y
+                );
+
+                let ray = camera
+                    .screen_ray(&transform, pixel, viewport)
+                    .expect("cursor ray");
+                let hit = ground_intersection(&ray, 0.0).expect("cursor ray meets the ground");
+
+                assert!(
+                    (hit - point).magnitude() < 1e-2,
+                    "zoom {zoom} lead {lead:?}: {hit:?} != {point:?}"
+                );
+            }
+        }
+    }
+}
+
+/// The arena, running headless with its player's tank, camera and
+/// crosshair.
+struct Arena {
+    runner: calyx_engine::test_support::HeadlessSceneRunner,
+    tank: GameObject,
+    camera: GameObject,
+    crosshair: GameObject,
+}
+
+/// The headless runner's screen.
+const SCREEN: Vec2 = Vec2::new(1280.0, 720.0);
+
+impl Arena {
+    fn new() -> Self {
+        let test_assets = calyx_engine::test_support::TestAssets::sandbox();
+        let assets = test_assets.asset_context();
+        let scene_ref = assets
+            .registries
+            .assets
+            .read()
+            .reload_by_path::<Scene>(&test_assets.sandbox_root().join("game/scenes/arena.cxscene"))
+            .expect("the arena should load");
+        let mut scene = scene_ref.read().clone();
+        let named = |scene: &Scene, name: &str| {
+            scene
+                .objects()
+                .find(|go| scene.name(*go) == name)
+                .unwrap_or_else(|| panic!("the arena should have a {name}"))
+        };
+        // The arena opens on its main menu; the camera follows the tank
+        // in play.
+        let state = named(&scene, "Game State");
+        scene.write_component::<crate::game_state::ComponentGameState, _>(state, |state| {
+            state.transition_to(crate::game_state::GamePhase::Playing);
+        });
+        let (tank, camera, crosshair) = (
+            named(&scene, "Tank"),
+            named(&scene, "Camera"),
+            named(&scene, "Crosshair"),
+        );
+        Self {
+            runner: calyx_engine::test_support::HeadlessSceneRunner::from_scene(scene),
+            tank,
+            camera,
+            crosshair,
+        }
+    }
+
+    fn point_at(&mut self, pixel: Vec2) {
+        self.runner.move_pointer(egui::pos2(pixel.x, pixel.y));
+    }
+
+    fn scroll(&mut self, points: f32) {
+        self.runner.enqueue_event(egui::Event::MouseWheel {
+            unit: egui::MouseWheelUnit::Point,
+            delta: egui::vec2(0.0, points),
+            modifiers: egui::Modifiers::default(),
+        });
+    }
+
+    fn run(&mut self, seconds: f32) {
+        self.runner.step_many((seconds * 60.0).round() as usize);
+    }
+
+    fn tank(&self) -> Vec3 {
+        self.runner.scene().world_transform(self.tank).position
+    }
+
+    fn camera(&self) -> Transform {
+        self.runner.scene().world_transform(self.camera)
+    }
+
+    /// How far the camera's focus leads the tank on the ground.
+    fn lead(&self) -> Vec3 {
+        let camera = self.camera();
+        let ray = Ray {
+            origin: camera.position,
+            direction: camera.forward(),
+        };
+        let focus = ground_intersection(&ray, self.tank().y).expect("the camera looks down");
+        vec3(focus.x - self.tank().x, 0.0, focus.z - self.tank().z)
+    }
+
+    /// The pixel the crosshair is drawn at, through the camera as it
+    /// renders.
+    fn crosshair_pixel(&self) -> Vec2 {
+        let scene = self.runner.scene();
+        let camera = scene
+            .read_component::<ComponentCamera, _, _>(self.camera, |camera| {
+                camera.camera(SCREEN.x / SCREEN.y)
+            })
+            .expect("the camera has a lens");
+        project(
+            &camera,
+            &self.camera(),
+            scene.world_transform(self.crosshair).position,
+            SCREEN,
+        )
+    }
+}
+
+#[test]
+fn aiming_to_either_side_leads_the_camera_that_way_and_keeps_the_crosshair_under_the_cursor() {
+    for (cursor, side) in [(vec2(1180.0, 360.0), 1.0), (vec2(100.0, 360.0), -1.0)] {
+        let mut arena = Arena::new();
+        arena.point_at(cursor);
+        arena.run(3.0);
+
+        let lead = arena.lead();
+        assert!(lead.x * side > 3.0, "lead {lead:?}");
+        assert!(lead.magnitude() <= 6.0 + 1e-3, "lead {lead:?}");
+        assert!(lead.z.abs() < 0.1, "lead {lead:?}");
+        let pixel = arena.crosshair_pixel();
+        assert!(
+            (pixel - cursor).magnitude() < 0.5,
+            "{pixel:?} != {cursor:?}"
+        );
+    }
+}
+
+#[test]
+fn aiming_at_the_tank_recentres_the_camera() {
+    let mut arena = Arena::new();
+    arena.point_at(vec2(1180.0, 360.0));
+    arena.run(3.0);
+    arena.point_at(SCREEN * 0.5);
+    arena.run(4.0);
+
+    assert!(arena.lead().magnitude() < 0.05, "lead {:?}", arena.lead());
+}
+
+#[test]
+fn scrolling_zooms_between_the_near_and_far_framings() {
+    let mut arena = Arena::new();
+    let cursor = vec2(900.0, 200.0);
+    arena.point_at(cursor);
+    arena.scroll(10_000.0);
+    arena.run(2.0);
+
+    let near = arena.camera().position.y - arena.tank().y;
+    assert!((near - 20.4).abs() < 1e-2, "near height {near}");
+    let pixel = arena.crosshair_pixel();
+    assert!(
+        (pixel - cursor).magnitude() < 0.5,
+        "{pixel:?} != {cursor:?}"
+    );
+
+    arena.scroll(-10_000.0);
+    arena.run(2.0);
+
+    let far = arena.camera().position.y - arena.tank().y;
+    assert!((far - 34.0).abs() < 1e-2, "far height {far}");
+    let pixel = arena.crosshair_pixel();
+    assert!(
+        (pixel - cursor).magnitude() < 0.5,
+        "{pixel:?} != {cursor:?}"
+    );
+}
