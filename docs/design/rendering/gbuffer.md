@@ -83,9 +83,9 @@ forward pass.
 - It draws every batch of the shared `DrawList` whose shader is
   `shaders/mesh/pbr`, and every water batch, whose shader is
   `shaders/mesh/water`, with `shaders/mesh/water_gbuffer.wgsl` in place of
-  `gbuffer.wgsl` (see Water in `docs/architecture/overview.md`), and every
+  `gbuffer.wgsl` (see [Water](water.md)), and every
   blended ground batch, whose shader is `shaders/mesh/ground`, with
-  `shaders/mesh/ground_gbuffer.wgsl` (see Terrain there), and every grass
+  `shaders/mesh/ground_gbuffer.wgsl` (see [Terrain](terrain.md#ground-shader)), and every grass
   batch, whose shader is `shaders/mesh/grass`, with
   `shaders/mesh/grass_gbuffer.wgsl`: the PBR material, its vertices drooped,
   swayed and bent by the scene's `ComponentGrassField`, which it reads as

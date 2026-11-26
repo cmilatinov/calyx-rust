@@ -24,7 +24,7 @@ cargo run --release -p demos --bin demos_game
 The launcher in `src/game.rs` calls the engine's shared
 `calyx_engine::runtime::run_player` with this project's root and `plugin_main`.
 New projects can use the same entry point with their own uniquely named Cargo
-binary; see [standalone players](../docs/architecture/overview.md#standalone-players).
+binary; see [standalone player](../docs/design/project/standalone-player.md).
 The RPG Poly assets still need the one-time import below.
 
 ## Demos

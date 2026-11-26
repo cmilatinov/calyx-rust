@@ -1,140 +1,285 @@
-# Calyx Engine — Project Overview
+# Calyx Architecture
 
-Calyx is a 3D game engine and editor written in Rust, targeting a multiplayer tank game. The workspace crates live under `crates/`, each named with a `calyx_` prefix; `sandbox`, the example game project, stays at the repository root. The main ones:
+Calyx is a 3D game engine and editor written in Rust, built for a multiplayer
+tank game. This is the module map: what each crate and module is for, the
+seams that hold between them, and where each feature's design doc lives. The
+detail is in the linked docs and the code's rustdoc.
 
-## Workspace Crates
+## Layout rule
 
-### `calyx_unity_import` (binary)
-Imports a Unity Asset Store pack into a Calyx project: `cargo run --release -p calyx_unity_import -- [--pack <id>] [--package <.unitypackage>] [--blender <blender.exe>] [--scene] [--out <dir>]`. The general parts read a `.unitypackage` (`package.rs`, a gzipped tar of `<guid>/pathname`, `asset` and `asset.meta`), Unity's multi-document YAML (`yaml.rs`), convert Standard and Unlit materials to Calyx PBR materials (`material.rs`; a renderer drawing a built-in Unlit material casts no shadow, as Unity's Unlit shaders have no shadow caster pass), resolve prefabs, prefab variants and model prefabs with their modifications (`prefab.rs`), and convert a `.unity` scene's hierarchy (`scene.rs`); headless Blender converts FBX to OBJ and TGA to PNG through an embedded script (`blender.rs`, `blender_convert.py`) that follows each model's Unity normal import settings and writes meshes in Unity's left-handed space, which is Calyx's. Asset and object ids derive from the pack's namespace, so re-imports keep them. Each pack's own choices (scene, output folder, lighting, post-processing (fog from the Unity scene's `RenderSettings` among it), camera path) live in `packs/`; `packs/rpg_poly.rs` builds the demos project's RPG Poly village (see `demos/THIRD_PARTY_ASSETS.md`).
+Modules are `foo.rs` plus an optional `foo/`, never `mod.rs`; tests always
+live in `foo/tests.rs`, never inline and never in `*_tests.rs`.
 
-### `calyx_model_gen` (binary)
-Generates the sandbox's low-poly clay models in headless Blender: `cargo run --release -p calyx_model_gen -- [--models <dir>] [--out <dir>] [--credits <THIRD_PARTY_ASSETS.md>] [--blender <blender.exe>]`. Prism footprints provide clipped paint stripes, Jersey barrier sections and tileable wall junctions; cylinders can taper through `top_radius`, and blobs can fuse their lobes through a voxel remesh (`fuse`). An assembly uses named `[[parts]]` tables, each with its own shape, palette role, offset and XYZ degree rotation; the generator emits one OBJ per part and a stable-id prefab per map in `generated/prefabs/<map>/`, keeping each part's mesh, material and transform under one root (`prefab.rs`). Single-shape files keep their output paths and ids. Each model is one TOML parameter file in `sandbox/asset_sources/models/` (`params.rs`): a `kind` (`box`, `rock`, `cylinder`, `blob`, `prism`, or `import` for a sourced CC0 or CC-BY model with its `credit`), its sizes and bevel, a palette `role`, `shading` (`smooth` with a `smooth_angle`, or `flat`) and an optional `outline` hull thickness. The embedded Blender script (`blender.rs`, `blender_models.py`) builds each model and writes it in Calyx's left-handed Y-up space, with an inverted ink hull when asked; the generator checks every OBJ (facing out, normals matching the shading, standing on y = 0, spanning its size) before writing its `.meta`. Materials are written per map for each role the models use (`palette.rs`, the direction's palette sRGB-decoded) into `sandbox/assets/generated/materials/<map>/<role>.cxmat`, meshes into `sandbox/assets/generated/models/`. Ids are version 5 UUIDs of the asset names (`layout.rs`), so regenerating keeps them; files an earlier run wrote and this one does not are removed. An `import` model's source must be credited in `sandbox/THIRD_PARTY_ASSETS.md` (`credits.rs`). See `docs/design/art/tank-game-direction.md`.
+Older modules still have `mod.rs` files, inline `mod tests` and `*_tests.rs`
+files; new code follows the rule.
 
-### `calyx_engine` (library)
-Core runtime. Modules:
-- `assets/` — Asset trait, AssetRegistry (hot-reload via notify file watcher), AssetRef<T> for lazy references. Model files import through `assets/import`, which turns a file into a library-independent imported scene (meshes, node tree, baked animations) using ufbx for FBX and OBJ and the gltf crate for glTF and GLB; Collada (`.dae`) is not supported. Types: Mesh (OBJ), Texture (PNG/JPG/WebP via image crate), Shader (WGSL + naga introspection), Material (shader variable binding), Animation, AnimationGraph, Prefab (`.cxprefab`, or an FBX, glTF or GLB model imported into mesh and animation sub-assets, and for glTF and GLB material and texture sub-assets), Skybox. glTF material import (`assets/import/gltf.rs`, `Material::from_imported`, `Texture::from_imported`): each glTF material becomes a material sub-asset on `shaders/mesh/pbr`, named after it or `material_<index>`, with base color factor and texture, metallic and roughness factors and texture, normal texture and scale, emissive factor (as `emission_color` with `emission_strength` 1) and texture, and occlusion texture and strength; `ambient_occlusion` is 1. `MASK` sets `alpha_cutoff`, and `OPAQUE` and `BLEND` leave it at 0. Each pair of an image and a sampler becomes a texture sub-asset, named after the image, its file name or `image_<index>`, so an image several slots use uploads once with both its stored and sRGB views; the sampler's wrap modes and filters are kept, and a sampler without a mip filter samples only the full-size image. An image read from a buffer view, a data URI or an external file that is missing or does not decode is logged and its slots keep their default. Each mesh component of the prefab takes its primitive's material, or `materials/default` for a primitive with none; a material set by hand on an instance is a prefab-link override and survives a reimport. Every sub-asset of a model shares one namespace (meshes, then animations, materials and textures, each made unique with a `_<n>` suffix), and its id is the hash of `<model>/<name>`, so it stays the same across reimports while the file's names do. Not imported: FBX materials, `BLEND` transparency, `doubleSided`, vertex colors, texture coordinate sets other than `TEXCOORD_0`, the `KHR_materials_*`, `KHR_texture_transform` and `KHR_texture_basisu` extensions, cameras, lights and morph targets; imported materials have no editable on-disk copy. Import snapshot tests compare each model against references captured from the former assimp importer, and the GLB fixture's animation against the FBX fixture's; see `crates/calyx_engine/tests/fixtures/`.
-- `component/` — Legion ECS components. `Component` trait for destroy/draw_gizmos. `ComponentStart`, `ComponentUpdate`, `ComponentReset` and `ComponentHud` are separate lifecycle traits, opted into with `#[reflect(...)]`. Their hooks are associated functions with no `self`, and the scene runs each one only on the objects holding its component, skipping whole archetypes that lack it (`scene/hook_targets.rs`; an object gaining or losing the component during the pass is visited as it then is): start, update and reset get `this: ComponentRef<Self>`, a typed handle to the object's own component, which stays in the ECS world while the hook runs because the hook also gets `&mut Scene`. The hook reads and writes it with `this.read(ctx.scene, ..)` and `this.write(ctx.scene, ..)`; the stored component is the only copy, so writes through the handle and through `ctx.scene` apply at once and in call order, and after the hook removes or replaces its component the handle reaches nothing or the replacement. `ComponentHud::build_hud` only reads the scene, so it gets `this: &Self` directly. The component registry keeps each hook as its reflected function (`ReflectComponentUpdate` and the others), not as a hook call on the registry's default prototype instance. `ComponentInstance` for type-erased serialization. Built-in: Transform, Camera, Mesh, Collider, RigidBody, DirectionalLight, PointLight, SpotLight, Animator, Bone, NetworkObject, ParticleSystem, GlobalPostProcessVolume, LocalPostProcessVolume. `ComponentCameraPath` (`component/camera_path.rs`) flies its object, usually a camera, in play along a Catmull-Rom curve through the children of its `path` object, in hierarchy order, easing between the children's rotations, over `duration` seconds, `looping` or stopping at the last stop; several objects can follow one path, and its gizmo draws while the follower, the path object or a stop is selected (`Gizmos::selected_object`). The curve math (`math::cubic_bezier`, `math::catmull_rom_to_bezier`, `math::catmull_rom`) is shared with `Gizmos::cubic_bezier` and `Gizmos::catmull_rom`. The post-process effect components (`ComponentTonemap`, `ComponentBloom`, `ComponentAmbientOcclusion`, `ComponentDepthOfField`, `ComponentColorGrading`, `ComponentVignette`, `ComponentAntiAliasing`, `ComponentFog` and `ComponentFogOfWar`, in `component/post_process/`) sit beside a global or local volume on its game object and hold authoring data only (save `ComponentFogOfWar::sight`, what a side sees, which game code sets every frame and is never saved), and a volume's `profile` references a `PostProcessProfile` asset (`assets/post_process_profile/`) whose entries they override; the passes in `render/postprocess/` read them through `PostProcessSettings`; see `docs/design/post-processing/architecture.md`. ParticleSystem (`component/particle/`) holds authoring data only and is built from modules: emission says how many particles spawn, init modules (shape, velocity, forces, lifetime, size) fill each new particle on the CPU, the update module (forces) runs in a compute kernel over a flat `bytemuck::Pod` particle buffer, and size and color modules evaluate each particle by normalized age for rendering, also on the GPU. A non-serialized reset counter on the component asks the simulation to re-seed the system. The rendering module optionally multiplies RGB by an HDR intensity, aligns stretched billboards with velocity or an emitter-local direction, and controls the minimum screen width; defaults retain camera-facing particles with the existing 6 px floor. Colour and depth passes share the same billboard geometry.
-- `scene/` — Scene (has a `SceneId`, new for every constructed scene including a restored snapshot, so the play copy and the scene it was copied from differ even though their object ids match; delegates to SceneGraph for hierarchy, GameObjectStore for entity/UUID mapping, TransformCache for world transforms; holds World + PhysicsContext). SceneManager for load/save/simulation. Prefab instantiation with UUID remapping. SceneData for serialized representation. Component enabled state (`scene/disabled_components.rs`): the scene keeps a map of disabled (object, component type) entries, so every component is enabled by default; `Scene::is_component_enabled`/`set_component_enabled` (and `_dyn` variants) read and write it, removing a component or object drops its entry, a change is reported as a write of the component, and it saves in `SceneData::disabled_components`. Camera selection, physics, post-process volume selection, rendering, light gathering, the particle simulation and component hooks skip disabled components. The scene renderer skips a disabled `ComponentMesh` or `ComponentSkinnedMesh`, so it is neither drawn, picked nor outlined, and thumbnails and their camera fit skip it too. Light gathering skips a disabled point, spot, directional, ambient or sky light; the lights carry no `active` field of their own, the scene's state is their only switch. A disabled particle system is dropped from the simulation and draws nothing, which clears its particles, and enabled again it starts over from its seed; its own `active` field stays, and only pauses emission while live particles keep simulating. `Scene::start`, `Scene::update` and `Scene::build_hud` skip the `ComponentStart`, `ComponentUpdate` and `ComponentHud` hooks of a disabled component; a component disabled when the scene starts never runs its start hook. So a disabled `ComponentAnimator` neither advances nor writes a pose, and its skinned meshes keep the last pose it wrote, or the rest pose when it never wrote one. The engine has no audio source component yet. A component type opts in to disabling by overriding `Component::can_disable` to return `true` in its `impl Component` block, a project component included; the default is `false`, and a type opts in only once every system that consumes it skips a disabled instance. Today `ComponentCamera`, `ComponentCollider`, `ComponentRigidBody`, `ComponentGlobalPostProcessVolume`, `ComponentLocalPostProcessVolume`, the post-process effect components, `ComponentMesh`, `ComponentSkinnedMesh`, `ComponentTerrain`, `ComponentWater`, `ComponentPointLight`, `ComponentSpotLight`, `ComponentDirectionalLight`, `ComponentAmbientLight`, `ComponentSkyLight`, `ComponentParticleSystem`, `ComponentAnimator`, `ComponentThirdPersonCamera` and `ComponentCameraPath` opt in. The network components do not opt in yet: disabling one would stop replicating its object mid-session, which needs its own design. Callers holding only a type UUID ask `ComponentRegistry::can_disable`. Only an opted-in type gets the checkbox in its inspector header (the pin icon of any other takes the header's icon slot), and `set_component_enabled` and `calyx_ctl component disable` refuse any other; a saved `disabled_components` entry for a type that cannot be disabled is ignored on load with a warning and not saved again. A linked prefab instance hashes the state with each component value, so it follows the prefab or counts as an override. Prefab links (`scene/prefab_link.rs`): the editor instantiates a prefab with `Scene::instantiate_linked_prefab`, which records on each instance object the prefab asset, the prefab object it came from and a hash of each component value the prefab gave it; the links save with the scene in `SceneData::prefab_links` (a subtree, and so a prefab, carries none). `Scene::update_prefab_instances` updates linked instances from the prefab's current data and only runs when asked. It keeps each instance's root transform and object ids, keeps every override (a component whose value differs from the one the prefab last gave it, or that the instance added or removed), adds objects the prefab added and deletes objects it removed unless they carry an override, and leaves objects the instance deleted deleted; the module docs state the full rules.
-- `render/` — wgpu-based. RenderContext (eframe or headless), SceneRenderer (mesh/skybox/grid/gizmos/particles; opaque PBR meshes shade only through the deferred path, a geometry pass into the G-buffer then a full-screen lighting pass through `assets/shaders/common/pbr_lighting.wgsl`, and draws with any other shader take a forward pass after it, against its depth; see [docs/design/rendering/gbuffer.md](../design/rendering/gbuffer.md); what a scene draws does not depend on the camera, so a `DrawCollection` collects the meshes, foliage, terrain, water and skinned meshes of one scene, with their resolved assets, object ids and material buffers; `SceneRenderer::render_scene_with` draws a shared collection, which the editor collects once a frame for its Scene and Game views, while `render_scene_base` collects into the renderer's own. A collection of another scene is not drawn: the renderer collects its own instead. Each view keeps its sky, gizmos and the batching of the draws into its instance lists), AssetShaderLoader (feeds the `calyx_shader` preprocessor from the asset roots; a shader naga rejects reports the original file and line through the preprocessor's source map), PBR pipeline, mip generators, Camera/Lights uniform management. `LightManager` packs every enabled directional, point and spot light into one storage buffer, `LightStorage` at group 2 binding 0 in `assets/shaders/common/lights.wgsl`: a 16-byte header of per-kind counts, then one 64-byte `Light` per light, grouped by kind (directional, then point, then spot). The range a light sits in is its kind, so the PBR shader runs one branch-free loop per kind and a light carries no kind field; each kind reads only its own fields, and `shadow_index` indexes the light's shadow (see Shadows below). `Shader::compute_pipeline(entry_point)` builds and caches one compute pipeline per entry point, laid out with only the bindings that entry point uses. `assets/shaders/common/curve.wgsl` and `assets/shaders/common/gradient.wgsl` evaluate `Curve`s and `Gradient`s on the GPU as `Curve::evaluate` and `Gradient::evaluate` do, reading keys through their `curve_storage` and `gradient_storage` parameters, which `GpuCurveKeys` and `GpuGradientKeys` pack. A shader with several compute entry points keeps no whole-module layout, so its kernels together may declare more resources than one kernel may use.
-  - Grass (`component/grass.rs`, `render/gbuffer.rs`, `assets/shaders/mesh/grass*.wgsl`): a material whose shader is `shaders/mesh/grass` is a PBR material drawn by the geometry pass with `grass_gbuffer.wgsl`, which sways each vertex in the wind and bends it away from the scene's grass benders by its height above its mesh's origin, and leaves out the grass within each bender's reveal radius, which `shaders/mesh/grass.wgsl` draws after the lighting and forward passes in `MeshRenderer::render_grass`, alpha blended and lit through `pbr_lighting` (the grass field at group 0 binding 8), fading from opaque at the radius to 35 % a third of the way in, with no ink. Grass normals bend most of the way up, as foliage is lit. The first enabled `ComponentGrassField` in the scene supplies the wind (`sway`, `sway_speed`, `bend`, `height`) and, as runtime state game code writes every frame, up to `MAX_GRASS_BENDERS` benders; the renderer uploads them with its own wrapped clock as group 3. Shadows are cast from the grass at rest.
-  - Foliage (`component/foliage.rs`, `render/foliage.rs`): `ComponentFoliage` scatters equally weighted prefab choices over its centered local XZ rectangle. Density, seed, uniform scale and Y rotation ranges determine a deterministic layout; inspector edits regenerate it in edit mode or play. Each renderer caches local placements per scene and owner, and separately caches every visible, enabled static mesh part of each prefab, preserving its material, root/nested transforms and shadow setting. A fingerprint of borrowed visual data checks each used prefab once per frame, so in-place edits and reloads refresh extraction without rebuilding unchanged placements; mesh and material references resolve afresh. Instances use the ordinary mesh/material/shadow batches and share owner picking, visibility and enable state. Missing assets or meshless prefabs draw nothing; hidden or malformed transform branches are pruned, and cycles, dangling links and unreachable objects cannot create extra parts. Scripts, physics, particles, lights and skinned animation are never instantiated. The owner places the prefab origin on local Y = 0; terrain projection, brushes and wind remain outside this component. Field documentation defines units and limits.
-  - Post-processing (`render/postprocess/`; design in [docs/design/post-processing/architecture.md](../design/post-processing/architecture.md)): every lit shader writes linear HDR into the scene target, and tone mapping is the single display transform. `SceneRenderer::finalize_scene` resolves MSAA into a single-sample HDR texture (at one sample the scene target is that texture) and runs a `PostProcessChain` from it into the presented `scene_texture`, which holds display-linear color that egui and the readback sRGB-encode. Each `PostProcessPass` declares its stage (`Hdr`, `Tonemap`, `Ldr`) and the scene inputs it reads (depth, normals, velocity; only depth is produced, single-sample, copied from sample 0 under MSAA). The chain runs the enabled passes in stage order, then insertion order, ping-ponging between the two slots (A, B) of a `TargetPool`, each created on first use at the chain's size and format, recreated when those no longer match and freed on resize; tone mapping alone is one full-screen pass with no intermediate target. `TonemapPass` (ACES, exposure in EV) always runs. `render_scene_base` resolves `PostProcessSettings` from the scene: the enabled `ComponentGlobalPostProcessVolume` with the highest priority (a tie warns and uses the first found), else the defaults, and blends the enabled `ComponentLocalPostProcessVolume`s around the render camera over them in ascending priority.
-  - Light falloff (`light_distance_attenuation` in `assets/shaders/common/lights.wgsl`, shared by point and spot lights and by every lit pass that includes the file): `saturate(1 - (d/r)^4)^2 / (d^2 + 1)` for a point `d` world units from the light and the light's range `r` (`ComponentPointLight::radius`, `ComponentSpotLight::range`). It is inverse-square with a `+1` that keeps it finite at the light, windowed so it reaches exactly 0 at `r` and stays 0 beyond. `intensity` is therefore the light's radiance at distance 0 before the color: a surface 1 unit away receives half of it and one 3 units away a tenth, while well inside the range; the window only dims the outer part of the range. A spot light multiplies the falloff by its cone factor. Directional light `intensity` is the radiance everywhere.
-  - Terrain (`component/terrain.rs`, `render/terrain.rs`, `math/heightfield.rs`): `ComponentTerrain` draws a heightmap texture's brightness as a ground surface centered on its owner, `size` wide (X) and deep (Z), from local Y = 0 (black) to `height_scale` (white), with its material, through the ordinary mesh/material/shadow batches, so it is shaded in the deferred pass, casts shadows when `cast_shadows` is set and receives them. The heights come from `Texture::heightfield`, which decodes the texture's image file once at the file's precision (a 16-bit grayscale PNG keeps its 65536 levels; the GPU copy is 8-bit) and is dropped with the texture on reload; a texture not loaded from a file has none and its terrain draws nothing. A `Heightfield` holds one sample per pixel, at most 1024 per side (a larger image is resampled down), with the image's top row on the +Z edge; its mesh has a vertex per sample and two triangles per cell, and the renderer caches it per owner, rebuilding only for a new heightfield, size or height scale. Gameplay code reads the ground with `ComponentTerrain::sample(scene, terrain, xz)` or, over every enabled terrain, `ComponentTerrain::sample_scene(scene, xz)`: the world height and normal where a vertical line meets the drawn triangles, exactly. The terrain is meant to stay upright (turned only around Y). There is no collider, LOD or sculpting; the demos project's `assets/terrain/terrain_demo.cxscene` shows one at 512 x 512. Splatting is a material: a terrain drawn with the blended ground shader, `shaders/mesh/ground` (`assets/shaders/mesh/ground*.wgsl`), mixes eight ground layers (grass, dark and light grass, dirt, sand, gravel, field with crop rows, mud) from two RGBA masks laid once over the terrain by its UVs, each layer a palette colour shaded by a greyscale detail channel tiled in world space; world-space noise warps the masks' edges, picks between two turned detail samples against visible tiling and adds broad light and shade, the detail acts as each layer's height for ragged edges, and fields keep crisp edges read from the unwarped mask (its uniform, `GroundProperties`, documents every input). The geometry pass draws it with `shaders/mesh/ground_gbuffer.wgsl`. Its `marks_texture`, over the world rectangle `marks_rect` (x, z, width, depth), multiplies the ground's colour, white by default: the hook other effects darken or tint the ground through, as the sandbox's tank tracks (`sandbox/src/track_marks.rs`) do. The sandbox arena's ground is one such terrain, written by `remake_arena` (`sandbox/examples/remake_arena/ground.rs`).
-  - Water (`component/water.rs`, `render/water.rs`, `math/water.rs`, `assets/shaders/mesh/water*.wgsl`): `ComponentWater` draws stylized water, opaque, as a river along a centripetal Catmull-Rom centreline through its `points` (local XZ, each with a width), cut into irregular facets about `cell_size` across (`WaterPath`: rows evenly spaced along the curve, columns across the widest point, inner vertices jittered, alternating diagonals). The CPU builds the mesh once per path, footprints and bank profile; every displacement happens in the vertex shader. Each triangle has three vertices of its own carrying its river coordinates (`s` along the flow, `t` across), its distance to the shore, its position in the frame of the footprint nearest the facet with that footprint's shape, and its other two corners' rest positions and river coordinates (see `WaterGeometry` for the channels), so the shader moves all three corners by the same layered waves rolling downstream (two trains, a cross ripple and drifting value noise; `wave_amplitude`, `wave_length`, `flow_speed`) and every vertex computes the same moved facet normal, so the surface stays watertight. `shading` picks the lighting: `Smooth` (the default) takes each vertex's normal from the waves' slope (central differences in river coordinates, carried into local XZ through its triangle's map between the two), interpolated across the facets, with colour per pixel and glints as small twinkling sparkle points; `Faceted` shades each facet flat with its own moved normal and one colour, and glints flash whole facets. The colour runs from shallow at the shore to deep over `shore_distance`; foam is per pixel in hard-edged shapes driven by the interpolated shore distance, the per-pixel distance to the facet's footprint and scrolling noise: a broken band along both shores (`foam_width`), flecks, patches drifting downstream (`foam_patches`) and the same band and flecks around everything standing in the water (`obstacle_foam`), over its own shallows (`obstacle_shallows`). What stands in the water is found from the scene: `WaterCache` cuts every visible `ComponentMesh` whose box crosses the water's rest plane (local Y = 0) near it along that plane (`math::waterline`), following the scene's change journal so only objects that changed are cut again, and `WaterPath::footprints` fits a rounded rectangle (`WaterFootprint`) around each piece that lies over the water and is at most 8 m across, merged with the authored `obstacles` circles where they overlap. A bridge deck clear of the surface cuts nothing; its piers do. A footprint is the right tool here rather than depth-based intersection foam, because the water draws opaque into the G-buffer pass and cannot read the depth of the scene it is drawn with. Where the waves turn most of the way towards mirroring the brightest enabled directional light into the camera, it glints as HDR emission (`glint_strength`). With a `bank_material`, the component also draws its banks along the same curve (`WaterPath::banks`): a wall from `bank_depth` below the rest surface up to `bank_height` over `bank_run`, crossing the rest surface at the shore, then a flat `bank_lip`; they cast shadows. The draw collection's `WaterCache` keeps the meshes per owner and a renderer-owned material on `shaders/mesh/water`, filled from the component every frame (linear colours, the water's wall-clock time, the light), so inspector edits show at once in edit mode and in play. Water draws through the ordinary mesh batches with `cast_shadows` off, and the G-buffer's geometry pass draws it with `shaders/mesh/water_gbuffer.wgsl`, as it draws PBR meshes with `gbuffer.wgsl`, so the deferred pass lights and shadows it and SSAO, fog and the Outline effect treat it as any opaque surface. No transparency, refraction, scene reflections or interaction with tanks and shells; gameplay blocking is separate. `sandbox/examples/water_test.rs` builds the look-dev creek, carving the ground around it as a terrain heightmap from the same curve.
-  - Shadows (`render/shadows.rs`; design in [docs/design/rendering/shadows.md](../design/rendering/shadows.md)): directional and spot lights with `cast_shadows` get shadow maps while the renderer's `SceneRendererOptions::shadows` is on (editor scene and game views; thumbnails off). `LightManager::build_data` hands the gathered lights to `ShadowPlan`, which gives the first shadowed directional light 4 cascades (one `Depth32Float` 2048 x 2048 array texture, practical splits up to `shadow_distance`, each fitted to its slice's bounding sphere and snapped to whole texels, with depth clamped so casters past the light-ward near plane still cast) and up to 8 shadowed spot lights, nearest the camera first, a 1024 x 1024 tile of a 4096 x 4096 atlas; each light's `shadow_index` is its cascades (0) or tile, -1 for none. `ShadowRenderer` renders them before the scene pass from the scene pass's own draw list (`DrawBatch`, split on `ComponentMesh::cast_shadows`) with the depth-only `assets/shaders/mesh/shadow.wgsl`, single-sample and unculled, skipping in each cascade or tile the static batches outside its view, and allocates each map only while a light uses it. `assets/shaders/common/shadows.wgsl` binds the shadow data, maps and comparison sampler in group 2 beside the lights and holds the lookups (`directional_shadow`, `spot_shadow`: 3 x 3 hardware-PCF taps, cascade blending, normal offset), which need only world position and normal, which the deferred lighting pass rebuilds from the G-buffer.
-  - PBR materials (`assets/shaders/mesh/pbr.wgsl`, `assets/material.rs`): the material inputs follow glTF's metallic-roughness model. Group 3 binds a base color texture (binding 0) multiplied by `base_color_factor`; the `MaterialProperties` uniform (binding 2); a metallic-roughness texture (3) whose B and G scale the `metallic` and `roughness` factors; a tangent-space normal texture (5, +Y up the image) scaled in X and Y by `normal_scale`; an emissive texture (7) multiplied by `emission_color * emission_strength`; and an occlusion texture (9) whose R applies to the ambient light by `occlusion_strength`, on top of `ambient_occlusion`. Each texture's sampler is bound right after it. Point the occlusion and metallic-roughness slots at the same image for glTF's packed occlusion-roughness-metallic texture. `alpha_cutoff` discards fragments whose base color alpha is below it (glTF `MASK`) in the scene pass only; the object-id pick, outline and thumbnail passes draw the whole mesh, and `BLEND` is not supported. Uniform fields are only appended, so a saved material's offsets stay valid, and a `.cxmat` lacking a variable its shader declares gets the reflected default when it loads: white textures and colors, the flat normal for a normal texture, one for `normal_scale` and `occlusion_strength`, and zero otherwise, which together render as the material did before the input existed. Texture color space is chosen per material slot, not per image: an 8-bit image texture also gets a copy in the sRGB form of its format (`Texture::srgb_texture`), whose mips are filtered after decoding so a minified color image keeps its brightness, and a slot whose shader variable names a color (base color, albedo, diffuse, emissive) binds that copy's view, so it decodes sRGB, while every other slot reads the stored texture, whose mips average the channels as stored. A solid `Color` source holds linear values in any slot. Mesh vertices carry a tangent (`Vertex` location 8: `xyz` along increasing U, `w` the handedness of the bitangent `cross(normal, tangent) * w`, which points up the image). The glTF importer reads `TANGENT`; any imported mesh without tangents gets them from `assets/import/tangents.rs`, a MikkTSpace-style generator (angle-weighted per-triangle frames projected onto each normal, with vertices split where UV handedness flips). The PBR vertex shader skins tangents with the same bone matrices as normals; a mesh built in code without tangents gets `Mesh::DEFAULT_TANGENT`.
-  - Shader hot reload (`render/shader.rs`, `Asset::accept_reload`): a reload that changes a shader's bind-group layout gets a new `Shader::layout_generation`, and a cache keyed on it, or on the live layout, rebuilds its bind group before the next draw. A renderer that builds a group through `Shader::create_bind_group`, which binds resources by the variable names the shader declares, follows a renumbered, reordered, dropped or restored binding; a binding under a name it does not bind is refused, naming it. A material follows any change to the groups it fills (3 and later, recorded on the shader when a material is built on it) that it can reflect: a uniform, a 2D texture or a filtering sampler (`Material::follow_shader`), and a pass that binds another shader's materials checks `Shader::shares_material_group` and skips them until the two match. Groups bound by fixed binding numbers keep refusing any binding change until the editor restarts.
-  - Particles: `ParticleSimulation` lives on `GameContext` and simulates the particle systems of one scene on the GPU, once per frame, from `context::update_scene`, which runs `Scene::update` and then the simulation; the player calls it each frame. The editor calls `GameContext::update_scene` with `UpdatedScene::Editor` from `update_game`: while play runs that is `context::update_scene` on the play copy; while play is stopped and the viewport's "Simulate particles in edit mode" option (on by default, kept for the session only) is set, it runs only `ParticleSimulation::simulate` on the edit scene, never `Scene::update`, so the edit scene gets no physics, script or component updates; with the option off it releases the simulation so no view draws particles; paused play advances nothing. Play binds the new play copy and so starts from empty particles, and Stop rebinds to the edit scene, so the preview starts over. In-place edits keep the edit scene's `SceneId` and the preview runs on; an undo restores a snapshot, a new `SceneId`, and restarts it. Before it updates, the editor calls `GameContext::prepare_scene` with the same `UpdatedScene::Editor`, which runs `Scene::prepare` and then `ParticleSimulation::prepare` on the play copy when one exists, paused included, and on the edit scene otherwise, so curve and gradient edits reach a paused play copy and the edit-scene preview; the particle prepare acts only on the bound `SceneId`, so it never rebinds, and the player prepares its current scene with `UpdatedScene::Current`. It binds to one `SceneId` and releases all its GPU state when it sees another, and drops a system on the first frame its object no longer has a `ComponentParticleSystem`. The CPU keeps per system only emission state, the random generator (seeded from the object's id) and a life ledger of each slot's age and lifetime, so it knows the live count, the `max_particles` cap and the lowest free slot without reading particles back. Kernels (`assets/shaders/particles/particles_simulate.wgsl`): update (`advance_age` and semi-implicit Euler over the frame's queued steps) and spawn scatter. Each `SceneRenderer`'s `ParticleRenderer` keeps only per-view state, draws only when the simulation's `SceneId` is the drawn scene's, and on the GPU evaluates, bitonic-sorts back to front (dead slots last, draw count = live count) and gathers each system into its instance buffer. Thumbnail scenes are never simulated, so they draw no particles.
-  - Static batches (`render/static_batch.rs`, `render/draw_collection.rs`): the `DrawCollection`, collected once a frame and shared by every view of the scene, keeps the scene's static mesh objects merged into one world-space mesh per material, shadow casting and 32 m chunk of the XZ plane, so the arena draws ~110 batches instead of ~1,300 instances. A mesh object batches when it is visible, its mesh is enabled, its material uses `shaders/mesh/pbr`, its mesh has no bones and no fourth UV channel, and neither it nor an ancestor has a non-fixed rigid body; the rest draw as instances, as before. The collection follows the scene's `ChangeJournal` (every component write, reparent and departure in order, read from a cursor) instead of walking every object each frame: an object whose transform, visibility, mesh component or enabled state changes how it draws, or that is deleted, leaves its batch, which merges again without it, and draws on its own from then on; a registry change re-resolves the members' assets and merges again a batch whose geometry was reloaded. Each merged vertex carries its object's id in `uv3.x` for the object id pass (the batch's instance has `object_id` `u32::MAX`), so picking and the selection outline see each object; object ids therefore stay fixed while the collection draws the same scene. The camera passes skip a batch whose box lies outside the view frustum; shadow maps draw them all. The player's renderer turns the object id pass off (`SceneRendererOptions::object_ids`).
-- `profiler/` — The frame profiler: CPU scopes per thread through puffin (`profile_scope!`, `profile_function!`), GPU timings per pass through wgpu timestamp queries (`GpuScope`, which dereferences to the command encoder it times, and `time_ui_pass` for the egui pass), and a history of the last 600 frames aggregated into a `ProfileReport` (averages, maximums and last values per scope over a window). The editor and the player call `profiler::new_frame` first thing each frame; capture is off until `profiler::set_capture` turns it on, from the next frame. GPU timing is installed for the eframe device and records only on the thread that installed it; adapters without timestamp queries report why in `gpu_timing`. The editor's Profiler panel and `calyx_ctl profiler read` show the report (see `docs/process/agent-loop.md`).
-- `physics/` — Rapier3D integration. PhysicsContext with fixed timestep (1/60s). Rigid bodies, colliders, query pipeline. Currently passes `&()` for collision event handlers (no events captured). Each `ComponentCollider` carries `CollisionGroups` (32-bit `memberships` and `filter` masks, Rapier's `InteractionGroups`); the default, every group in both, interacts with everything and is left out when a collider is saved, so scenes saved before groups existed load and save unchanged. The queries (`cast_ray`, `cast_shape`, `intersect_shape`) see only the colliders a `QueryFilter`'s groups interact with, such as `CollisionGroups::query_filter`'s.
-- `net/` — Renet networking. Client/Server architecture, NetworkObjectId ownership, GameMessage enum, MessageHandler trait, tick-rate accumulator. Sync module for transform interpolation. The server is the only relay: clients send to the host, which applies spawns, destroys, ownership transfers and component syncs as a peer. It forwards spawns, destroys, component enabled-state changes (`SetComponentEnabled`, sent by `Network::set_component_enabled`) and syncs to every other client, and an accepted transfer to every client, its sender included. A transfer, destroy, enabled-state change or sync from a client that does not own the object is dropped. Network object ids are `range << 32 | counter`: the server reserves a range for each peer as it joins (the host takes the first, range 0 stays with objects authored into a scene, and a range is never handed out twice in a session) and sends it in `SelfConnected`; each peer's `NetworkIdAllocator` counts up within its own range, so honest peers never collide. The server refuses a client's whole `SpawnPrefab` when an id is outside the sender's range, repeats within the spawn or already exists in the scene (checked before it instantiates anything), or when the ids do not name exactly the prefab's network objects (its instance is then undone); it relays nothing it refused and logs the sender and the offending ids. A client refuses a relayed spawn whose ids do not name exactly the prefab's network objects too, which catches spawns of a prefab the host could not load. A client that joins mid-session gets a join snapshot of the replicated state changed at runtime. The server keeps a `ReplicationRecord` (`net/snapshot.rs`) updated wherever it accepts a change, the host's own included: accepted spawns with their ids and spawner, destroyed scene-file (range 0) ids, owners, the last enabled state set on each component, and the latest relayed payload of each synchronized component (syncs are sent unreliably every update, so a component that stops sending would otherwise never reach a joiner). The moment the transport reports the client, `Server::update` sends it `SelfConnected`, then `JoinSnapshot` chunks of `SnapshotEntry` in apply order (destroys of scene-file objects, prefab spawns with owner and ids, destroys of spawned objects whose prefab siblings survive, ownership, component enabled states), then one routed `SnapshotComponent` per latest payload, which seeds an empty `Synchronized` history. All of them, and every live lifecycle message, travel on the reliable ordered channel, and the snapshot is sent before anything else is relayed to the client, so it applies its snapshot spawns after it knows its id and every later change lands after the snapshot; the host never receives one. Chunks are at most `SNAPSHOT_CHUNK_BYTES` (16 KiB); the whole snapshot must fit the joiner's free reliable-channel memory (5 MiB in renet's default `ConnectionConfig`) less `SNAPSHOT_LIVE_HEADROOM_BYTES` (1 MiB), since overflowing it disconnects the client. A larger snapshot is cut to the prefix that fits, dropping the latest payloads first, with a warning naming its size.
-- `reflect/` — Runtime reflection. Reflect trait with field access, TypeRegistry, TypeInfo for structs, enums, lists, options and maps. A reflected enum's value reads its current variant and switches to a unit variant by name through `Reflect::as_enum`/`as_enum_mut` (`ReflectEnum`, generated by `#[derive(Reflect)]`), and each `EnumVariantInfo` carries its `#[reflect_attr]` attributes, such as a display `name`. Attribute system for editor metadata. The registry keys types and trait metadata by type UUID, but every downcast, of a reflected value, a resource or trait metadata, checks the `TypeId`, so two types that share a name or a UUID never pass for each other.
-- `core/` — Ref<T> (Arc<RwLock<T>> + UUID), ReadOnlyRef<T>, WeakRef<T>, Time.
-- `resource.rs` — ResourceMap (TypeId → Box<dyn Resource> HashMap). Holds Time, Background, Network.
-- `context.rs` — RegistryContext, AssetContext, GameContext. Layered read-only wrappers.
-- `class_registry.rs` — ComponentRegistry for type-erased component construction from reflection.
-- `math/` — Transform (position/rotation/scale), matrix decomposition, inverse. Curve: a scalar over time as sorted keys (time, value, interpolation: constant, linear or smooth), evaluated with `Curve::evaluate`, holding the end keys' values outside them; its inspector edits keys on a normalized 0..1 timeline.
-- `input/` — Thin wrapper over egui::InputState. `ActionMap` names actions and axes over key and pointer bindings; the default map binds nothing. A project ships its bindings as the `input.cxinput` asset (`PROJECT_ACTION_MAP_NAME`), which `GameContext::new` and `HeadlessSceneRunner::from_scene` follow, hot reloads included. A project without one has no bindings.
+## Workspace crates
 
-### `calyx_shader` (library)
-The WGSL preprocessor, a pure source-to-source pass with no engine dependency; its crate rustdoc documents the directive language. `//#include` expands each file once per shader, `//#param` declares a module parameter that the module names as `#name`, and `//#binding` marks the `var` of the including shader that fulfills it. A `ShaderLoader` resolves and reads files, every failure is a `ShaderError` variant naming the file and line, and `preprocess` returns a `SourceMap` from each expanded line to its file and line. Its tests use the in-memory `MemoryLoader` and run with `cargo test -p calyx_shader`.
+The crates live under `crates/`, each named with a `calyx_` prefix; the two
+game projects, `sandbox` and `demos`, sit at the repository root.
 
-### `calyx_editor` (binary `editor`)
-egui + eframe editor application.
-- `panel/` — Modular panels: Viewport, Inspector, SceneHierarchy, ContentBrowser, Terminal, Game, Animator, Profiler (frame, CPU and GPU time of recent frames and the scope breakdown over a window; see `profiler/` above). Panel trait with name/icon/ui.
-- `inspector/` — InspectorRegistry with type-specific inspectors (bool, float, int, string, color, transform, vec, curve, asset ref, game object ref, collider, rigid body, UUID). Asset inspectors for Material, Shader, Prefab, AnimationGraph.
-- `widgets/` — Tab system, file button, list widget.
-- `camera.rs` — EditorCamera (orbit/fly), with its own `ActionMap` (`EditorCamera::action_map`); the scene view never reads the project map, and the Game tab reads only the project map.
-- `selection.rs` — Selection state (GameObject or Asset).
-- `scene_document.rs` — SceneDocument: the authoring scene's undo history, dirty state, recovery autosave and file. Panels write the scene through a `SceneEdit` (`scene_edit.rs`), which captures the scene at its first write, commits everything written as one undo step, and records nothing while a simulation copy of the scene exists.
-- `prefab_mode/` — Prefab mode: a `.cxprefab` asset opened as the authoring scene under its own `SceneDocument`, opened by double-clicking it in the content browser or from its Open Prefab context action. The open scene is set aside as a snapshot with its document, file and selection, and comes back unchanged when the prefab closes. Save writes the prefab asset only (one top-level object, the prefab root); scene instances change only when the explicit Update Prefab Instances action runs (Edit menu for every prefab, or the prefab asset's Update Instances context action; `crates/calyx_editor/src/prefab_instances.rs`), which reads each `.cxprefab` from disk and updates the open scene as one undo step, refused in prefab mode and while a simulation scene exists. Play, and opening or saving scenes, are refused while a prefab is open; closing or quitting with unsaved prefab changes prompts. The scene view shows a blue backdrop in prefab mode (`PREFAB_MODE_BACKDROP` in `prefab_mode/mod.rs`) and lights the prefab with a view-only environment (`prefab_mode/environment.rs`): the built-in studio HDRI `assets/skyboxes/prefab_studio.hdr`, used for image-based lighting without being drawn and passed to the renderer as `SceneRendererOptions::environment`; its bright spot at 45 degrees gives the prefab a shading direction, with no separate key light. Nothing of it is saved into the prefab. `PrefabMode` (`prefab_mode/mod.rs`) is the one `EditorAppState` field holding the open prefab, the pending unsaved-changes prompt and the loaded studio HDRI; `EditorAppState::prefab_mode_mut` pairs it with the game, scene document, selection and project path to open, save and close prefabs. `prefab_mode/editing.rs` swaps the prefab in and the set-aside scene back, and `prefab_mode/ui.rs` holds the banner and the unsaved-changes prompt.
-- `project_manager.rs` — Project loading, assembly building, background tasks.
+- **`calyx_engine`** (library): the runtime: assets, ECS components, scenes,
+  rendering, physics, networking, reflection and the standalone player. Its
+  modules are mapped below.
+- **`calyx_engine_derive`** (proc-macro): `#[derive(Component)]` (the
+  type-erased `ComponentInstance` impl), `#[derive(Reflect)]`,
+  `#[derive(TypeUuid)]`, `#[derive(Resource)]`, `#[derive(PostProcessEffect)]`
+  (bridges a component's `BlendEffect` to the reflected post-process effect
+  trait), `#[derive(DeserializeWithContext)]`, `#[reflect_trait]`,
+  `impl_reflect_value!` and `impl_extern_type_uuid!`. `fq.rs` holds
+  fully-qualified path tokens for the generated code.
+- **`calyx_engine_feature_pins`** (library, no code): pins the features of
+  engine's dependencies to what the editor resolves, so a project assembly
+  links the same engine build; see
+  [Project Assembly](../design/project/project-assembly.md).
+- **`calyx_shader`** (library): the WGSL preprocessor, a pure source-to-source
+  pass with no engine dependency (`//#include`, `//#param`, `//#binding`),
+  returning a `SourceMap` and naming the file and line of every `ShaderError`.
+  Its crate rustdoc documents the directive language; its tests run on the
+  in-memory `MemoryLoader`.
+- **`calyx_editor`** (binary `editor`): the egui + eframe editor. Its modules
+  are mapped below.
+- **`calyx_remote_protocol`** (library): the newline-delimited JSON protocol
+  between the editor's remote control server and its clients: request and
+  response envelopes and every `Command`.
+- **`calyx_ctl`** (binary): the command-line client of that protocol, which
+  launches the editor and drives it from scripts and agents; see
+  [Agent Editor Loop](../process/agent-loop.md).
+- **`calyx_project`** (library): the project manifest, `project.toml`
+  (`Project`: name, startup scene, runtime and inspector settings), and new
+  project scaffolding: `project.toml`, a `Cargo.toml` from
+  `assets/cargo.template` and an empty `assets/lib.rs`.
+- **`calyx_unity_import`** (binary): imports a Unity Asset Store pack into a
+  Calyx project; see [Unity Import](../design/tools/unity-import.md).
+- **`calyx_model_gen`** (binary): generates the sandbox's low-poly clay models
+  in headless Blender; see [Model Generator](../design/tools/model-gen.md).
+- **`calyx_icon_atlas`** (binary): packs SVG or PNG icons into one PNG atlas
+  and JSON manifest; its `README.md` documents the options.
+- **`sandbox`** (cdylib + rlib + binary `game`): the tank game project; see
+  below.
+- **`demos`** (cdylib + rlib + binary `demos_game`): a project of standalone
+  demo scenes showing what the engine renders; its `README.md` lists them.
 
-### `calyx_engine_derive` (proc-macro)
-Derive macros:
-- `#[derive(Component)]` — Generates ComponentInstance impl (Legion type bridging, serialize/deserialize).
-- `#[derive(PostProcessEffect)]` — Bridges a component's in-place `BlendEffect` operations to the reflected post-process effect trait.
-- `#[derive(Reflect)]` — Generates runtime reflection with field info, attributes, TypeName. Reflected values downcast through `Any` (`TypeId`); the type UUID identifies the type in saved data and registry lookups only.
-- `#[derive(TypeUuid)]` — Static UUID from `#[uuid = "..."]` attribute.
-- `#[derive(Resource)]` — Marker impl for ResourceMap storage.
-- `#[derive(DeserializeWithContext)]` — Context-aware deserialization for asset references.
-- `#[reflect_trait]` — Generates ReflectTrait wrapper for trait object registration.
-- `impl_reflect_value!` — Reflect impl for primitive/foreign types.
-- `fq.rs` — Fully-qualified path helpers (14 unit structs, legacy pattern).
+## `calyx_engine` modules
 
-### `calyx_project` (library)
-Project scaffolding. Generates project.toml, Cargo.toml (from template), and assets/lib.rs. Loads/validates project structure.
+- **`assets`**: the `Asset` trait, the `AssetRegistry` with its file watcher
+  and `.meta` sync, `AssetRef<T>` lazy references, and the asset types Mesh,
+  Texture, Material, Animation, AnimationGraph, Skybox and PostProcessProfile.
+  `assets/import` turns FBX, OBJ, glTF and GLB into an imported scene. See
+  [Asset Files](../design/assets/asset-files.md) and
+  [Model Import](../design/assets/model-import.md).
+- **`background`**: `Background`, the shared thread-pool task executor
+  resource, which runs the editor's assembly builds among other tasks.
+- **`class_registry`**: `ComponentRegistry`, one prototype per reflected
+  component type for type-erased construction, binding and serialization, and
+  each type's lifecycle hooks as reflected functions.
+- **`component`**: the `Component` trait, the lifecycle hook traits
+  (`ComponentStart`, `ComponentUpdate`, `ComponentReset`, `ComponentHud`),
+  `ComponentRef<T>`, and the built-in components: transform, cameras, meshes,
+  lights, physics bodies, animation, particles, terrain, water, foliage,
+  grass and the post-process volumes and effects. See
+  [Components](../design/scene/components.md).
+- **`context`**: the layered contexts: `RegistryContext` (asset, type and
+  component registries), `AssetContext` (those plus the render context) and
+  `GameContext` (assets, `SceneManager`, `ResourceMap` and the particle
+  simulation), whose `update_scene` and `prepare_scene` run a frame.
+- **`core`**: `Ref<T>` (`Arc<RwLock<T>>` with a UUID), `ReadOnlyRef<T>`,
+  `WeakRef<T>` and `Time` (`log_registry.rs` is commented out).
+- **`error`**: the `BoxedError` and `DynError` aliases.
+- **`ext`**: extension traits for egui and nalgebra types, and `lerp`
+  impls.
+- **`input`**: `Input` over egui's input state, and `ActionMap`, named actions
+  and axes over key and pointer bindings. A project ships its bindings as the
+  `input.cxinput` asset (`PROJECT_ACTION_MAP_NAME`), which
+  `GameContext::new` and `HeadlessSceneRunner::from_scene` follow, hot reloads
+  included; the default map, and a project without one, binds nothing.
+- **`logging`**: `Log` and `DefaultLogger` (timestamped log files and an
+  in-memory history the editor's terminal shows), and `warn_once`.
+- **`math`**: `Transform`, `Curve` and `Gradient` (keys over time, evaluated on
+  the CPU and, through `render`, the GPU), Bezier and Catmull-Rom helpers, and
+  the geometry behind terrain (`heightfield`) and water (`water`,
+  `waterline`).
+- **`net`**: Renet client/server multiplayer with the server as the only
+  relay, per-peer network id ranges, transform sync and join snapshots. See
+  [Networking](../design/net/networking.md).
+- **`physics`**: Rapier3D at a fixed 1/60 s step, collision groups, ray and
+  shape queries, and the frame's collision and contact-force events. See
+  [Physics](../design/engine/physics.md).
+- **`profiler`**: the frame profiler: puffin CPU scopes (`profile_scope!`,
+  `profile_function!`), GPU timings per pass (`GpuScope`), and a
+  `ProfileReport` over recent frames; the module rustdoc states its rules,
+  and `calyx_ctl profiler read` shows it
+  ([Agent Editor Loop](../process/agent-loop.md#profiling)).
+- **`reflect`**: the `Reflect` trait, `TypeInfo`, `TypeRegistry` (keyed by
+  type UUID, downcasting by `TypeId`) and trait metadata. See
+  [Reflection](../design/engine/reflection.md).
+- **`render`**: the wgpu renderer. `RenderContext` (eframe or headless),
+  `SceneRenderer` with its deferred G-buffer path, the `DrawCollection`, the
+  `Shader` asset and `AssetShaderLoader`, lights, shadows, particles, terrain,
+  water, foliage, the post-processing chain (`postprocess/`) and the editor
+  overlays (`overlay/`: grid, gizmos and selection outline composited after
+  the chain). See the rendering docs below.
+- **`resource`**: `ResourceMap`, type-keyed runtime resources (`Time`,
+  `Background`, `Network`, `InputState`, `PhysicsConfiguration`,
+  `HostCommands` and any a project adds).
+- **`runtime`**: runtime setup shared by the player and the editor: project
+  runtime settings, the GPU device both open, window icons, per-frame
+  bookkeeping, `HostCommand`, and `run_player`. See
+  [Standalone Player](../design/project/standalone-player.md).
+- **`scene`**: `Scene` (a `SceneId`, the ECS world, physics, and the scene
+  graph, object store, transform cache, change journal and disabled-component
+  map it delegates to), `SceneManager` for load, save and simulation, scene
+  and prefab assets with id remapping, `SceneView` (a read-only view of
+  objects and hierarchy) and the HUD build. See
+  [Component Enabled State](../design/scene/component-enabled-state.md) and
+  [Prefab Links](../design/scene/prefab-links.md).
+- **`test_support`**: headless helpers for engine and integration tests,
+  such as `HeadlessSceneRunner`.
+- **`ui`**: the backend-neutral runtime UI the HUD is built with: layout,
+  styles, text, paint commands, `UiRuntime` and the `UiBackend` boundary with
+  its egui backend. See [HUD / Runtime UI Architecture](../design/hud-ui/architecture.md).
+- **`utils`**: `TypeUuid`, `ContextSeed`, the `impl_builder_fn!` macro,
+  `lib_file_name` (a library's platform file name) and other small
+  utilities.
 
-### Standalone players
+### Rendering docs
 
-`calyx_engine::runtime::run_player(project_directory, plugin_main)` owns the standalone window, GPU setup, frame loop, input, HUD and scene rendering. It reads the project's startup scene and window settings from `project.toml`, registers the linked project's component types before loading the scene, and runs until the window closes. Player logs use `calyx_player_*.log` in the working directory's `logs/` folder.
+- [G-Buffer](../design/rendering/gbuffer.md): the geometry pass and deferred lighting.
+- [Draw Collection and Static Batches](../design/rendering/draw-collection.md)
+- [Lights](../design/rendering/lights.md): the light buffer and falloff.
+- [Shadow Mapping](../design/rendering/shadows.md)
+- [PBR Materials](../design/rendering/pbr-materials.md)
+- [Shaders](../design/rendering/shaders.md): loading, compute, hot reload and the shader folder layout.
+- [Post-Processing Architecture](../design/post-processing/architecture.md)
+- [Particles](../design/rendering/particles.md), [Terrain](../design/rendering/terrain.md),
+  [Water](../design/rendering/water.md), [Grass](../design/rendering/grass.md),
+  [Foliage](../design/rendering/foliage.md)
 
-Game code asks its host for something through `runtime::HostCommand`, the one channel from game to host (today only `Quit`): a hook pushes a command into the `HostCommands` resource (`ResourceMap::host_commands_mut`), and `GameContext::update_scene` returns the frame's commands, in order and once each. The editor's `update_game` and the player match on every command without a catch-all, so a new variant has to be handled by each host: `Quit` stops play in the editor and closes the player's window.
+## `calyx_editor` modules
 
-A project adds a uniquely named Cargo binary and an `eframe` dependency for the return type. Its entry point calls `run_player(env!("CARGO_MANIFEST_DIR"), project_crate::plugin_main)` and returns `eframe::Result<()>`; see `sandbox/src/game.rs` and `demos/src/game.rs`. Run the sandbox with `cargo run --release -p sandbox --bin game`, or the demo collection with `cargo run --release -p demos --bin demos_game`. The project needs its assets locally, including any licensed imports; the player uses the same asset loader as the editor.
+- **`lib.rs`**: `EditorApp`, its frame loop, and `EditorAppState`, the
+  state panels share; `main.rs` only runs it.
+- **`panel/`**: the `Panel` trait (name, icon, ui) and the panels: Viewport,
+  Game, Inspector, Scene Hierarchy, Content Browser, Terminal, Animator and
+  Profiler (frame, CPU and GPU time of recent frames and the scope breakdown
+  over a window).
+- **`inspector/`**: `InspectorRegistry` with type inspectors (bool, number,
+  string, color, transform, vector, curve, gradient, asset and game object
+  references, collider, rigid body, UUID, blend mode, local volume shape,
+  particle spawn shape), asset inspectors (Material, Shader, Prefab, Scene,
+  AnimationGraph, PostProcessProfile), the component inspector, the edit
+  tracker (undo baselines of shown components) and the pinned component order.
+- **`widgets/`**: tabs, the file button, the list widget, the curve and
+  gradient editors, and the `ThumbnailService` that renders asset thumbnails
+  in the background.
+- **`asset_open/`**: the one dispatch every asset open goes through
+  (double-click, Enter, the context menu's Open, `calyx_ctl asset open`):
+  `AssetOpener`s registered by asset type, and the unsaved-scene prompt.
+- **`remote/`**: the remote control server `calyx_ctl` drives, enabled only
+  when `CALYX_REMOTE_PORT` is set; see [Agent Editor Loop](../process/agent-loop.md).
+- **`scene_document.rs`**, **`scene_edit.rs`**, **`scene_history.rs`**,
+  **`scene_file.rs`**, **`scene_autosave.rs`**: the authoring scene's
+  document: undo history, dirty state, file identity, saving and recovery
+  autosave, written through `SceneEdit`.
+- **`prefab_mode/`**: editing a `.cxprefab` as the authoring scene; see
+  [Prefab Mode](../design/editor/prefab-mode.md).
+- **`prefab_instances.rs`**: instantiating linked prefabs and the Update
+  Prefab Instances action; see [Prefab Links](../design/scene/prefab-links.md).
+- **`project_manager.rs`**: `ProjectManager`: loads the project and its
+  runtime settings, starts the simulation, queues assembly builds on the
+  background executor, and loads and reloads the project DLL; see
+  [Project Assembly](../design/project/project-assembly.md).
+- **`camera.rs`**: `EditorCamera` (orbit and fly) with its own `ActionMap`.
+  The scene view never reads the project map, and the Game tab reads only the
+  project map.
+- **`selection.rs`**: the selection (game objects or an asset).
+- **`icons.rs`**, **`task_id.rs`**: embedded icons, and the ids and messages
+  of background tasks.
 
-### `sandbox` (cdylib + binary)
-Example game project. Compiles as dynamic library (plugin) with `plugin_main` entry point for type registration. Contains:
-- `player.rs` — ComponentPlayerController (WASD movement, camera-relative, network ownership check).
-- `network.rs` — Game-specific network handlers.
-- `game.rs` — Standalone game binary.
-- `assets/input.cxinput` — The sandbox's action map: `shoot` (primary button, Space), `jump` (Space), `scoreboard` (Tab), and the `move_forward` (W/S) and `move_right` (D/A) axes.
-- `combat.rs` — Kill events. A projectile records its shooter, and a lethal hit becomes a `KillEvent` passed to `record_kill`, which counts kills and deaths on `ComponentCombatStats` and adds the kill to every `ComponentKillFeed`. Networked kills are meant to enter through the same `record_kill`.
-- `combat_vfx.rs` — The tank and sentry share a signal-amber shell, a muzzle burst and world-space smoke. Hits spawn additive sparks on targets or alpha-blended dust on static cover. A `ComponentCombatEffectLifetime` follows each round with its trail emitter, stops emission when the round disappears, and deletes the emitter after the last particles drain. One-shot emitters also expire; the particle simulation drops their GPU state. Rounds reuse the approved look-dev sphere and emissive materials, with a round head and a narrow luminous tail; visual children compensate the physics root scale. `ComponentCombatPalette` selects Sunny (default), Sunbaked or Moonlit signals for the scene. Moonlit uses its weaker shell amber and reduced shell/muzzle lights, independently of sodium lamps; damaging hits use a brighter, briefly sustained streak burst in every palette.
-- `collision.rs` — The sandbox's collision groups: `HULL_GROUP` (1), `ROUNDS_GROUP` (2) and `SIGHT_GROUP` (3). The hull's sweep and turn, a round's flight and arena sight each ask with their own groups (`HULL`, `ROUNDS`, `SIGHT`), so a static collider stops only what it is a member of; a default collider is a member of all of them. `TANK_BLOCKER` stops the hull alone, for water: rounds, the cursor aim (drive surfaces only), sentry rounds, fog of war and the minimap's sight cross it. `BRUSH` is a member of `BRUSH_GROUP` (4) only and interacts with nothing, for the volumes of brush patches.
-- `brush.rs` — Tall-grass brush (`ComponentBrush`): a patch whose shape is the primitive colliders on it and its descendants, in the `BRUSH` collision group (4), which stops no tank, round or sight. A tank in a patch is hidden from every side and sentry outside it, `TeamVision::concealed` and `sees_unit` carrying the rule to fog, health bars, damage numbers and minimap blips; tanks in the same patch see each other, and firing from a patch reveals the shooter for the patch's `reveal_time` (`ComponentBrushReveal`). The patch's grass is a `ComponentFoliage` of `tall_grass` clumps drawn with the engine's grass shader; every frame the first patch hands the scene's `ComponentGrassField` the tanks the local player sees as benders (never a tank fog hides), which bend the grass, and around the player in brush and the tanks it sees in the same patch fade it, truly transparent.
-- `track_marks.rs` — Track marks (`ComponentTrackMarks`): tanks give the scene's terrain the component when play starts, and each frame it stamps the two treads of every tank that moved on the terrain (not on a bridge or deck, and not while fog hides it) into a byte-per-texel field over the terrain's rectangle, 8 texels a metre by default. The prints keep the grousers still on the ground as a tread rolls, and turning in place sweeps them round into scuffs. Every 0.25 s each tile of 32 by 32 texels holding marks fades by what the time is worth, so a print is gone after `fade_time` (25 s); only the tiles stamped or faded that frame are written to the texture (`Texture::writable_rgba8` and `write_rgba8`), and a faded tile drops out, so the cost follows the fresh marks, not the distance driven. The terrain draws a copy of its material (`Material::duplicate`) whose ground `marks_texture` is that texture, tinted per map palette, so the material asset itself never changes.
-- `hud.rs` and `hud/` — The tank HUD (`ComponentTankHud`): health, weapon, a minimap drawn from world positions, the kill feed, and a scoreboard while the `scoreboard` action (Tab in the sandbox's `input.cxinput`) is held.
+## Game projects
 
-## Key Patterns
-- `Ref<T>` everywhere for shared ownership with UUID tracking.
-- Legion ECS with trait-object components (not archetypal queries for game logic).
-- Reflection-driven editor: components auto-generate inspector UI via Reflect + TypeInfo. A field or list element whose enum has only unit variants and no type inspector of its own is a dropdown of its variants, labelled by each variant's `name` attribute or its name in title case; an enum with data-carrying variants still shows its type name.
-- Hot-reload: file watcher → AssetRegistry reload. `calyx_shader` dependencies decide which shaders an included file reloads.
-- Networking: Renet client/server, fixed tick rate, message queue with typed handlers.
-- Scene files: `.cxscene` (JSON serialized SceneData).
+A project is a crate whose library builds as a `cdylib` with a `plugin_main`
+entry point that registers its types, and as an `rlib` for its standalone
+player binary.
 
-## Build Notes
-- Windows: uses `rust-lld.exe` linker, `-Cprefer-dynamic` for fast iteration.
-- Linux: `-Clink-arg=-Wl,--undefined-version` for shared lib compat.
-- The project DLL statically links its own copy of `calyx_engine`, and engine types cross the DLL boundary keyed by `TypeId`: Legion's component storages, reflection, resource and trait-metadata downcasts all compare `TypeId`s, and a type crosses with its ordinary Rust layout, since both sides share the engine build. `crates/calyx_editor/tests/project_assembly_type_ids.rs` loads the sandbox assembly and downcasts its trait metadata and engine-typed fields in the editor. The DLL is built in a separate `cargo build --lib`, so engine's dependencies must resolve to the same features there as in the editor build, or the DLL gets another engine build with other `TypeId`s. `crates/calyx_engine_feature_pins` pins the editor's features, and under `[build-dependencies]` the host-side features a `cargo test --workspace` adds, since the editor's tests load the sandbox assembly too; `crates/calyx_editor/tests/project_assembly_features.rs` fails when they drift, and the editor logs an error when it loads an assembly built against another engine.
-- The DLL's own copy of `calyx_engine` and its dependencies also means its own copy of every `static` and `thread_local!` in them. Code that reaches one from the DLL sees the DLL's copy, not the editor's. The ones that matter:
-  - Legion's entity counter (`NEXT_ENTITY`): the DLL's starts over and would hand out entities the editor already did, so a `Scene` keeps a pointer to the allocator of the engine build that created it and spawns every object, from either side, with it.
-  - The prefab id remap (`RemapScope`, a thread-local read by `GameObjectRef` deserialization): each component type enters it in its own code through `ComponentInstance::deserialize_remapped`, so a project component sees the remap the editor's prefab instantiation asked for.
-  - The `log` logger: `TypeRegistry::register_crate` installs the logger the editor recorded in `begin_plugin_load`, so DLL log records reach the editor's log.
-  - Safe as they are: the scene id counter (`SceneId`; the DLL's copy starts over, but the only scenes the particle simulation binds, the editor's play copy and the player's scene, are built by the editor or player's own engine build); Legion's `ID_CLONE_MAPPINGS` (only `World::clone_from`, which the engine never calls), `COMPONENT_VERSION` (only Legion's `maybe_changed` filter, unused; the scene's change set tracks writes) and `WORLD_ID_COUNTER` (keys Legion query caches, and the engine builds a fresh query per use); `warn_once` keys (a warning can show once per copy); `inventory` registrations (each copy collects its own, which is how `register_crate` finds only the DLL's types).
-- Reloading the project DLL after a rebuild unloads the previous one, and everything its code backs must go first: Legion storages of project components (their drop, clone and serialize code is the DLL's), the `allocate_entity` pointer of a scene the DLL created, the DLL's type registrations and the component binders made from them. So `ProjectManager` loads the new DLL, then, while the old one is still loaded, has `SceneManager::suspend_scenes` snapshot and empty every scene it reaches, calls `TypeRegistry::unload_plugins` (which resets the registry to the editor's own types, dropping types the new build removed too) and rebuilds the component registry from it. It then registers the new DLL's types, unloads the old DLL and rebuilds each scene from its snapshot with `SceneManager::resume_scenes`. A reload:
-  - keeps the authoring scene with its unsaved edits, its file and dirty state, the selection, and the undo and redo history, which are all serialized;
-  - keeps each cached scene asset and the scene manager's default scene, even one the cache has evicted, rebuilt in place behind the same reference; prefabs are serialized data and stay as they are;
-  - stops a running or paused simulation and drops its scene, as Stop does; Play starts a fresh one;
-  - commits pending inspector edits before the reload and takes the inspector's baselines again after it;
-  - drops components whose type the new build removed, or that no longer deserialize, from the rebuilt scenes, so saving afterwards writes the scene without them;
-  - does not cover resources or asset types project code adds to the editor; the sandbox adds none.
-- The editor loads the project DLL with `libloading`, which hands `dlopen` and `dlsym` NUL-terminated strings. `sharedlib`, used before, passed unterminated ones on Linux, so no assembly ever loaded there. Every load is of a fresh shadow copy under its own folder, so on Linux `dlopen` returns a new handle for each build, and dropping the previous one `dlclose`s and unmaps it: after a reload only the new copy is mapped. Linux runs `calyx_editor`'s assembly reload test like Windows does.
-- Under WSL, a test or editor process that created a wgpu instance can die with SIGSEGV as it exits, whether or not it loaded a project DLL. The crash is on a thread of NVIDIA's WSL D3D12 driver (`libnvwgf2umx.so`), which Mesa's default Gallium driver there, `d3d12`, runs on for the GLES backend. `GALLIUM_DRIVER=llvmpipe` avoids it. Native Linux and CI are not affected.
-- `release-with-debug` profile for profiling.
+- **`sandbox`**: the tank game: `arena`, `tank` and `tank_camera`, `sentry`,
+  `spawn`, `combat` and `combat_vfx`, `match_rules` and `game_state`,
+  `vision` (fog of war), `brush`, `track_marks`, `terrain` (drive surfaces),
+  `collision` (its collision groups) and the `hud`. `sandbox/examples/` holds
+  the arena and water scene builders. See
+  [Sandbox Gameplay](../design/sandbox/gameplay.md) and
+  [Tank Game Visual Direction](../design/art/tank-game-direction.md).
+- **`demos`**: demo scenes, with the terrain demo's rover as its only code.
 
-## Asset File Types
-- `.wgsl` — Shaders
-- `.png`, `.jpg`, `.jpeg`, `.webp` — Textures
-- `.obj` — Meshes
-- `.fbx`, `.gltf`, `.glb` — Models, imported as prefabs
-- `.cxscene` — Scenes
-- `.cxanim` — Animations
-- `.cxpostfx` — Post-processing profiles, shared between post-process volumes
-- `.meta` — Asset metadata (UUID, name, type). Only a file whose extension is a registered asset type gets one; other files in an asset root are listed in the content browser but are not assets. A `.meta` on disk owns its asset's id: the editor never rewrites the id of one that exists. A file that appears while the editor runs waits half a second for its `.meta` before the editor generates one, and a `.meta` another tool writes or changes later re-keys the asset under its id, with the old id resolving to the new one until the editor closes (`crates/calyx_engine/src/assets/asset_registry/meta_sync.rs`). Tools can write an asset and its `.meta` in either order with the editor open.
-- `project.toml` — Project configuration
+## Seams
 
-## Shader Layout
-Every engine shader sits in a folder of `assets/shaders/` for its purpose; none sits at the top level. An include names a file from an asset root (`//#include "shaders/common/camera.wgsl"`) and a load names the asset without its extension (`"shaders/mesh/pbr"`). Materials, scenes and prefabs reference a shader by the UUID in its `.meta`, so move a shader with its `.meta` and its references keep working.
-- `common/` — Include modules with no entry point that shaders of several folders share: camera, constants, inputs and lights uniforms, the PBR helpers, `curve.wgsl` and `gradient.wgsl`, the cubemap face directions, and the full-screen triangle (`fullscreen.wgsl`) with its `vs_main` (`fullscreen_pass.wgsl`).
-- `mesh/` — Scene geometry: `mesh.wgsl` (the mesh instance and skinning module), the PBR scene shader and the object-id pick pass.
-- `environment/` — Skybox drawing and image-based lighting: the equirectangular-to-cubemap, irradiance, prefilter and BRDF kernels and the skybox.
-- `particles/` — The particle renderer and the particle simulation kernels.
-- `postprocess/` — Post-processing passes and the modules only they share (`bloom_filters.wgsl`, `dof_common.wgsl`, `ssao_common.wgsl`), plus the multisampled depth resolve the chain runs first.
-- `editor/` — Editor overlays and tooling the game does not draw: gizmos and gizmo icons with their object-id pass, the grid, the selection outline, the overlay composite, and the thumbnail generator's shaders.
-- `utility/` — GPU helpers with no part in a frame's scene: the 2D and cube mip generators.
+The interfaces that hold between modules. Extend through them.
 
-A new shader goes in the folder of the pass or feature it belongs to. An include module goes next to the shaders that use it when they share one folder, as `postprocess/bloom_filters.wgsl` does, and in `common/` once shaders of two folders use it. `render::shader_loader`'s `every_engine_shader_resolves_its_includes_and_preprocesses` test fails when a shader sits at the top level or an include path is stale.
+- **`Asset`** (`assets/asset.rs`): a type the registry loads by file
+  extension, reloads in place and hands out as `AssetRef<T>`.
+- **`ContextSeed`** (`utils/deserialize_context.rs`): a serde
+  `DeserializeSeed` that carries a context through deserialization, so asset
+  references resolve as a scene or asset loads;
+  `#[derive(DeserializeWithContext)]` generates its impls.
+- **`ComponentRef<T>` and the hook traits** (`component/component.rs`): a hook
+  reads and writes its own component through the scene, with no copy; see
+  [Components](../design/scene/components.md#hooks).
+- **`ShaderLoader`** (`calyx_shader`): resolves and reads a shader's files for
+  the preprocessor; `AssetShaderLoader` reads the asset roots and
+  `MemoryLoader` serves tests.
+- **`DrawCollection`** (`render/draw_collection.rs`): what one scene draws in
+  a frame, collected once and shared by every view of it.
+- **`PostProcessPass`** (`render/postprocess/pass.rs`): one full-screen pass
+  of the chain: its stage, the scene inputs it reads, whether it runs, and
+  how it prepares and records.
+- **`BlendEffect`** (`render/postprocess/blend.rs`): how an effect component
+  blends field by field when a local volume applies over the settings below,
+  and its neutral value to fade in from.
+- **`UiBackend`** (`ui/backend.rs`): the paint backend the runtime UI renders
+  through.
+- **`HostCommand`** (`runtime/host_command.rs`): the one channel from game
+  code to its host (today only `Quit`). A hook pushes a command into the
+  `HostCommands` resource (`ResourceMap::host_commands_mut`), and
+  `GameContext::update_scene` returns the frame's commands, in order and once
+  each. The editor's `update_game` and the player match on every command
+  without a catch-all, so a new variant has to be handled by each host:
+  `Quit` stops play in the editor and closes the player's window.
+- **`plugin_main` and `TypeRegistry::register_crate`**: the project boundary.
+  A project's exported `plugin_main` calls `register_crate` with its crate
+  name, which runs only that crate's `inventory` registrations.
+- **`SceneEdit`** (`calyx_editor/src/scene_edit.rs`): the editor's write
+  transaction on the authoring scene. It captures the scene at its first
+  write, commits everything written as one undo step, and records nothing
+  while a simulation copy of the scene exists.
+- **`Panel`**, **`AssetOpener`**, **`TypeInspector`** and **`AssetInspector`**
+  (`calyx_editor`): the editor's extension points for panels, opening an
+  asset type, and inspecting a value or asset type.
+
+## Conventions
+
+- Shared ownership is `Ref<T>`, which carries a UUID.
+- Components are Legion components with a reflected, type-erased side; the
+  editor's inspectors are generated from `Reflect` and `TypeInfo`.
+- Hot reload: the file watcher reloads assets in the `AssetRegistry`, and
+  `calyx_shader` dependencies decide which shaders an included file reloads.
+- Scenes are `.cxscene` files, JSON-serialized `SceneData`.
+
+## Build notes
+
+- Windows links with `rust-lld.exe` and `-Cprefer-dynamic` for fast
+  iteration (`.cargo/config.toml`); Linux passes
+  `-Clink-arg=-Wl,--undefined-version` for shared library compatibility.
+- The pinned nightly and the sccache workaround are in
+  [Toolchain](../process/toolchain.md).
+- The project DLL links its own engine copy, so engine features must resolve
+  the same in the DLL's build as in the editor's; the pins, the statics that
+  exist twice and the reload sequence are in
+  [Project Assembly](../design/project/project-assembly.md).
+- `[profile.dev.build-override]` keeps full debug info for build scripts and
+  proc macros, so both builds compile engine's proc macros alike.
+- The `release-with-debug` profile is for profiling.
+- Under WSL, a test or editor process that created a wgpu instance can die
+  with SIGSEGV as it exits, whether or not it loaded a project DLL. The crash
+  is on a thread of NVIDIA's WSL D3D12 driver (`libnvwgf2umx.so`), which
+  Mesa's default Gallium driver there, `d3d12`, runs on for the GLES backend.
+  `GALLIUM_DRIVER=llvmpipe` avoids it. Native Linux and CI are not affected.
