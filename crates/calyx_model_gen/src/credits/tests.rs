@@ -1,0 +1,45 @@
+use super::*;
+use std::path::Path;
+
+fn wall() -> Model {
+    Model::parse(
+        "wall_low",
+        r#"
+kind = "import"
+role = "barriers"
+source = "sources/wall-low.glb"
+credit = { title = "Wall (low)", author = "Kenney", licence = "CC0-1.0", url = "https://example.com/kit" }
+"#,
+        Path::new("models"),
+    )
+    .unwrap()
+}
+
+#[test]
+fn a_credited_import_passes() {
+    let credits =
+        "## Wall\n- Source: https://example.com/kit\n- Author: Kenney\n- File: `wall-low.glb`\n";
+    assert_eq!(check(credits, &[wall()]), Ok(()));
+}
+
+#[test]
+fn an_uncredited_import_fails_naming_what_is_missing() {
+    let err = check(
+        "## Wall\n- Author: Kenney\n- File: wall-low.glb\n",
+        &[wall()],
+    )
+    .unwrap_err();
+    assert!(err.contains("wall_low: its URL"), "{err}");
+    assert!(!err.contains("author"), "{err}");
+}
+
+#[test]
+fn generated_models_need_no_credit() {
+    let rock = Model::parse(
+        "rock",
+        "kind = \"rock\"\nrole = \"rocks\"\nsize = [1, 1, 1]",
+        Path::new(""),
+    )
+    .unwrap();
+    assert_eq!(check("", &[rock]), Ok(()));
+}
