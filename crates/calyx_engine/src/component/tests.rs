@@ -1,370 +1,368 @@
-#[cfg(test)]
-mod tests {
-    use crate::assets::{AssetAccess, AssetRef};
-    use crate::component::*;
-    use crate::net::ComponentNetworkObject;
-    use crate::scene::SceneData;
-    use crate::test_support::{test_registries, test_scene};
-    use egui::Color32;
-    use nalgebra_glm::Vec3;
-    use rapier3d::dynamics::RigidBodyType;
-    use uuid::Uuid;
+use crate::assets::{AssetAccess, AssetRef};
+use crate::component::*;
+use crate::net::ComponentNetworkObject;
+use crate::scene::SceneData;
+use crate::test_support::{test_registries, test_scene};
+use egui::Color32;
+use nalgebra_glm::Vec3;
+use rapier3d::dynamics::RigidBodyType;
+use uuid::Uuid;
 
-    #[test]
-    fn id_has_unique_uuid() {
-        let mut scene = test_scene();
-        let a = scene.create(None, None);
-        let b = scene.create(None, None);
-        assert_ne!(scene.uuid(a), Uuid::nil());
-        assert_ne!(scene.uuid(b), Uuid::nil());
-        assert_ne!(scene.uuid(a), scene.uuid(b));
-    }
-
-    #[test]
-    fn transform_default_is_identity() {
-        let mut scene = test_scene();
-        let go = scene.create(None, None);
-        let t = scene.transform(go);
-        assert!((t.position - Vec3::zeros()).norm() < 1e-5);
-        assert!((t.scale - Vec3::from_element(1.0)).norm() < 1e-5);
-    }
-
-    #[test]
-    fn camera_disabled_not_found_by_main_camera() {
-        let mut scene = test_scene();
-        let go = scene.create(None, None);
-        scene.add_component(go, ComponentCamera::default());
-        assert_eq!(scene.main_camera().map(|(camera, _)| camera), Some(go));
-        assert!(scene.set_component_enabled::<ComponentCamera>(go, false));
-        assert!(scene.main_camera().is_none());
-
-        // A later enabled camera is picked over the disabled one.
-        let other = scene.create(None, None);
-        scene.add_component(other, ComponentCamera::default());
-        assert_eq!(scene.main_camera().map(|(camera, _)| camera), Some(other));
-    }
-
-    #[test]
-    fn bone_saved_with_its_old_index_and_offset_still_loads() {
-        let bone: ComponentBone = serde_json::from_value(serde_json::json!({
-            "name": "spine_01",
-            "index": 5,
-            "offset_matrix": nalgebra_glm::Mat4::identity()
-        }))
-        .unwrap();
-        assert_eq!(bone.name, "spine_01");
-    }
-
-    #[test]
-    fn malformed_component_data_reports_the_serde_error() {
-        use crate::utils::TypeUuid;
-        let registries = test_registries();
-        let registry = registries.components.read();
-        let component = registry
-            .component(ComponentCamera::type_uuid())
-            .expect("camera component is registered");
-        let Err(err) = component.deserialize(&serde_json::json!({ "fov": "wide" })) else {
-            panic!("malformed camera data must not deserialize");
-        };
-        assert!(
-            err.to_string()
-                .contains("invalid type: string \"wide\", expected f32"),
-            "unexpected error message: {err}"
-        );
-    }
-
-    #[test]
-    fn scene_load_skips_only_the_malformed_component() {
-        use crate::utils::TypeUuid;
-        let registries = test_registries();
-        let mut scene = registries.scene();
-        let go = scene.create(
-            Some(ComponentID {
-                name: "Kept".into(),
-                ..Default::default()
-            }),
-            None,
-        );
-        scene.add_component(go, ComponentCamera::default());
-        let mut data: SceneData = (&scene).into();
-        let object = data.components.values_mut().next().expect("one object");
-        object.insert(
-            ComponentCamera::type_uuid(),
-            serde_json::json!({ "fov": "wide" }),
-        );
-
-        let restored = crate::scene::Scene::from((&registries, data));
-        let rgo = restored.objects().next().expect("object survives");
-        assert_eq!(restored.name(rgo), "Kept");
-        assert!(restored
-            .read_component::<ComponentCamera, _, _>(rgo, |c| c.fov)
-            .is_none());
-    }
-
-    #[test]
-    fn adding_a_rigid_body_records_it_in_the_change_set() {
-        let mut scene = test_scene();
-        let go = scene.create(None, None);
-        scene.add_component(go, ComponentRigidBody::default());
-        assert!(scene
-            .changes
-            .take::<ComponentRigidBody>()
-            .contains(&go.entity));
-    }
-
-    #[test]
-    fn all_components_round_trip() {
-        let registries = test_registries();
-        let mut scene = registries.scene();
-        let go = scene.create(
-            Some(ComponentID {
-                name: "TestObj".into(),
-                visible: false,
-                ..Default::default()
-            }),
-            None,
-        );
-
-        scene.set_transform(go, &nalgebra_glm::translation(&Vec3::new(1.0, 2.0, 3.0)));
-
-        scene.add_component(
-            go,
-            ComponentCamera {
-                fov: 1.5,
-                near_plane: 0.2,
-                far_plane: 999.0,
-                ..Default::default()
-            },
-        );
-        scene.add_component(
-            go,
-            ComponentDirectionalLight {
-                intensity: 0.42,
-                ..Default::default()
-            },
-        );
-        assert!(scene.set_component_enabled::<ComponentDirectionalLight>(go, false));
-        scene.add_component(
-            go,
-            ComponentAmbientLight {
-                color: Color32::BLUE,
-                intensity: 0.33,
-                ..Default::default()
-            },
-        );
-        scene.add_component(
-            go,
-            ComponentPointLight {
-                radius: 25.0,
-                intensity: 1.25,
-                ..Default::default()
-            },
-        );
-        scene.add_component(
-            go,
-            ComponentSpotLight {
-                range: 12.0,
-                inner_angle: 15.0,
-                outer_angle: 35.0,
-                ..Default::default()
-            },
-        );
-        scene.add_component(
-            go,
-            ComponentSkyLight {
-                intensity: 0.7,
-                ..Default::default()
-            },
-        );
-        assert!(scene.set_component_enabled::<ComponentSkyLight>(go, false));
-
-        let mesh_id = Uuid::new_v4();
-        scene.add_component(
-            go,
-            ComponentMesh {
-                mesh: AssetRef::from_id(mesh_id),
-                ..Default::default()
-            },
-        );
-        scene.add_component(go, ComponentSkinnedMesh::default());
-        scene.add_component(
-            go,
-            ComponentBone {
-                name: "spine_01".into(),
-                ..Default::default()
-            },
-        );
-        scene.add_component(
-            go,
-            ComponentCollider {
-                shape: ColliderShape::Sphere { radius: 2.0 },
-                friction: 0.3,
-                density: 50.0,
-                groups: CollisionGroups::new(0b1, 0b110),
-            },
-        );
-        scene.add_component(
-            go,
-            ComponentRigidBody {
-                mass: 42.0,
-                gravity_scale: 0.5,
-                ty: RigidBodyType::Fixed,
-                ..Default::default()
-            },
-        );
-        scene.add_component(
-            go,
-            ComponentNetworkObject {
-                id: 777,
-                owner_id: 99u64,
-            },
-        );
-        let particle_texture_id = Uuid::new_v4();
-        let mut particle_system = ComponentParticleSystem::default();
-        particle_system.active = false;
-        particle_system.local_space = true;
-        particle_system.emission = ParticleEmission {
-            looping: false,
-            rate: 12.0,
-            burst_count: 3,
-            max_particles: 64,
-            duration: 2.0,
-        };
-        particle_system.lifetime = ParticleScalarRange { min: 0.5, max: 1.5 };
-        particle_system.shape = ParticleSpawnShape::Sphere { radius: 2.0 };
-        particle_system.velocity = ParticleVelocity {
-            initial: Vec3::new(0.0, 5.0, 0.0),
-            randomness: Vec3::new(1.0, 1.0, 1.0),
-        };
-        particle_system.forces = ParticleForces {
-            acceleration: Vec3::new(0.0, -9.8, 0.0),
-        };
-        particle_system.size = ParticleSizeOverLifetime::linear(0.5, 0.0, 0.1);
-        particle_system.color = ParticleColorOverLifetime::linear(
-            Color32::RED,
-            Color32::from_rgba_unmultiplied(255, 255, 0, 0),
-        );
-        particle_system.rendering = ParticleRendering {
-            blend_mode: ParticleBlendMode::Alpha,
-            texture: AssetRef::from_id(particle_texture_id),
-            ..Default::default()
-        };
-        scene.add_component(go, particle_system);
-
-        let data: SceneData = (&scene).into();
-        let restored = crate::scene::Scene::from((&registries, data));
-        let rgo = restored
-            .objects()
-            .next()
-            .expect("no game objects after restore");
-
-        assert_eq!(restored.name(rgo), "TestObj");
-        assert_eq!(
-            restored.read_component::<ComponentID, _, _>(rgo, |c| c.visible),
-            Some(false)
-        );
-
-        let t = restored.transform(rgo);
-        assert!((t.position - Vec3::new(1.0, 2.0, 3.0)).norm() < 1e-5);
-
-        assert_eq!(
-            restored.read_component::<ComponentCamera, _, _>(rgo, |c| (c.fov, c.far_plane)),
-            Some((1.5, 999.0))
-        );
-        assert_eq!(
-            restored.read_component::<ComponentDirectionalLight, _, _>(rgo, |c| c.intensity),
-            Some(0.42)
-        );
-        assert!(!restored.is_component_enabled::<ComponentDirectionalLight>(rgo));
-        assert_eq!(
-            restored.read_component::<ComponentAmbientLight, _, _>(rgo, |c| (c.color, c.intensity)),
-            Some((Color32::BLUE, 0.33))
-        );
-        assert_eq!(
-            restored.read_component::<ComponentPointLight, _, _>(rgo, |c| (c.radius, c.intensity)),
-            Some((25.0, 1.25))
-        );
-        assert_eq!(
-            restored.read_component::<ComponentSpotLight, _, _>(rgo, |c| (
-                c.range,
-                c.inner_angle,
-                c.outer_angle
-            )),
-            Some((12.0, 15.0, 35.0))
-        );
-        assert_eq!(
-            restored.read_component::<ComponentSkyLight, _, _>(rgo, |c| c.intensity),
-            Some(0.7)
-        );
-        assert!(!restored.is_component_enabled::<ComponentSkyLight>(rgo));
-        assert_eq!(
-            restored.read_component::<ComponentMesh, _, _>(rgo, |c| c.mesh.id()),
-            Some(mesh_id)
-        );
-        assert_eq!(
-            restored.read_component::<ComponentBone, _, _>(rgo, |c| c.name.clone()),
-            Some("spine_01".to_string())
-        );
-        assert_eq!(
-            restored.read_component::<ComponentCollider, _, _>(rgo, |c| (
-                c.friction, c.density, c.groups
-            )),
-            Some((0.3, 50.0, CollisionGroups::new(0b1, 0b110)))
-        );
-        assert_eq!(
-            restored.read_component::<ComponentRigidBody, _, _>(rgo, |c| (c.mass, c.gravity_scale)),
-            Some((42.0, 0.5))
-        );
-        assert_eq!(
-            restored.read_component::<ComponentNetworkObject, _, _>(rgo, |c| c.id),
-            Some(777)
-        );
-        let restored_particles = restored
-            .read_component::<ComponentParticleSystem, _, _>(rgo, |c| {
-                (
-                    c.active,
-                    c.local_space,
-                    c.emission,
-                    c.lifetime,
-                    c.shape,
-                    c.velocity,
-                    c.forces,
-                    c.size.clone(),
-                    c.color.clone(),
-                    c.rendering.blend_mode,
-                    c.rendering.texture.id(),
-                )
-            })
-            .expect("particle system restored");
-        assert_eq!(
-            restored_particles,
-            (
-                false,
-                true,
-                ParticleEmission {
-                    looping: false,
-                    rate: 12.0,
-                    burst_count: 3,
-                    max_particles: 64,
-                    duration: 2.0,
-                },
-                ParticleScalarRange { min: 0.5, max: 1.5 },
-                ParticleSpawnShape::Sphere { radius: 2.0 },
-                ParticleVelocity {
-                    initial: Vec3::new(0.0, 5.0, 0.0),
-                    randomness: Vec3::new(1.0, 1.0, 1.0),
-                },
-                ParticleForces {
-                    acceleration: Vec3::new(0.0, -9.8, 0.0),
-                },
-                ParticleSizeOverLifetime::linear(0.5, 0.0, 0.1),
-                ParticleColorOverLifetime::linear(
-                    Color32::RED,
-                    Color32::from_rgba_unmultiplied(255, 255, 0, 0)
-                ),
-                ParticleBlendMode::Alpha,
-                particle_texture_id,
-            )
-        );
-    }
+#[test]
+fn id_has_unique_uuid() {
+    let mut scene = test_scene();
+    let a = scene.create(None, None);
+    let b = scene.create(None, None);
+    assert_ne!(scene.uuid(a), Uuid::nil());
+    assert_ne!(scene.uuid(b), Uuid::nil());
+    assert_ne!(scene.uuid(a), scene.uuid(b));
 }
+
+#[test]
+fn transform_default_is_identity() {
+    let mut scene = test_scene();
+    let go = scene.create(None, None);
+    let t = scene.transform(go);
+    assert!((t.position - Vec3::zeros()).norm() < 1e-5);
+    assert!((t.scale - Vec3::from_element(1.0)).norm() < 1e-5);
+}
+
+#[test]
+fn camera_disabled_not_found_by_main_camera() {
+    let mut scene = test_scene();
+    let go = scene.create(None, None);
+    scene.add_component(go, ComponentCamera::default());
+    assert_eq!(scene.main_camera().map(|(camera, _)| camera), Some(go));
+    assert!(scene.set_component_enabled::<ComponentCamera>(go, false));
+    assert!(scene.main_camera().is_none());
+
+    // A later enabled camera is picked over the disabled one.
+    let other = scene.create(None, None);
+    scene.add_component(other, ComponentCamera::default());
+    assert_eq!(scene.main_camera().map(|(camera, _)| camera), Some(other));
+}
+
+#[test]
+fn bone_saved_with_its_old_index_and_offset_still_loads() {
+    let bone: ComponentBone = serde_json::from_value(serde_json::json!({
+        "name": "spine_01",
+        "index": 5,
+        "offset_matrix": nalgebra_glm::Mat4::identity()
+    }))
+    .unwrap();
+    assert_eq!(bone.name, "spine_01");
+}
+
+#[test]
+fn malformed_component_data_reports_the_serde_error() {
+    use crate::utils::TypeUuid;
+    let registries = test_registries();
+    let registry = registries.components.read();
+    let component = registry
+        .component(ComponentCamera::type_uuid())
+        .expect("camera component is registered");
+    let Err(err) = component.deserialize(&serde_json::json!({ "fov": "wide" })) else {
+        panic!("malformed camera data must not deserialize");
+    };
+    assert!(
+        err.to_string()
+            .contains("invalid type: string \"wide\", expected f32"),
+        "unexpected error message: {err}"
+    );
+}
+
+#[test]
+fn scene_load_skips_only_the_malformed_component() {
+    use crate::utils::TypeUuid;
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let go = scene.create(
+        Some(ComponentID {
+            name: "Kept".into(),
+            ..Default::default()
+        }),
+        None,
+    );
+    scene.add_component(go, ComponentCamera::default());
+    let mut data: SceneData = (&scene).into();
+    let object = data.components.values_mut().next().expect("one object");
+    object.insert(
+        ComponentCamera::type_uuid(),
+        serde_json::json!({ "fov": "wide" }),
+    );
+
+    let restored = crate::scene::Scene::from((&registries, data));
+    let rgo = restored.objects().next().expect("object survives");
+    assert_eq!(restored.name(rgo), "Kept");
+    assert!(restored
+        .read_component::<ComponentCamera, _, _>(rgo, |c| c.fov)
+        .is_none());
+}
+
+#[test]
+fn adding_a_rigid_body_records_it_in_the_change_set() {
+    let mut scene = test_scene();
+    let go = scene.create(None, None);
+    scene.add_component(go, ComponentRigidBody::default());
+    assert!(scene
+        .changes
+        .take::<ComponentRigidBody>()
+        .contains(&go.entity));
+}
+
+#[test]
+fn all_components_round_trip() {
+    let registries = test_registries();
+    let mut scene = registries.scene();
+    let go = scene.create(
+        Some(ComponentID {
+            name: "TestObj".into(),
+            visible: false,
+            ..Default::default()
+        }),
+        None,
+    );
+
+    scene.set_transform(go, &nalgebra_glm::translation(&Vec3::new(1.0, 2.0, 3.0)));
+
+    scene.add_component(
+        go,
+        ComponentCamera {
+            fov: 1.5,
+            near_plane: 0.2,
+            far_plane: 999.0,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        go,
+        ComponentDirectionalLight {
+            intensity: 0.42,
+            ..Default::default()
+        },
+    );
+    assert!(scene.set_component_enabled::<ComponentDirectionalLight>(go, false));
+    scene.add_component(
+        go,
+        ComponentAmbientLight {
+            color: Color32::BLUE,
+            intensity: 0.33,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        go,
+        ComponentPointLight {
+            radius: 25.0,
+            intensity: 1.25,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        go,
+        ComponentSpotLight {
+            range: 12.0,
+            inner_angle: 15.0,
+            outer_angle: 35.0,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        go,
+        ComponentSkyLight {
+            intensity: 0.7,
+            ..Default::default()
+        },
+    );
+    assert!(scene.set_component_enabled::<ComponentSkyLight>(go, false));
+
+    let mesh_id = Uuid::new_v4();
+    scene.add_component(
+        go,
+        ComponentMesh {
+            mesh: AssetRef::from_id(mesh_id),
+            ..Default::default()
+        },
+    );
+    scene.add_component(go, ComponentSkinnedMesh::default());
+    scene.add_component(
+        go,
+        ComponentBone {
+            name: "spine_01".into(),
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        go,
+        ComponentCollider {
+            shape: ColliderShape::Sphere { radius: 2.0 },
+            friction: 0.3,
+            density: 50.0,
+            groups: CollisionGroups::new(0b1, 0b110),
+        },
+    );
+    scene.add_component(
+        go,
+        ComponentRigidBody {
+            mass: 42.0,
+            gravity_scale: 0.5,
+            ty: RigidBodyType::Fixed,
+            ..Default::default()
+        },
+    );
+    scene.add_component(
+        go,
+        ComponentNetworkObject {
+            id: 777,
+            owner_id: 99u64,
+        },
+    );
+    let particle_texture_id = Uuid::new_v4();
+    let mut particle_system = ComponentParticleSystem::default();
+    particle_system.active = false;
+    particle_system.local_space = true;
+    particle_system.emission = ParticleEmission {
+        looping: false,
+        rate: 12.0,
+        burst_count: 3,
+        max_particles: 64,
+        duration: 2.0,
+    };
+    particle_system.lifetime = ParticleScalarRange { min: 0.5, max: 1.5 };
+    particle_system.shape = ParticleSpawnShape::Sphere { radius: 2.0 };
+    particle_system.velocity = ParticleVelocity {
+        initial: Vec3::new(0.0, 5.0, 0.0),
+        randomness: Vec3::new(1.0, 1.0, 1.0),
+    };
+    particle_system.forces = ParticleForces {
+        acceleration: Vec3::new(0.0, -9.8, 0.0),
+    };
+    particle_system.size = ParticleSizeOverLifetime::linear(0.5, 0.0, 0.1);
+    particle_system.color = ParticleColorOverLifetime::linear(
+        Color32::RED,
+        Color32::from_rgba_unmultiplied(255, 255, 0, 0),
+    );
+    particle_system.rendering = ParticleRendering {
+        blend_mode: ParticleBlendMode::Alpha,
+        texture: AssetRef::from_id(particle_texture_id),
+        ..Default::default()
+    };
+    scene.add_component(go, particle_system);
+
+    let data: SceneData = (&scene).into();
+    let restored = crate::scene::Scene::from((&registries, data));
+    let rgo = restored
+        .objects()
+        .next()
+        .expect("no game objects after restore");
+
+    assert_eq!(restored.name(rgo), "TestObj");
+    assert_eq!(
+        restored.read_component::<ComponentID, _, _>(rgo, |c| c.visible),
+        Some(false)
+    );
+
+    let t = restored.transform(rgo);
+    assert!((t.position - Vec3::new(1.0, 2.0, 3.0)).norm() < 1e-5);
+
+    assert_eq!(
+        restored.read_component::<ComponentCamera, _, _>(rgo, |c| (c.fov, c.far_plane)),
+        Some((1.5, 999.0))
+    );
+    assert_eq!(
+        restored.read_component::<ComponentDirectionalLight, _, _>(rgo, |c| c.intensity),
+        Some(0.42)
+    );
+    assert!(!restored.is_component_enabled::<ComponentDirectionalLight>(rgo));
+    assert_eq!(
+        restored.read_component::<ComponentAmbientLight, _, _>(rgo, |c| (c.color, c.intensity)),
+        Some((Color32::BLUE, 0.33))
+    );
+    assert_eq!(
+        restored.read_component::<ComponentPointLight, _, _>(rgo, |c| (c.radius, c.intensity)),
+        Some((25.0, 1.25))
+    );
+    assert_eq!(
+        restored.read_component::<ComponentSpotLight, _, _>(rgo, |c| (
+            c.range,
+            c.inner_angle,
+            c.outer_angle
+        )),
+        Some((12.0, 15.0, 35.0))
+    );
+    assert_eq!(
+        restored.read_component::<ComponentSkyLight, _, _>(rgo, |c| c.intensity),
+        Some(0.7)
+    );
+    assert!(!restored.is_component_enabled::<ComponentSkyLight>(rgo));
+    assert_eq!(
+        restored.read_component::<ComponentMesh, _, _>(rgo, |c| c.mesh.id()),
+        Some(mesh_id)
+    );
+    assert_eq!(
+        restored.read_component::<ComponentBone, _, _>(rgo, |c| c.name.clone()),
+        Some("spine_01".to_string())
+    );
+    assert_eq!(
+        restored
+            .read_component::<ComponentCollider, _, _>(rgo, |c| (c.friction, c.density, c.groups)),
+        Some((0.3, 50.0, CollisionGroups::new(0b1, 0b110)))
+    );
+    assert_eq!(
+        restored.read_component::<ComponentRigidBody, _, _>(rgo, |c| (c.mass, c.gravity_scale)),
+        Some((42.0, 0.5))
+    );
+    assert_eq!(
+        restored.read_component::<ComponentNetworkObject, _, _>(rgo, |c| c.id),
+        Some(777)
+    );
+    let restored_particles = restored
+        .read_component::<ComponentParticleSystem, _, _>(rgo, |c| {
+            (
+                c.active,
+                c.local_space,
+                c.emission,
+                c.lifetime,
+                c.shape,
+                c.velocity,
+                c.forces,
+                c.size.clone(),
+                c.color.clone(),
+                c.rendering.blend_mode,
+                c.rendering.texture.id(),
+            )
+        })
+        .expect("particle system restored");
+    assert_eq!(
+        restored_particles,
+        (
+            false,
+            true,
+            ParticleEmission {
+                looping: false,
+                rate: 12.0,
+                burst_count: 3,
+                max_particles: 64,
+                duration: 2.0,
+            },
+            ParticleScalarRange { min: 0.5, max: 1.5 },
+            ParticleSpawnShape::Sphere { radius: 2.0 },
+            ParticleVelocity {
+                initial: Vec3::new(0.0, 5.0, 0.0),
+                randomness: Vec3::new(1.0, 1.0, 1.0),
+            },
+            ParticleForces {
+                acceleration: Vec3::new(0.0, -9.8, 0.0),
+            },
+            ParticleSizeOverLifetime::linear(0.5, 0.0, 0.1),
+            ParticleColorOverLifetime::linear(
+                Color32::RED,
+                Color32::from_rgba_unmultiplied(255, 255, 0, 0)
+            ),
+            ParticleBlendMode::Alpha,
+            particle_texture_id,
+        )
+    );
+}
+
+mod hook;

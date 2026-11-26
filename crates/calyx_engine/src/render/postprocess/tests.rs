@@ -1915,3 +1915,5 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
         close(back_v, v, &what("projected v"));
     }
 }
+
+mod local_volume;

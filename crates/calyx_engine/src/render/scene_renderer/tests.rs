@@ -1,0 +1,4696 @@
+use super::*;
+use crate::assets::material::Material;
+use crate::assets::material::{MaterialTexture, ShaderVariableValue};
+use crate::assets::skybox::Skybox;
+use crate::assets::AssetRef;
+use crate::component::{
+    ComponentAmbientOcclusion, ComponentDepthOfField, ComponentGlobalPostProcessVolume,
+    ComponentID, ComponentMesh, ComponentOutline, ComponentParticleSystem, ComponentTonemap,
+    OutlineStyle, ParticleBlendMode, ParticleColorOverLifetime, ParticleEmission, ParticleForces,
+    ParticleScalarRange, ParticleSizeOverLifetime, ParticleSpawnShape, ParticleVelocity,
+    TonemappingPreset,
+};
+use crate::component::{
+    ComponentFoliage, ComponentSkinnedMesh, ComponentTerrain, ComponentWater, WaterPoint,
+    WaterShading,
+};
+use crate::math::Transform;
+use crate::render::postprocess::{
+    NoPipeline, PassContext, PassInputs, PassIo, PostProcessPass, PostProcessStage,
+};
+use crate::render::{Camera, Shader, SHADOW_CASCADE_COUNT};
+use crate::scene::GameObject;
+use crate::test_support::{test_adapter, test_asset_context_with_assets, SceneBuilder, TestAssets};
+use nalgebra::UnitQuaternion;
+use nalgebra_glm::{vec3, vec4, Vec3};
+use std::path::Path;
+use std::sync::Mutex;
+
+const VIEWPORT: u32 = 512;
+
+/// Creates a PBR material registered as `name`.
+fn pbr_material(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
+    let registry = context.registries.assets.read();
+    let shader = registry
+        .load::<Shader>("shaders/mesh/pbr")
+        .expect("missing pbr shader");
+    registry
+        .create_or_update(name.into(), Material::from_shader(context, shader))
+        .expect("material should be created")
+}
+
+/// Spawns a game object drawing `mesh` with `material` at `position`.
+fn spawn_mesh(
+    builder: &mut SceneBuilder,
+    name: &str,
+    mesh: &Ref<Mesh>,
+    material: &Ref<Material>,
+    position: Vec3,
+) -> Uuid {
+    let game_object = builder.spawn(name);
+    builder.add_component(
+        game_object,
+        ComponentMesh {
+            mesh: AssetRef::from_id(mesh.id()),
+            material: AssetRef::from_id(material.id()),
+            ..Default::default()
+        },
+    );
+    builder.set_transform(game_object, glm::translation(&position));
+    builder.scene().uuid(game_object)
+}
+
+/// Gives the object `uuid` a dynamic rigid body, so it moves as far as
+/// the draws know and draws as its own instance instead of merging into
+/// a static batch.
+fn keep_unbatched(builder: &mut SceneBuilder, uuid: Uuid) {
+    let game_object = builder.scene().find(uuid).expect("the object exists");
+    builder.add_component(game_object, crate::component::ComponentRigidBody::default());
+}
+
+/// A camera on the negative z axis looking at the origin.
+fn front_camera(aspect: f32, distance: f32) -> (Camera, Transform) {
+    let camera = Camera::new(aspect, 60f32.to_radians(), 0.1, 200.0);
+    let transform = Transform::from_components(
+        vec3(0.0, 0.0, -distance),
+        UnitQuaternion::face_towards(&vec3(0.0, 0.0, 1.0), &vec3(0.0, 1.0, 0.0)),
+        vec3(1.0, 1.0, 1.0),
+    );
+    (camera, transform)
+}
+
+/// The pixel `position` lands on in a `width` by `height` target.
+fn project(
+    camera: &Camera,
+    transform: &Transform,
+    position: Vec3,
+    (width, height): (u32, u32),
+) -> (u32, u32) {
+    let clip = camera.projection
+        * transform.inverse_matrix()
+        * vec4(position.x, position.y, position.z, 1.0);
+    let ndc = clip.xyz() / clip.w;
+    (
+        ((ndc.x * 0.5 + 0.5) * width as f32) as u32,
+        ((0.5 - ndc.y * 0.5) * height as f32) as u32,
+    )
+}
+
+fn renderer(context: &ReadOnlyAssetContext, samples: u32, size: (u32, u32)) -> SceneRenderer {
+    SceneRenderer::new(
+        context,
+        SceneRendererOptions {
+            samples,
+            ..Default::default()
+        },
+        size,
+    )
+    .expect("scene renderer should load its assets")
+}
+
+/// Spawns an emitter at `position` that emits one particle of `color`
+/// and `size` on the spot, on its first simulated frame.
+fn spawn_particle(
+    builder: &mut SceneBuilder,
+    name: &str,
+    position: Vec3,
+    color: Color32,
+    size: f32,
+) -> GameObject {
+    let game_object = builder.spawn(name);
+    let mut system = ComponentParticleSystem::default();
+    system.emission = ParticleEmission {
+        rate: 0.0,
+        burst_count: 1,
+        max_particles: 1,
+        ..Default::default()
+    };
+    system.lifetime = ParticleScalarRange {
+        min: 10.0,
+        max: 10.0,
+    };
+    system.shape = ParticleSpawnShape::Sphere { radius: 0.0 };
+    system.velocity = ParticleVelocity {
+        initial: Vec3::zeros(),
+        randomness: Vec3::zeros(),
+    };
+    system.forces = ParticleForces {
+        acceleration: Vec3::zeros(),
+    };
+    system.size = ParticleSizeOverLifetime::linear(size, size, 0.0);
+    system.color = ParticleColorOverLifetime::linear(color, color);
+    builder.add_component(game_object, system);
+    builder.set_transform(game_object, glm::translation(&position));
+    game_object
+}
+
+fn read_scene_texture(
+    renderer: &SceneRenderer,
+    render_context: &RenderContext,
+) -> image::RgbaImage {
+    let mut readback = renderer
+        .submit_scene_texture_readback()
+        .expect("scene texture has a size");
+    loop {
+        let _ = render_context.device().poll(wgpu::Maintain::Wait);
+        match readback.try_finish(render_context) {
+            ReadbackPoll::Pending => continue,
+            ReadbackPoll::Ready(image) => break image,
+            ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),
+        }
+    }
+}
+
+#[test]
+fn each_particle_system_draws_its_own_particles() {
+    const SIZE: (u32, u32) = (64, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let left = vec3(-1.5, 0.0, 0.0);
+    let right = vec3(1.5, 0.0, 0.0);
+    spawn_particle(&mut builder, "red", left, Color32::RED, 1.0);
+    spawn_particle(&mut builder, "green", right, Color32::GREEN, 1.0);
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let mut particles = ParticleSimulation::new();
+    particles.simulate(&scene, &render_context, 0.0);
+
+    let mut renderer = SceneRenderer::new(
+        &read_only_context,
+        SceneRendererOptions {
+            samples: 1,
+            clear_color: Color32::BLACK,
+            ..Default::default()
+        },
+        SIZE,
+    )
+    .expect("scene renderer should load its assets");
+    renderer.render_scene_base(&camera, &transform, &scene, Some(&particles), None);
+    renderer.finalize_scene();
+    let image = read_scene_texture(&renderer, &render_context);
+
+    let (x, y) = project(&camera, &transform, left, SIZE);
+    let pixel = image.get_pixel(x, y);
+    // ACES desaturates pure primaries a little, so only the dominant
+    // channel tells the two systems apart.
+    assert!(
+        pixel[0] > 200 && pixel[0] > pixel[1] + 100,
+        "the red system should draw its particle on the left, got {pixel:?}"
+    );
+    let (x, y) = project(&camera, &transform, right, SIZE);
+    let pixel = image.get_pixel(x, y);
+    assert!(
+        pixel[1] > 200 && pixel[1] > pixel[0] + 100,
+        "the green system should draw its particle on the right, got {pixel:?}"
+    );
+}
+
+/// Renders a white particle of diameter 2 at the origin, 5 units in front
+/// of the camera, over the cleared background at the far plane, with
+/// depth of field focused on the particle when `focus` is set and no
+/// post-process volume otherwise.
+fn render_particle_over_far_background(
+    context: &ReadOnlyAssetContext,
+    blend_mode: ParticleBlendMode,
+    samples: u32,
+    focus: bool,
+) -> image::RgbaImage {
+    let render_context = context.render_context.clone();
+    let mut builder = SceneBuilder::new(context.registries.clone());
+    let particle = spawn_particle(&mut builder, "particle", Vec3::zeros(), Color32::WHITE, 2.0);
+    builder
+        .scene_mut()
+        .write_component(particle, |system: &mut ComponentParticleSystem| {
+            system.rendering.blend_mode = blend_mode;
+        })
+        .expect("the particle has a system");
+    if focus {
+        let volume = builder.spawn("volume");
+        builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+        builder.add_component(
+            volume,
+            ComponentDepthOfField {
+                focus_distance: 5.0,
+                focus_range: 1.0,
+                max_blur: 8.0,
+            },
+        );
+    }
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let mut particles = ParticleSimulation::new();
+    particles.simulate(&scene, &render_context, 0.0);
+
+    let mut renderer = SceneRenderer::new(
+        context,
+        SceneRendererOptions {
+            samples,
+            clear_color: Color32::BLACK,
+            ..Default::default()
+        },
+        (64, 64),
+    )
+    .expect("scene renderer should load its assets");
+    renderer.render_scene_base(&camera, &transform, &scene, Some(&particles), None);
+    renderer.finalize_scene();
+    if focus {
+        let names: Vec<_> = renderer
+            .last_post_process_plan()
+            .passes
+            .iter()
+            .map(|planned| renderer.post_process().passes()[planned.pass].name())
+            .collect();
+        assert!(names.contains(&"depth_of_field"), "{names:?}");
+    }
+    read_scene_texture(&renderer, &render_context)
+}
+
+#[test]
+fn a_particle_in_focus_is_not_blurred_as_the_background_behind_it() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let center = project(&camera, &transform, Vec3::zeros(), (64, 64));
+    let edge = project(&camera, &transform, vec3(1.0, 0.0, 0.0), (64, 64));
+    let radius = center.0.abs_diff(edge.0) as f32;
+    assert!(radius > 8.0, "the particle is wider than the blur");
+
+    for samples in [1, 4] {
+        if samples > 1
+            && (!supports_samples(
+                &render_context,
+                wgpu::TextureFormat::Rgba16Float,
+                samples,
+                true,
+            ) || !supports_samples(
+                &render_context,
+                wgpu::TextureFormat::Depth32Float,
+                samples,
+                false,
+            ))
+        {
+            eprintln!("skipping {samples}x MSAA: the test adapter does not support it");
+            continue;
+        }
+        for blend_mode in [ParticleBlendMode::Alpha, ParticleBlendMode::Additive] {
+            let sharp =
+                render_particle_over_far_background(&read_only_context, blend_mode, samples, false);
+            let focused =
+                render_particle_over_far_background(&read_only_context, blend_mode, samples, true);
+            // The background is fully blurred, the particle is on the
+            // focus plane: inside its disc the image matches the frame
+            // without depth of field.
+            for (x, y, pixel) in focused.enumerate_pixels() {
+                let dx = x as f32 + 0.5 - center.0 as f32;
+                let dy = y as f32 + 0.5 - center.1 as f32;
+                if (dx * dx + dy * dy).sqrt() > radius - 2.0 {
+                    continue;
+                }
+                let expected = sharp.get_pixel(x, y);
+                assert!(
+                    (0..3).all(|channel| pixel[channel].abs_diff(expected[channel]) <= 2),
+                    "{blend_mode:?} particle at {samples}x: pixel ({x}, {y}) is blurred: \
+                         {pixel:?}, sharp {expected:?}"
+                );
+            }
+        }
+    }
+}
+
+#[test]
+fn construction_reports_missing_assets_instead_of_panicking() {
+    let empty = std::env::temp_dir().join(format!("calyx-empty-assets-{}", Uuid::new_v4()));
+    std::fs::create_dir_all(&empty).unwrap();
+    let context = test_asset_context_with_assets(vec![empty.clone()]);
+
+    let result = SceneRenderer::new(&context.lock_read(), Default::default(), (16, 16));
+
+    match result {
+        Err(SceneRendererError::AssetLoad { name, .. }) => {
+            assert_eq!(name, "shaders/mesh/pbr");
+        }
+        Err(error) => panic!("expected the pbr shader to fail to load, got {error:?}"),
+        Ok(_) => panic!("a registry without shaders cannot build a scene renderer"),
+    }
+    std::fs::remove_dir_all(empty).unwrap();
+}
+
+#[test]
+fn construction_reports_why_a_default_mesh_failed_to_load() {
+    let assets = TestAssets::engine();
+    std::fs::write(
+        assets.engine_root().join("meshes/cube.obj"),
+        [0xff, 0xfe, 0x00],
+    )
+    .unwrap();
+    let context = assets.asset_context();
+
+    let result = SceneRenderer::new(&context.lock_read(), Default::default(), (16, 16));
+
+    match result {
+        Err(SceneRendererError::AssetLoad { name, .. }) => assert_eq!(name, "meshes/cube"),
+        Err(error) => panic!("expected the cube's load error, got {error:?}"),
+        Ok(_) => panic!("a malformed cube mesh cannot build a scene renderer"),
+    }
+}
+
+#[test]
+fn construction_errors_describe_the_asset_and_chain_the_load_error() {
+    use std::error::Error;
+
+    let load_error = AssetError::NotFound.with_source("asset name `shaders/mesh/pbr`");
+    let failed = SceneRendererError::AssetLoad {
+        name: "shaders/mesh/pbr".into(),
+        error: load_error.clone(),
+    };
+    assert_eq!(
+        failed.to_string(),
+        "scene renderer asset `shaders/mesh/pbr` failed to load"
+    );
+    let source = failed
+        .source()
+        .and_then(|source| source.downcast_ref::<AssetError>());
+    assert_eq!(source, Some(&load_error));
+
+    let missing = SceneRendererError::MissingAsset {
+        name: "meshes/cube".into(),
+    };
+    assert_eq!(
+        missing.to_string(),
+        "scene renderer asset `meshes/cube` is missing"
+    );
+    assert!(missing.source().is_none());
+}
+
+#[test]
+fn draw_list_batches_instances_by_shader_material_and_mesh() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let (cube, sphere) = {
+        let registry = read_only_context.registries.assets.read();
+        (
+            registry.cube().expect("missing cube mesh"),
+            registry
+                .load::<Mesh>("meshes/sphere")
+                .expect("missing sphere mesh"),
+        )
+    };
+    let first = pbr_material(&read_only_context, "test/batch_first");
+    let second = pbr_material(&read_only_context, "test/batch_second");
+
+    // Interleaved, so batching has to regroup what the scene holds apart.
+    // The objects move, so they draw as instances rather than merge.
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let layout = [
+        (&cube, &first),
+        (&sphere, &first),
+        (&cube, &second),
+        (&cube, &first),
+        (&sphere, &first),
+        (&cube, &second),
+        (&cube, &first),
+    ];
+    for (index, (mesh, material)) in layout.iter().enumerate() {
+        let uuid = spawn_mesh(
+            &mut builder,
+            &format!("object_{index}"),
+            mesh,
+            material,
+            vec3(index as f32, 0.0, 0.0),
+        );
+        keep_unbatched(&mut builder, uuid);
+    }
+    let hidden = builder.scene_mut().create(
+        Some(ComponentID {
+            name: "hidden".into(),
+            visible: false,
+            ..Default::default()
+        }),
+        None,
+    );
+    builder.add_component(
+        hidden,
+        ComponentMesh {
+            mesh: AssetRef::from_id(cube.id()),
+            material: AssetRef::from_id(first.id()),
+            ..Default::default()
+        },
+    );
+    let scene = builder.finish();
+
+    let mut renderer = renderer(&read_only_context, 1, (16, 16));
+    renderer.build_asset_data(&scene);
+    renderer.finish_object_ids();
+    let draw_list = renderer.build_own_draw_list();
+
+    let mut batches: Vec<_> = draw_list
+        .iter()
+        .map(|batch| (batch.mat_id, batch.mesh_id, batch.instances.len()))
+        .collect();
+    batches.sort();
+    let mut expected = vec![
+        (first.id(), cube.id(), 3),
+        (first.id(), sphere.id(), 2),
+        (second.id(), cube.id(), 2),
+    ];
+    expected.sort();
+    assert_eq!(batches, expected, "one batch per shader, material and mesh");
+
+    // Batches of one mesh take consecutive slices of its instance buffer.
+    for mesh in [&cube, &sphere] {
+        let mut ranges: Vec<_> = draw_list
+            .iter()
+            .filter(|batch| batch.mesh_id == mesh.id())
+            .map(|batch| batch.instances.clone())
+            .collect();
+        ranges.sort_by_key(|range| range.start);
+        let instances = mesh.read().instances.len() as u32;
+        assert_eq!(ranges.first().map(|range| range.start), Some(0));
+        assert_eq!(ranges.last().map(|range| range.end), Some(instances));
+        for pair in ranges.windows(2) {
+            assert_eq!(pair[0].end, pair[1].start);
+        }
+    }
+    assert_eq!(
+        renderer.object_ids.len(),
+        layout.len(),
+        "every visible object, and only those, gets an object id"
+    );
+}
+
+#[test]
+fn views_sharing_one_draw_collection_render_and_pick_as_views_collecting_their_own() {
+    const SIZE: (u32, u32) = (128, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let first = pbr_material(&read_only_context, "test/shared_first");
+    let second = pbr_material(&read_only_context, "test/shared_second");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let left = vec3(-3.0, 0.0, 0.0);
+    let right = vec3(3.0, 0.0, 0.0);
+    let left_uuid = spawn_mesh(&mut builder, "left", &cube, &first, left);
+    spawn_mesh(&mut builder, "right", &cube, &second, right);
+    let scene = builder.finish();
+    let mut other_builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut other_builder, "other", &cube, &first, right);
+    let other_scene = other_builder.finish();
+    let near = front_camera(2.0, 10.0);
+    let far = front_camera(2.0, 14.0);
+
+    let render_alone = |(camera, transform): &(Camera, Transform), scene: &Scene| {
+        let mut renderer = renderer(&read_only_context, 1, SIZE);
+        renderer.render_scene_base(camera, transform, scene, None, None);
+        renderer.finalize_scene();
+        read_scene_texture(&renderer, &render_context)
+    };
+    let expected_near = render_alone(&near, &scene);
+    let expected_far = render_alone(&far, &scene);
+    let expected_other = render_alone(&near, &other_scene);
+
+    let mut draws = DrawCollection::new(&read_only_context).expect("white texture loads");
+    draws.collect(&scene);
+    assert_eq!(draws.scene(), Some(scene.id()));
+    let mut near_view = renderer(&read_only_context, 1, SIZE);
+    let mut far_view = renderer(&read_only_context, 1, SIZE);
+    near_view.render_scene_with(&draws, &near.0, &near.1, &scene, None, None);
+    near_view.finalize_scene();
+    far_view.render_scene_with(&draws, &far.0, &far.1, &scene, None, None);
+    far_view.finalize_scene();
+    assert!(near_view.own_draws.is_none() && far_view.own_draws.is_none());
+    assert!(read_scene_texture(&near_view, &render_context) == expected_near);
+    assert!(read_scene_texture(&far_view, &render_context) == expected_far);
+    let (x, y) = project(&near.0, &near.1, left, SIZE);
+    assert_eq!(near_view.pick_game_object(x, y), Some(left_uuid));
+
+    // Draws of another scene are not drawn: the view collects its own.
+    far_view.render_scene_with(&draws, &near.0, &near.1, &other_scene, None, None);
+    far_view.finalize_scene();
+    assert!(far_view.own_draws.is_some());
+    assert!(read_scene_texture(&far_view, &render_context) == expected_other);
+}
+
+#[test]
+fn picks_the_object_drawn_at_each_pixel() {
+    const SIZE: (u32, u32) = (128, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let first = pbr_material(&read_only_context, "test/pick_first");
+    let second = pbr_material(&read_only_context, "test/pick_second");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let left = vec3(-3.0, 0.0, 0.0);
+    let right = vec3(3.0, 0.0, 0.0);
+    let left_uuid = spawn_mesh(&mut builder, "left", &cube, &first, left);
+    let right_uuid = spawn_mesh(&mut builder, "right", &cube, &second, right);
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(2.0, 10.0);
+
+    let mut renderer = renderer(&read_only_context, 1, SIZE);
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+
+    let (x, y) = project(&camera, &transform, left, SIZE);
+    assert_eq!(renderer.pick_game_object(x, y), Some(left_uuid));
+    let (x, y) = project(&camera, &transform, right, SIZE);
+    assert_eq!(renderer.pick_game_object(x, y), Some(right_uuid));
+    assert_eq!(renderer.pick_game_object(0, 0), None, "background");
+    assert_eq!(renderer.pick_game_object(SIZE.0, 0), None, "out of bounds");
+
+    // The non-blocking pick answers once its readback lands.
+    let (x, y) = project(&camera, &transform, left, SIZE);
+    let device = read_only_context.render_context.device();
+    let mut picked = None;
+    for _ in 0..100 {
+        picked = renderer.request_pick_game_object(x, y);
+        if picked == Some(left_uuid) {
+            break;
+        }
+        let _ = device.poll(wgpu::Maintain::Wait);
+    }
+    assert_eq!(picked, Some(left_uuid));
+}
+
+#[test]
+fn picks_and_outlines_each_object_merged_into_one_static_batch() {
+    const SIZE: (u32, u32) = (128, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/pick_batched");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let left = vec3(-3.0, 0.0, 0.0);
+    let right = vec3(3.0, 0.0, 0.0);
+    let left_uuid = spawn_mesh(&mut builder, "left", &cube, &material, left);
+    let right_uuid = spawn_mesh(&mut builder, "right", &cube, &material, right);
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(2.0, 10.0);
+
+    let mut renderer = renderer(&read_only_context, 1, SIZE);
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+    let draws = renderer.draws();
+    assert_eq!(draws.static_batches.batches().count(), 1);
+    assert_eq!(draws.draw_list.len(), 1, "both cubes draw as one batch");
+    let right_id = draws.object_id_lookup[&right_uuid];
+
+    let (x, y) = project(&camera, &transform, left, SIZE);
+    assert_eq!(renderer.pick_game_object(x, y), Some(left_uuid));
+    let (x, y) = project(&camera, &transform, right, SIZE);
+    assert_eq!(renderer.pick_game_object(x, y), Some(right_uuid));
+    assert_eq!(renderer.pick_game_object(0, 0), None, "background");
+    assert_eq!(
+        renderer.object_id_for_game_object(Some(right_uuid)),
+        right_id,
+        "the outline finds the batched object by its own id"
+    );
+}
+
+/// Registers a copy of the cube mesh skinned entirely to one bone, `bone`, whose bind pose is
+/// `bind`.
+fn skinned_cube(context: &ReadOnlyAssetContext, name: &str, bone: &str, bind: Mat4) -> Ref<Mesh> {
+    let registry = context.registries.assets.read();
+    let cube = registry.cube().expect("missing cube mesh");
+    let mut mesh = Mesh::new(&context.render_context);
+    {
+        let cube = cube.read();
+        mesh.indices = cube.indices.clone();
+        mesh.vertices = cube.vertices.clone();
+        mesh.normals = cube.normals.clone();
+        mesh.tangents = cube.tangents.clone();
+        mesh.uvs = cube.uvs.clone();
+    }
+    mesh.bone_indices = vec![glm::IVec4::new(0, -1, -1, -1); mesh.vertices.len()];
+    mesh.bone_weights = vec![vec4(1.0, 0.0, 0.0, 0.0); mesh.vertices.len()];
+    mesh.bones.insert(
+        bone.into(),
+        crate::assets::mesh::BoneInfo {
+            index: 0,
+            inverse_bind_transform: glm::inverse(&bind),
+        },
+    );
+    mesh.mark_dirty();
+    registry
+        .create_or_update(name.into(), mesh)
+        .expect("skinned mesh should be created")
+}
+
+/// A skinned model as imported models are laid out: a root holding the bone `hip` at local
+/// transform `hip`, and a skinned object drawing `mesh` with `palette`, placed by the root.
+/// Returns the root, the bone and the skinned object.
+fn spawn_skinned_model(
+    builder: &mut SceneBuilder,
+    mesh: &Ref<Mesh>,
+    material: &Ref<Material>,
+    root: Mat4,
+    hip: Mat4,
+    palette: Vec<crate::assets::mesh::BoneTransform>,
+) -> (GameObject, GameObject, GameObject) {
+    let root_object = builder.spawn("model");
+    builder.set_transform(root_object, root);
+    let hip_object = builder.spawn_child(root_object, "hip");
+    builder.set_transform(hip_object, hip);
+    builder.add_component(
+        hip_object,
+        crate::component::ComponentBone {
+            name: "hip".into(),
+            bind_pose: None,
+        },
+    );
+    let mesh_object = builder.spawn_child(root_object, "mesh");
+    let root_uuid = builder.scene().uuid(root_object);
+    builder.add_component(
+        mesh_object,
+        ComponentSkinnedMesh {
+            mesh: AssetRef::from_id(mesh.id()),
+            material: AssetRef::from_id(material.id()),
+            root_bone: crate::scene::GameObjectRef::new(root_uuid),
+            bone_transforms: palette,
+            ..Default::default()
+        },
+    );
+    (root_object, hip_object, mesh_object)
+}
+
+/// The slot in its mesh's bone buffer that `game_object`'s skinned draw reads.
+fn bone_slot(renderer: &SceneRenderer, scene: &Scene, game_object: GameObject) -> usize {
+    let object_id = renderer.object_id_lookup[&scene.uuid(game_object)];
+    let draw = renderer
+        .draws()
+        .draw_list
+        .iter()
+        .find(|draw| draw.object_id == object_id)
+        .expect("the skinned mesh should be queued");
+    usize::try_from(draw.bone_transform_index).expect("a skinned draw has a bone slot")
+}
+
+#[test]
+fn skinned_mesh_draws_its_rest_pose_before_any_animator_update() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+    let mesh = skinned_cube(&read_only_context, "test/skinned_cube", "hip", bind);
+    let material = pbr_material(&read_only_context, "test/skinned");
+    // No animator and no palette: the scene as loaded in edit mode. The bone holds its bind
+    // pose, so the rest pose draws the cube where the mesh models it, at the origin.
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let (_, _, mesh_object) = spawn_skinned_model(
+        &mut builder,
+        &mesh,
+        &material,
+        Mat4::identity(),
+        bind,
+        Vec::new(),
+    );
+    let mesh_uuid = builder.scene().uuid(mesh_object);
+    let scene = builder.finish();
+
+    let mut renderer = renderer(&read_only_context, 1, SIZE);
+    let (camera, transform) = front_camera(1.0, 5.0);
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+
+    assert_eq!(
+        renderer.pick_game_object(SIZE.0 / 2, SIZE.1 / 2),
+        Some(mesh_uuid),
+        "the skinned mesh should draw in its rest pose at the origin"
+    );
+}
+
+/// Renders `scene` and picks the pixel at each of `pixels`.
+fn render_and_pick<const N: usize>(
+    renderer: &mut SceneRenderer,
+    scene: &Scene,
+    (camera, transform): &(Camera, Transform),
+    pixels: [(u32, u32); N],
+) -> [Option<Uuid>; N] {
+    renderer.render_scene_base(camera, transform, scene, None, None);
+    renderer.finalize_scene();
+    pixels.map(|(x, y)| renderer.pick_game_object(x, y))
+}
+
+#[test]
+fn disabled_meshes_are_neither_drawn_nor_picked_until_re_enabled() {
+    const SIZE: (u32, u32) = (128, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/disabled_meshes");
+    let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+    let skinned = skinned_cube(&read_only_context, "test/disabled_skinned", "hip", bind);
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let left = vec3(-3.0, 0.0, 0.0);
+    let mesh_uuid = spawn_mesh(&mut builder, "mesh", &cube, &material, left);
+    // The skinned cube draws in its rest pose at the origin.
+    let (_, _, skinned_object) = spawn_skinned_model(
+        &mut builder,
+        &skinned,
+        &material,
+        Mat4::identity(),
+        bind,
+        Vec::new(),
+    );
+    let skinned_uuid = builder.scene().uuid(skinned_object);
+    let mut scene = builder.finish();
+    let mesh_object = scene.find(mesh_uuid).unwrap();
+    let view = front_camera(2.0, 10.0);
+    let pixels = [
+        project(&view.0, &view.1, left, SIZE),
+        project(&view.0, &view.1, Vec3::zeros(), SIZE),
+    ];
+    let mut renderer = renderer(&read_only_context, 1, SIZE);
+
+    assert_eq!(
+        render_and_pick(&mut renderer, &scene, &view, pixels),
+        [Some(mesh_uuid), Some(skinned_uuid)]
+    );
+
+    assert!(scene.set_component_enabled::<ComponentMesh>(mesh_object, false));
+    assert!(scene.set_component_enabled::<ComponentSkinnedMesh>(skinned_object, false));
+    assert_eq!(
+        render_and_pick(&mut renderer, &scene, &view, pixels),
+        [None, None]
+    );
+    assert!(
+        renderer.draws().draw_list.is_empty(),
+        "a disabled mesh queues no draw, so it is neither drawn nor outlined"
+    );
+
+    assert!(scene.set_component_enabled::<ComponentMesh>(mesh_object, true));
+    assert!(scene.set_component_enabled::<ComponentSkinnedMesh>(skinned_object, true));
+    assert_eq!(
+        render_and_pick(&mut renderer, &scene, &view, pixels),
+        [Some(mesh_uuid), Some(skinned_uuid)]
+    );
+}
+
+#[test]
+fn a_skinned_normal_mapped_mesh_skins_its_tangents() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    // A normal texture that bends every normal far along the tangent, lit from one side,
+    // so the shading of the face towards the camera follows where its tangent points.
+    let material = {
+        let registry = read_only_context.registries.assets.read();
+        let shader = registry
+            .load::<Shader>("shaders/mesh/pbr")
+            .expect("missing pbr shader");
+        let mut material = Material::from_shader(&read_only_context, shader);
+        for variable in material.variables.iter_mut() {
+            match variable.name.as_str() {
+                "normal_texture" => {
+                    variable.value = ShaderVariableValue::Texture2D(MaterialTexture::Color([
+                        0.85, 0.5, 0.7, 1.0,
+                    ]))
+                }
+                "roughness" => variable.value = ShaderVariableValue::Float(1.0),
+                _ => {}
+            }
+        }
+        registry
+            .create_or_update("test/bent_normals".into(), material)
+            .expect("material should be created")
+    };
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let skinned = skinned_cube(
+        &read_only_context,
+        "test/skinned_tangents",
+        "hip",
+        Mat4::identity(),
+    );
+    let turn = glm::rotation(90f32.to_radians(), &Vec3::z());
+    let light = glm::rotation(40f32.to_radians(), &Vec3::y());
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let center = |build: &dyn Fn(&mut SceneBuilder)| {
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        let sun = builder.spawn("sun");
+        builder.add_component(
+            sun,
+            crate::component::ComponentDirectionalLight {
+                intensity: 1.0,
+                ..Default::default()
+            },
+        );
+        builder.set_transform(sun, light);
+        build(&mut builder);
+        let scene = builder.finish();
+        let mut renderer = renderer(&read_only_context, 1, SIZE);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        read_scene_texture(&renderer, &render_context)
+            .get_pixel(SIZE.0 / 2, SIZE.1 / 2)
+            .0
+    };
+
+    let still = center(&|builder| {
+        spawn_mesh(builder, "cube", &cube, &material, Vec3::zeros());
+    });
+    let turned = center(&|builder| {
+        let object = builder.spawn("cube");
+        builder.add_component(
+            object,
+            ComponentMesh {
+                mesh: AssetRef::from_id(cube.id()),
+                material: AssetRef::from_id(material.id()),
+                ..Default::default()
+            },
+        );
+        builder.set_transform(object, turn);
+    });
+    // The bone holds the quarter turn, so the rest pose turns the cube as the object above.
+    let skinned_turned = center(&|builder| {
+        spawn_skinned_model(
+            builder,
+            &skinned,
+            &material,
+            Mat4::identity(),
+            turn,
+            Vec::new(),
+        );
+    });
+
+    let difference = |a: [u8; 4], b: [u8; 4]| {
+        a.iter()
+            .zip(b)
+            .map(|(a, b)| a.abs_diff(b))
+            .max()
+            .unwrap_or(0)
+    };
+    assert!(
+        difference(still, turned) > 10,
+        "turning the tangents changes the shading: {still:?} and {turned:?}"
+    );
+    assert!(
+        difference(turned, skinned_turned) <= 2,
+        "skinning turns the tangents as the object transform does: {turned:?} and \
+             {skinned_turned:?}"
+    );
+}
+
+#[test]
+fn rest_pose_palette_is_each_bone_in_root_space_times_its_inverse_bind() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+    let mesh = skinned_cube(&read_only_context, "test/rest_palette", "hip", bind);
+    let material = pbr_material(&read_only_context, "test/rest_palette_material");
+    let root =
+        glm::translation(&vec3(5.0, 0.0, 0.0)) * glm::rotation(90f32.to_radians(), &Vec3::y());
+    let hip =
+        glm::translation(&vec3(0.0, 2.0, 0.0)) * glm::rotation(30f32.to_radians(), &Vec3::z());
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let (root_object, hip_object, mesh_object) =
+        spawn_skinned_model(&mut builder, &mesh, &material, root, hip, Vec::new());
+    let scene = builder.finish();
+    let hip_before = scene.transform(hip_object).matrix();
+
+    let mut renderer = renderer(&read_only_context, 1, (16, 16));
+    renderer.build_asset_data(&scene);
+
+    let expected = scene.world_transform(root_object).inverse_matrix()
+        * scene.world_transform(hip_object).matrix()
+        * glm::inverse(&bind);
+    let slot = bone_slot(&renderer, &scene, mesh_object);
+    let uploaded: Mat4 = mesh.read().bone_transforms[slot].transform.into();
+    assert!(
+        (uploaded - expected).abs().max() < 1e-5,
+        "expected {expected}, uploaded {uploaded}"
+    );
+    // Drawing the rest pose reads the scene and writes nothing back into it.
+    let palette_untouched = scene
+        .read_component::<ComponentSkinnedMesh, _, _>(mesh_object, |c| c.bone_transforms.is_empty())
+        .unwrap();
+    assert!(palette_untouched);
+    assert_eq!(scene.transform(hip_object).matrix(), hip_before);
+    let bind_pose_untouched = scene
+        .read_component::<crate::component::ComponentBone, _, _>(hip_object, |c| {
+            c.bind_pose.is_none()
+        })
+        .unwrap();
+    assert!(bind_pose_untouched);
+}
+
+#[test]
+fn rest_pose_keeps_the_shear_of_a_non_uniformly_scaled_root() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    // A rotated bone under a non-uniformly scaled root has a sheared world matrix. The bone
+    // sits exactly at its bind pose in root space, so its palette entry is the identity.
+    let hip =
+        glm::translation(&vec3(0.0, 1.0, 0.0)) * glm::rotation(45f32.to_radians(), &Vec3::z());
+    let mesh = skinned_cube(&read_only_context, "test/sheared_rest", "hip", hip);
+    let material = pbr_material(&read_only_context, "test/sheared_rest_material");
+    let root = glm::scaling(&vec3(2.0, 1.0, 1.0));
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let (_, _, mesh_object) =
+        spawn_skinned_model(&mut builder, &mesh, &material, root, hip, Vec::new());
+    let scene = builder.finish();
+
+    let mut renderer = renderer(&read_only_context, 1, (16, 16));
+    renderer.build_asset_data(&scene);
+
+    let slot = bone_slot(&renderer, &scene, mesh_object);
+    let uploaded: Mat4 = mesh.read().bone_transforms[slot].transform.into();
+    assert!(
+        (uploaded - Mat4::identity()).abs().max() < 1e-5,
+        "a bone at its bind pose should skin to the identity, uploaded {uploaded}"
+    );
+}
+
+#[test]
+fn a_short_palette_keeps_the_next_instance_in_its_own_bone_slot() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let bind = glm::translation(&vec3(1.0, 0.0, 0.0));
+    let mesh = skinned_cube(&read_only_context, "test/short_palette", "hip", bind);
+    let material = pbr_material(&read_only_context, "test/short_palette_material");
+    let animated: Mat4 = glm::translation(&vec3(0.0, 3.0, 0.0));
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let (_, _, rest) = spawn_skinned_model(
+        &mut builder,
+        &mesh,
+        &material,
+        Mat4::identity(),
+        bind,
+        Vec::new(),
+    );
+    let (_, _, posed) = spawn_skinned_model(
+        &mut builder,
+        &mesh,
+        &material,
+        Mat4::identity(),
+        bind,
+        vec![crate::assets::mesh::BoneTransform {
+            transform: animated.into(),
+        }],
+    );
+    let scene = builder.finish();
+
+    let mut renderer = renderer(&read_only_context, 1, (16, 16));
+    renderer.build_asset_data(&scene);
+
+    let mesh = mesh.read();
+    assert_eq!(mesh.bone_transforms.len(), 2, "one bone set per instance");
+    let rest_slot = bone_slot(&renderer, &scene, rest);
+    let posed_slot = bone_slot(&renderer, &scene, posed);
+    let mut slots = [rest_slot, posed_slot];
+    slots.sort();
+    assert_eq!(slots, [0, 1]);
+    let rest_transform: Mat4 = mesh.bone_transforms[rest_slot].transform.into();
+    let posed_transform: Mat4 = mesh.bone_transforms[posed_slot].transform.into();
+    assert!((rest_transform - Mat4::identity()).abs().max() < 1e-5);
+    assert_eq!(posed_transform, animated, "a full palette is drawn as is");
+}
+
+#[test]
+fn resize_renders_and_picks_at_the_new_size() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/resize");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
+    let scene = builder.finish();
+
+    let mut renderer = renderer(&read_only_context, 1, (32, 32));
+    let (camera, transform) = front_camera(1.0, 5.0);
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+    assert_eq!(renderer.pick_game_object(16, 16), Some(uuid));
+    // A readback still in flight when the targets change is dropped.
+    renderer.request_pick_game_object(16, 16);
+
+    renderer.resize_textures(96, 48);
+    assert_eq!(renderer.scene_texture_size(), (96, 48));
+    let (camera, transform) = front_camera(2.0, 5.0);
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+
+    assert_eq!(renderer.pick_game_object(48, 24), Some(uuid));
+    assert_eq!(renderer.pick_game_object(95, 0), None);
+    assert_eq!(renderer.pick_game_object(96, 24), None, "out of bounds");
+    let render_context = &read_only_context.render_context;
+    let mut readback = renderer
+        .submit_scene_texture_readback()
+        .expect("scene texture has a size");
+    let image = loop {
+        let _ = render_context.device().poll(wgpu::Maintain::Wait);
+        match readback.try_finish(render_context) {
+            ReadbackPoll::Pending => continue,
+            ReadbackPoll::Ready(image) => break image,
+            ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),
+        }
+    };
+    assert_eq!(image.dimensions(), (96, 48));
+}
+
+#[test]
+fn assets_not_drawn_in_a_frame_are_dropped() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let (sphere, cube) = {
+        let registry = read_only_context.registries.assets.read();
+        (
+            registry.sphere().expect("missing sphere mesh"),
+            registry.cube().expect("missing cube mesh"),
+        )
+    };
+    let first = pbr_material(&read_only_context, "test/drop_first");
+    let second = pbr_material(&read_only_context, "test/drop_second");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let uuid = spawn_mesh(&mut builder, "sphere", &sphere, &first, Vec3::zeros());
+    keep_unbatched(&mut builder, uuid);
+    let sphere_scene = builder.finish();
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let uuid = spawn_mesh(&mut builder, "cube", &cube, &second, Vec3::zeros());
+    keep_unbatched(&mut builder, uuid);
+    let cube_scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+
+    let mut renderer = renderer(&read_only_context, 1, (32, 32));
+    renderer.render_scene_base(&camera, &transform, &sphere_scene, None, None);
+    assert!(renderer.assets.contains(sphere.id()));
+    assert!(renderer.assets.contains(first.id()));
+
+    renderer.render_scene_base(&camera, &transform, &cube_scene, None, None);
+    assert!(!renderer.assets.contains(sphere.id()));
+    assert!(!renderer.assets.contains(first.id()));
+    assert!(renderer.assets.contains(cube.id()));
+    assert!(renderer.assets.contains(second.id()));
+}
+
+#[test]
+fn the_outline_keeps_its_color_through_post_processing_and_picking_is_unchanged() {
+    const SIZE: (u32, u32) = (64, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/outline_color");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
+    // +3 EV through ACES would change any color the chain touched.
+    let volume = builder.spawn("volume");
+    builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+    builder.add_component(
+        volume,
+        ComponentTonemap {
+            exposure_ev: 3.0,
+            ..Default::default()
+        },
+    );
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let (center_x, center_y) = project(&camera, &transform, Vec3::zeros(), SIZE);
+
+    for samples in [1, 4] {
+        let flags = test_adapter()
+            .get_texture_format_features(wgpu::TextureFormat::Rgba16Float)
+            .flags;
+        if !flags.sample_count_supported(samples) {
+            eprintln!("skipping {samples} samples: unsupported by the test adapter");
+            continue;
+        }
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples,
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        renderer.set_selected_game_object(Some(uuid));
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        assert_eq!(
+            renderer
+                .post_process_settings()
+                .get::<ComponentTonemap>()
+                .copied()
+                .unwrap_or_default()
+                .exposure_ev,
+            3.0
+        );
+        let image = read_scene_texture(&renderer, &render_context);
+
+        // Black tone maps to black, so scanning in from the right edge,
+        // the first other pixel is the outline right of the cube.
+        let edge = (0..SIZE.0)
+            .rev()
+            .find(|&x| image.get_pixel(x, center_y).0 != [0, 0, 0, 255])
+            .expect("the cube's row has an outline");
+        assert!(edge > center_x, "the outline lies right of the cube");
+        assert_eq!(
+            image.get_pixel(edge, center_y).0,
+            [255, 149, 0, 255],
+            "the selection outline keeps its authored color at {samples} samples"
+        );
+
+        assert_eq!(
+            renderer.pick_game_object(center_x, center_y),
+            Some(uuid),
+            "the cube is picked under its center at {samples} samples"
+        );
+        assert_eq!(
+            renderer.pick_game_object(edge, center_y),
+            None,
+            "the outline is not pickable at {samples} samples"
+        );
+    }
+}
+
+/// A PBR material registered as `name`, emitting white at strength one through `emissive`
+/// in its emissive slot.
+fn emissive_material(
+    context: &ReadOnlyAssetContext,
+    name: &str,
+    emissive: MaterialTexture,
+) -> Ref<Material> {
+    let registry = context.registries.assets.read();
+    let shader = registry
+        .load::<Shader>("shaders/mesh/pbr")
+        .expect("missing pbr shader");
+    let mut material = Material::from_shader(context, shader);
+    for variable in material.variables.iter_mut() {
+        match variable.name.as_str() {
+            "emission_color" => variable.value = ShaderVariableValue::Color([1.0; 4]),
+            "emission_strength" => variable.value = ShaderVariableValue::Float(1.0),
+            "emissive_texture" => variable.value = ShaderVariableValue::Texture2D(emissive.clone()),
+            _ => {}
+        }
+    }
+    registry
+        .create_or_update(name.into(), material)
+        .expect("material should be created")
+}
+
+#[test]
+fn an_image_in_the_emissive_slot_decodes_as_srgb_and_a_solid_color_stays_linear() {
+    const SIZE: (u32, u32) = (96, 64);
+    // sRGB 188 decodes to linear 0.503.
+    const ENCODED: u8 = 188;
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let registry = read_only_context.registries.assets.read();
+    let cube = registry.cube().expect("missing cube mesh");
+    let image = image::DynamicImage::ImageRgba8(image::RgbaImage::from_pixel(
+        4,
+        4,
+        image::Rgba([ENCODED, ENCODED, ENCODED, 255]),
+    ));
+    let texture = Texture::from_image(&read_only_context, "test/srgb_gray", image)
+        .expect("the image uploads");
+    let texture = registry
+        .create_or_update("test/srgb_gray".into(), texture)
+        .expect("texture should be created");
+    drop(registry);
+    let decoded = ((f32::from(ENCODED) / 255.0 + 0.055) / 1.055).powf(2.4);
+    let image_material = emissive_material(
+        &read_only_context,
+        "test/emissive_image",
+        MaterialTexture::Asset(AssetRef::from_id(texture.id())),
+    );
+    let decoded_material = emissive_material(
+        &read_only_context,
+        "test/emissive_decoded",
+        MaterialTexture::Color([decoded, decoded, decoded, 1.0]),
+    );
+    let raw = f32::from(ENCODED) / 255.0;
+    let raw_material = emissive_material(
+        &read_only_context,
+        "test/emissive_raw",
+        MaterialTexture::Color([raw, raw, raw, 1.0]),
+    );
+    let left = vec3(-1.6, 0.0, 0.0);
+    let middle = vec3(0.0, 0.0, 0.0);
+    let right = vec3(1.6, 0.0, 0.0);
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut builder, "image", &cube, &image_material, left);
+    spawn_mesh(&mut builder, "decoded", &cube, &decoded_material, middle);
+    spawn_mesh(&mut builder, "raw", &cube, &raw_material, right);
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(SIZE.0 as f32 / SIZE.1 as f32, 5.0);
+
+    let mut renderer = SceneRenderer::new(
+        &read_only_context,
+        SceneRendererOptions {
+            clear_color: Color32::BLACK,
+            ..Default::default()
+        },
+        SIZE,
+    )
+    .expect("scene renderer should load its assets");
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+    let image = read_scene_texture(&renderer, &render_context);
+    let pixel = |position| {
+        let (x, y) = project(&camera, &transform, position, SIZE);
+        image.get_pixel(x, y).0[0]
+    };
+
+    let (image, decoded, raw) = (pixel(left), pixel(middle), pixel(right));
+    assert!(
+        image.abs_diff(decoded) <= 2,
+        "the image emits its decoded value: image {image}, decoded {decoded}"
+    );
+    assert!(
+        raw > decoded + 10,
+        "the raw value is brighter than the decoded one: raw {raw}, decoded {decoded}"
+    );
+}
+
+#[test]
+fn an_emissive_material_glows_without_light_and_a_default_one_stays_black() {
+    const SIZE: (u32, u32) = (64, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    // A material made from the shader reflects the emission fields with
+    // zero strength, so it does not emit.
+    let plain = pbr_material(&read_only_context, "test/emission_off");
+    let emissive = {
+        let registry = read_only_context.registries.assets.read();
+        let shader = registry
+            .load::<Shader>("shaders/mesh/pbr")
+            .expect("missing pbr shader");
+        let mut material = Material::from_shader(&read_only_context, shader);
+        for variable in material.variables.iter_mut() {
+            match variable.name.as_str() {
+                "emission_color" => {
+                    variable.value = ShaderVariableValue::Color([0.25, 0.5, 1.0, 1.0])
+                }
+                "emission_strength" => variable.value = ShaderVariableValue::Float(2.0),
+                _ => {}
+            }
+        }
+        registry
+            .create_or_update("test/emission_on".into(), material)
+            .expect("material should be created")
+    };
+    let left = vec3(-1.0, 0.0, 0.0);
+    let right = vec3(1.0, 0.0, 0.0);
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut builder, "plain", &cube, &plain, left);
+    spawn_mesh(&mut builder, "emissive", &cube, &emissive, right);
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+
+    let mut renderer = SceneRenderer::new(
+        &read_only_context,
+        SceneRendererOptions {
+            clear_color: Color32::BLACK,
+            ..Default::default()
+        },
+        SIZE,
+    )
+    .expect("scene renderer should load its assets");
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+    let image = read_scene_texture(&renderer, &render_context);
+
+    let (x, y) = project(&camera, &transform, left, SIZE);
+    assert_eq!(
+        image.get_pixel(x, y).0,
+        [0, 0, 0, 255],
+        "an unlit cube without emission is black"
+    );
+    let (x, y) = project(&camera, &transform, right, SIZE);
+    let [r, g, b, _] = image.get_pixel(x, y).0;
+    assert!(
+        b > g && g > r && r > 0,
+        "the emissive cube shows its emission color, got ({r}, {g}, {b})"
+    );
+}
+
+/// The deferred lighting pass binds the G-buffer by name: a reload of
+/// `lighting_common.wgsl` that swaps the albedo and emissive bindings,
+/// whose entries are alike, is accepted with a new layout generation,
+/// and the pass rebuilds its group so the emissive cube looks the same.
+#[test]
+fn a_reload_swapping_the_gbuffer_bindings_of_deferred_lighting_rebuilds_its_group() {
+    const SIZE: (u32, u32) = (64, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let registry = read_only_context.registries.assets.read();
+    let cube = registry.cube().expect("missing cube mesh");
+    let shader = registry
+        .load::<Shader>("shaders/mesh/pbr")
+        .expect("missing pbr shader");
+    let lighting = registry
+        .load::<Shader>("shaders/deferred/lighting")
+        .expect("missing lighting shader");
+    let mut material = Material::from_shader(&read_only_context, shader);
+    for variable in material.variables.iter_mut() {
+        match variable.name.as_str() {
+            "base_color_factor" => {
+                variable.value = ShaderVariableValue::Color([1.0, 0.0, 0.0, 1.0])
+            }
+            "emission_color" => variable.value = ShaderVariableValue::Color([0.0, 0.0, 1.0, 1.0]),
+            "emission_strength" => variable.value = ShaderVariableValue::Float(1.0),
+            _ => {}
+        }
+    }
+    let material = registry
+        .create_or_update("test/swapped_gbuffer".into(), material)
+        .expect("material should be created");
+    drop(registry);
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let center = vec3(0.0, 0.0, 0.0);
+    spawn_mesh(&mut builder, "cube", &cube, &material, center);
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let mut renderer = SceneRenderer::new(
+        &read_only_context,
+        SceneRendererOptions {
+            clear_color: Color32::BLACK,
+            ..Default::default()
+        },
+        SIZE,
+    )
+    .expect("scene renderer should load its assets");
+    let (x, y) = project(&camera, &transform, center, SIZE);
+    let pixel = |renderer: &mut SceneRenderer| {
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        read_scene_texture(renderer, &render_context)
+            .get_pixel(x, y)
+            .0
+    };
+    let before = pixel(&mut renderer);
+    let [r, _, b, _] = before;
+    assert!(
+        b > 0 && r == 0,
+        "the unlit cube shows its emission only: {before:?}"
+    );
+
+    let path = assets
+        .engine_root()
+        .join("shaders/deferred/lighting_common.wgsl");
+    let source = std::fs::read_to_string(&path).expect("the shader is readable");
+    let swapped = source
+        .replace(
+            "@binding(0)\nvar albedo_texture",
+            "@binding(9)\nvar albedo_texture",
+        )
+        .replace(
+            "@binding(0)\r\nvar albedo_texture",
+            "@binding(9)\r\nvar albedo_texture",
+        )
+        .replace(
+            "@binding(3)\nvar emissive_texture",
+            "@binding(0)\nvar emissive_texture",
+        )
+        .replace(
+            "@binding(3)\r\nvar emissive_texture",
+            "@binding(0)\r\nvar emissive_texture",
+        )
+        .replace("@binding(9)", "@binding(3)");
+    assert_ne!(swapped, source, "the bindings were swapped");
+    let generation = lighting.read().layout_generation();
+    std::fs::write(&path, swapped).expect("the shader is writable");
+    {
+        let registry = read_only_context.registries.assets.read();
+        registry.recv_notify_event(
+            notify::Event::new(notify::EventKind::Modify(notify::event::ModifyKind::Any))
+                .add_path(path.clone()),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        registry.reload_assets();
+        assert!(registry.reload_errors().is_empty());
+    }
+    assert_ne!(lighting.read().layout_generation(), generation);
+    assert_eq!(
+        pixel(&mut renderer),
+        before,
+        "the pass binds each G-buffer view to its variable wherever it moved"
+    );
+}
+
+/// Renders a wide flat box facing the camera, lit only by a spot light 2 units in front of
+/// it pointing straight at it, and returns the red channel at each of `points` on its face.
+/// With `other_lights`, the scene also holds a black directional light shining at the face
+/// and a point light out of range of it, which light nothing but come before the spot light
+/// in the light storage buffer.
+fn spot_lit_plane<const N: usize>(
+    inner_angle: f32,
+    outer_angle: f32,
+    other_lights: bool,
+    points: [Vec3; N],
+) -> [u8; N] {
+    const SIZE: (u32, u32) = (96, 96);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/spot_lit_plane");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let plane = builder.spawn("plane");
+    builder.add_component(
+        plane,
+        ComponentMesh {
+            mesh: AssetRef::from_id(cube.id()),
+            material: AssetRef::from_id(material.id()),
+            ..Default::default()
+        },
+    );
+    // The cube spans -1..1, so the face towards the camera sits at z = -0.05.
+    builder.set_transform(plane, glm::scaling(&vec3(3.0, 3.0, 0.05)));
+    let light = builder.spawn("spot");
+    builder.add_component(
+        light,
+        crate::component::ComponentSpotLight {
+            intensity: 20.0,
+            range: 10.0,
+            inner_angle,
+            outer_angle,
+            ..Default::default()
+        },
+    );
+    // An identity rotation points the light along +Z, at the plane.
+    builder.set_transform(light, glm::translation(&vec3(0.0, 0.0, -2.05)));
+    if other_lights {
+        let sun = builder.spawn("sun");
+        builder.add_component(
+            sun,
+            crate::component::ComponentDirectionalLight {
+                color: Color32::BLACK,
+                intensity: 20.0,
+                ..Default::default()
+            },
+        );
+        let lamp = builder.spawn("lamp");
+        builder.add_component(
+            lamp,
+            crate::component::ComponentPointLight {
+                intensity: 20.0,
+                radius: 1.0,
+                ..Default::default()
+            },
+        );
+        builder.set_transform(lamp, glm::translation(&vec3(0.0, 0.0, -20.0)));
+    }
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let mut renderer = SceneRenderer::new(
+        &read_only_context,
+        SceneRendererOptions {
+            clear_color: Color32::BLACK,
+            ..Default::default()
+        },
+        SIZE,
+    )
+    .expect("scene renderer should load its assets");
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+    let image = read_scene_texture(&renderer, &render_context);
+    points.map(|point| {
+        let (x, y) = project(&camera, &transform, point, SIZE);
+        image.get_pixel(x, y).0[0]
+    })
+}
+
+/// The point on the plane's face `degrees` off the spot light's axis.
+fn off_axis(degrees: f32) -> Vec3 {
+    vec3(2.0 * degrees.to_radians().tan(), 0.0, -0.05)
+}
+
+#[test]
+fn a_spot_light_lights_its_inner_cone_fully_fades_across_the_band_and_stops_outside() {
+    let [axis, inner, band, outside] = spot_lit_plane(
+        10.0,
+        30.0,
+        false,
+        [off_axis(0.0), off_axis(6.0), off_axis(20.0), off_axis(40.0)],
+    );
+    assert!(axis > 40, "the plane is lit on the cone axis, got {axis}");
+    assert!(
+        inner.abs_diff(axis) <= 12,
+        "inside the inner cone the light is full: axis {axis}, inner {inner}"
+    );
+    assert!(
+        band > 0 && band + 10 < inner,
+        "the falloff band is dimmer than the inner cone but lit: inner {inner}, band {band}"
+    );
+    assert_eq!(outside, 0, "outside the outer cone the plane is dark");
+}
+
+#[test]
+fn a_spot_light_with_equal_cones_has_a_hard_edge() {
+    let [axis, edge_inside, edge_outside] = spot_lit_plane(
+        25.0,
+        25.0,
+        false,
+        [off_axis(0.0), off_axis(22.0), off_axis(28.0)],
+    );
+    assert!(axis > 40, "the plane is lit on the cone axis, got {axis}");
+    assert!(
+        edge_inside > 20,
+        "just inside the cone is lit, not NaN black: {edge_inside}"
+    );
+    assert_eq!(edge_outside, 0, "just outside the cone is dark");
+}
+
+#[test]
+fn a_spot_light_after_directional_and_point_lights_shades_from_its_own_range() {
+    let [alone_axis, alone_outside] =
+        spot_lit_plane(10.0, 30.0, false, [off_axis(0.0), off_axis(40.0)]);
+    let [axis, outside] = spot_lit_plane(10.0, 30.0, true, [off_axis(0.0), off_axis(40.0)]);
+    assert!(
+        axis > 40,
+        "the spot light still lights its axis, got {axis}"
+    );
+    assert!(
+        axis.abs_diff(alone_axis) <= 2,
+        "the other lights add nothing on the axis: {alone_axis} alone, {axis} with them"
+    );
+    assert_eq!(
+        (alone_outside, outside),
+        (0, 0),
+        "outside the cone stays dark, so no loop read the spot light as another kind"
+    );
+}
+
+#[test]
+fn only_views_that_show_an_overlay_allocate_the_overlay_target() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let scene = SceneBuilder::new(read_only_context.registries.clone()).finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let frame = |options: SceneRendererOptions| {
+        let mut renderer = SceneRenderer::new(&read_only_context, options, (16, 16))
+            .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        renderer
+    };
+
+    // The Game tab, the player and thumbnails show no overlay.
+    let game = frame(SceneRendererOptions::default());
+    assert!(game.overlay().target().is_none());
+
+    let editor = frame(SceneRendererOptions {
+        grid: true,
+        gizmos: Some(GizmoOptions::default()),
+        ..Default::default()
+    });
+    let target = editor
+        .overlay()
+        .target()
+        .expect("the editor shows overlays");
+    assert_eq!(target.descriptor.format, OverlayCompositor::FORMAT);
+}
+
+#[test]
+fn an_inactive_outline_pass_releases_its_bind_group() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/outline");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let uuid = spawn_mesh(&mut builder, "cube", &cube, &material, Vec3::zeros());
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let mut renderer = renderer(&read_only_context, 1, (32, 32));
+    let frame = |renderer: &mut SceneRenderer| {
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+    };
+
+    renderer.set_hovered_game_object(Some(uuid));
+    renderer.set_selected_game_object(Some(uuid));
+    frame(&mut renderer);
+    assert!(renderer.outline_renderer.hovered_pass.is_cached());
+    assert!(renderer.outline_renderer.selected_pass.is_cached());
+
+    renderer.set_hovered_game_object(None);
+    frame(&mut renderer);
+    assert!(!renderer.outline_renderer.hovered_pass.is_cached());
+    assert!(renderer.outline_renderer.selected_pass.is_cached());
+
+    renderer.set_selected_game_object(None);
+    frame(&mut renderer);
+    assert!(!renderer.outline_renderer.selected_pass.is_cached());
+}
+
+#[test]
+fn deleting_a_drawn_mesh_releases_it_from_the_renderer() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let sphere = read_only_context
+        .registries
+        .assets
+        .read()
+        .sphere()
+        .expect("missing sphere mesh");
+    let sphere_id = sphere.id();
+    let material = pbr_material(&read_only_context, "test/deleted_mesh");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let uuid = spawn_mesh(&mut builder, "sphere", &sphere, &material, Vec3::zeros());
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+
+    let mut renderer = renderer(&read_only_context, 1, (32, 32));
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+    assert_eq!(renderer.pick_game_object(16, 16), Some(uuid));
+    let sphere_object = scene.find(uuid).expect("the sphere exists");
+    assert!(
+        renderer
+            .draws()
+            .static_batches
+            .is_batched(sphere_object.entity),
+        "the sphere draws merged into a static batch"
+    );
+    let sphere_weak = sphere.downgrade();
+    drop(sphere);
+
+    let path = assets.engine_root().join("meshes/sphere.obj");
+    std::fs::remove_file(&path).expect("failed to delete the sphere mesh");
+    read_only_context
+        .registries
+        .assets
+        .read()
+        .recv_notify_event(
+            notify::Event::new(notify::EventKind::Remove(notify::event::RemoveKind::File))
+                .add_path(path),
+        );
+    renderer.render_scene_base(&camera, &transform, &scene, None, None);
+    renderer.finalize_scene();
+
+    assert!(!renderer.assets.contains(sphere_id));
+    assert!(
+        sphere_weak.upgrade().is_none(),
+        "nothing keeps the deleted mesh alive"
+    );
+    assert_eq!(renderer.pick_game_object(16, 16), None);
+}
+
+#[test]
+fn renders_more_instances_of_one_mesh_than_the_instance_cap() {
+    const COLUMNS: u32 = 9;
+    const ROWS: u32 = 5;
+    const SPACING: f32 = 3.0;
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/instance_cap_material");
+
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let mut expected = Vec::new();
+    for row in 0..ROWS {
+        for column in 0..COLUMNS {
+            let position = vec3(
+                (column as f32 - (COLUMNS - 1) as f32 / 2.0) * SPACING,
+                (row as f32 - (ROWS - 1) as f32 / 2.0) * SPACING,
+                0.0,
+            );
+            let uuid = spawn_mesh(
+                &mut builder,
+                &format!("cube_{row}_{column}"),
+                &cube,
+                &material,
+                position,
+            );
+            expected.push((position, uuid));
+        }
+    }
+    // More than the 30 instances one uniform buffer held before instances
+    // moved to a storage buffer.
+    assert!(expected.len() > 30);
+    let scene = builder.finish();
+
+    let (camera, camera_transform) = front_camera(1.0, 30.0);
+    let mut renderer = renderer(&read_only_context, 1, (VIEWPORT, VIEWPORT));
+    renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
+
+    for (index, (position, uuid)) in expected.iter().enumerate() {
+        let (x, y) = project(&camera, &camera_transform, *position, (VIEWPORT, VIEWPORT));
+        assert_eq!(
+            renderer.pick_game_object(x, y),
+            Some(*uuid),
+            "instance {index} was not drawn at its transform"
+        );
+    }
+}
+
+#[test]
+fn foliage_batches_a_thousand_copies_and_tracks_authoring_edits() {
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let cube = context.registries.assets.read().cube().unwrap();
+    let materials = [
+        pbr_material(&context, "test/foliage_a"),
+        pbr_material(&context, "test/foliage_b"),
+    ];
+    let mut source = SceneBuilder::new(context.registries.clone());
+    let root = source.spawn("prefab root");
+    for (index, material) in materials.iter().enumerate() {
+        let part = source.spawn_child(root, format!("part {index}"));
+        source.add_component(
+            part,
+            ComponentMesh {
+                mesh: AssetRef::from_id(cube.id()),
+                material: AssetRef::from_id(material.id()),
+                ..Default::default()
+            },
+        );
+        source.set_transform(part, glm::translation(&vec3(index as f32 * 3.0, 0.0, 0.0)));
+    }
+    let prefab = context
+        .registries
+        .assets
+        .read()
+        .create_or_update(
+            "test/foliage_prefab".into(),
+            source.scene().create_prefab(root),
+        )
+        .unwrap();
+    let mut builder = SceneBuilder::new(context.registries.clone());
+    let parent = builder.spawn("parent");
+    let owner = builder.spawn_child(parent, "foliage");
+    builder.add_component(
+        owner,
+        ComponentFoliage {
+            prefabs: vec![AssetRef::from_id(prefab.id())],
+            density: 10.0,
+            ..Default::default()
+        },
+    );
+    let mut scene = builder.finish();
+    let object_count = scene.objects().count();
+    let uuid = scene.uuid(owner);
+    let mut renderer = renderer(&context, 1, (64, 64));
+    renderer.build_asset_data(&scene);
+    assert_eq!(renderer.draws().draw_list.len(), 2000);
+    assert_eq!(renderer.object_ids_build, [uuid]);
+    assert!(renderer
+        .draws()
+        .draw_list
+        .iter()
+        .all(|entry| entry.cast_shadows));
+    renderer.finish_object_ids();
+    let batches = renderer.build_own_draw_list();
+    assert_eq!(
+        batches.len(),
+        2,
+        "batches follow mesh/material variants, not copies"
+    );
+    assert_eq!(
+        batches.iter().map(|b| b.instances.len()).sum::<usize>(),
+        2000
+    );
+    assert_eq!(
+        scene.objects().count(),
+        object_count,
+        "scatter creates no objects"
+    );
+
+    scene.write_component::<ComponentFoliage, _>(owner, |patch| {
+        patch.prefabs.truncate(1);
+        patch.area = glm::vec2(1.0, 1.0);
+        patch.density = 1.0;
+        patch.scale_range = glm::vec2(1.0, 1.0);
+        patch.rotation_range = glm::vec2(0.0, 0.0);
+        patch.cast_shadows = false;
+    });
+    let parent_transform = Transform::from_components(
+        vec3(2.0, 0.0, 0.0),
+        UnitQuaternion::from_axis_angle(&Vec3::y_axis(), 0.5),
+        Vec3::repeat(2.0),
+    );
+    scene.set_transform(parent, &parent_transform.matrix());
+    renderer.build_asset_data(&scene);
+    assert_eq!(renderer.draws().draw_list.len(), 2);
+    assert!(!renderer.draws().draw_list[0].cast_shadows);
+    let local = scene
+        .read_component::<ComponentFoliage, _, _>(owner, |patch| {
+            renderer
+                .own_draws
+                .as_mut()
+                .unwrap()
+                .foliage
+                .instances(uuid, patch)[0]
+                .transform
+        })
+        .unwrap();
+    let expected = parent_transform.matrix() * local;
+    assert!(renderer.draws().draw_list.iter().any(|entry| {
+        let actual: Mat4 = entry.transform.into();
+        (actual - expected).norm() < 0.0001
+    }));
+    let position = vec3(expected[(0, 3)], expected[(1, 3)], expected[(2, 3)]);
+    let view = front_camera(1.0, 10.0);
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    let pixel = project(&view.0, &view.1, position, (64, 64));
+    assert_eq!(renderer.pick_game_object(pixel.0, pixel.1), Some(uuid));
+
+    scene.set_component_enabled::<ComponentFoliage>(owner, false);
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    assert_eq!(renderer.pick_game_object(pixel.0, pixel.1), None);
+    assert!(renderer.draws().draw_list.is_empty());
+    scene.set_component_enabled::<ComponentFoliage>(owner, true);
+    scene.write_component::<ComponentID, _>(parent, |id| id.visible = false);
+    renderer.build_asset_data(&scene);
+    assert!(
+        renderer.draws().draw_list.is_empty(),
+        "hidden ancestors suppress the whole patch"
+    );
+    scene.write_component::<ComponentID, _>(parent, |id| id.visible = true);
+    renderer.build_asset_data(&scene);
+    assert_eq!(renderer.draws().draw_list.len(), 2);
+
+    let placements = scene
+        .read_component::<ComponentFoliage, _, _>(owner, |patch| {
+            renderer
+                .own_draws
+                .as_mut()
+                .unwrap()
+                .foliage
+                .instances(uuid, patch)
+        })
+        .unwrap();
+    // Editing the shared prefab changes its parts, but not random placement.
+    for components in prefab.write().data.components.values_mut() {
+        if let Some(mesh) = components.get_mut(&ComponentMesh::type_uuid()) {
+            mesh["material"] = serde_json::json!(materials[0].id());
+        }
+    }
+    renderer.build_asset_data(&scene);
+    let unchanged = scene
+        .read_component::<ComponentFoliage, _, _>(owner, |patch| {
+            renderer
+                .own_draws
+                .as_mut()
+                .unwrap()
+                .foliage
+                .instances(uuid, patch)
+        })
+        .unwrap();
+    assert!(Arc::ptr_eq(&placements, &unchanged));
+    renderer.finish_object_ids();
+    assert_eq!(
+        renderer.build_own_draw_list().len(),
+        1,
+        "updated materials merge batches"
+    );
+
+    // Registry replacement/reload is observed even with the same asset ID.
+    let child = source.scene().children(root).next().unwrap();
+    source
+        .scene_mut()
+        .set_component_enabled::<ComponentMesh>(child, false);
+    let replacement = context
+        .registries
+        .assets
+        .read()
+        .create_or_update(
+            "test/foliage_prefab".into(),
+            source.scene().create_prefab(root),
+        )
+        .unwrap();
+    assert_eq!(replacement.id(), prefab.id());
+    renderer.build_asset_data(&scene);
+    assert_eq!(renderer.draws().draw_list.len(), 1);
+    scene.write_component::<ComponentFoliage, _>(owner, |patch| {
+        patch.prefabs[0] = AssetRef::default();
+    });
+    renderer.build_asset_data(&scene);
+    assert!(
+        renderer.draws().draw_list.is_empty(),
+        "a missing prefab skips its copies"
+    );
+}
+
+#[test]
+fn terrain_draws_its_upper_side_through_the_mesh_batches() {
+    let assets = TestAssets::engine();
+    let heightmap_path = assets.engine_root().join("terrain_test.png");
+    image::GrayImage::new(9, 9).save(&heightmap_path).unwrap();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let heightmap = context
+        .registries
+        .assets
+        .read()
+        .asset_id_from_path(&heightmap_path)
+        .unwrap();
+    let material = pbr_material(&context, "test/terrain_material");
+    let mut builder = SceneBuilder::new(context.registries.clone());
+    let owner = builder.spawn("terrain");
+    builder.add_component(
+        owner,
+        ComponentTerrain {
+            heightmap: AssetRef::from_id(heightmap),
+            material: AssetRef::from_id(material.id()),
+            size: glm::vec2(4.0, 4.0),
+            cast_shadows: false,
+            ..Default::default()
+        },
+    );
+    // Turned so its upper side faces the camera, which looks along +Z.
+    let facing = |angle: f32| {
+        Transform::from_components(
+            Vec3::zeros(),
+            UnitQuaternion::from_axis_angle(&Vec3::x_axis(), angle),
+            Vec3::repeat(1.0),
+        )
+        .matrix()
+    };
+    builder.set_transform(owner, facing(-std::f32::consts::FRAC_PI_2));
+    let mut scene = builder.finish();
+    let uuid = scene.uuid(owner);
+    let mut renderer = renderer(&context, 1, (64, 64));
+    renderer.build_asset_data(&scene);
+    assert_eq!(renderer.draws().draw_list.len(), 1);
+    assert!(!renderer.draws().draw_list[0].cast_shadows);
+    let mesh = renderer.draws().draw_list[0].mesh_id;
+    assert_eq!(
+        renderer.assets.mesh(mesh).unwrap().read().vertices.len(),
+        81
+    );
+
+    let view = front_camera(1.0, 10.0);
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    assert_eq!(renderer.pick_game_object(32, 32), Some(uuid));
+    renderer.build_asset_data(&scene);
+    assert_eq!(
+        renderer.draws().draw_list[0].mesh_id,
+        mesh,
+        "an unchanged terrain keeps its mesh"
+    );
+
+    // Its underside is culled like any back face.
+    scene.set_transform(owner, &facing(std::f32::consts::FRAC_PI_2));
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    assert_eq!(renderer.pick_game_object(32, 32), None);
+
+    scene.set_component_enabled::<ComponentTerrain>(owner, false);
+    renderer.build_asset_data(&scene);
+    assert!(renderer.draws().draw_list.is_empty());
+}
+
+#[test]
+fn a_ground_material_blends_into_the_gbuffer_and_takes_its_marks() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let heightmap_path = assets.engine_root().join("ground_test.png");
+    image::GrayImage::new(9, 9).save(&heightmap_path).unwrap();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let render_context = context.render_context.clone();
+    let heightmap = context
+        .registries
+        .assets
+        .read()
+        .asset_id_from_path(&heightmap_path)
+        .unwrap();
+    let material = {
+        let registry = context.registries.assets.read();
+        let shader = registry
+            .load::<Shader>("shaders/mesh/ground")
+            .expect("missing ground shader");
+        registry
+            .create_or_update(
+                "test/ground_material".into(),
+                Material::from_shader(&context, shader),
+            )
+            .unwrap()
+    };
+    let color = |c: [f32; 4]| ShaderVariableValue::Texture2D(MaterialTexture::Color(c));
+    {
+        let mut material = material.write();
+        // Masks that leave the whole ground to the base grass layer, and
+        // flat detail, so the colour is the grass's exactly.
+        for (variable, value) in [
+            ("mask_a_texture", color([0.0; 4])),
+            ("mask_b_texture", color([0.0; 4])),
+            ("detail_a_texture", color([0.5; 4])),
+            ("detail_b_texture", color([0.5; 4])),
+            (
+                "grass_color",
+                ShaderVariableValue::Color([0.2, 0.4, 0.1, 0.3]),
+            ),
+            ("detail", ShaderVariableValue::Vec4([4.0, 1.5, 20.0, 0.0])),
+            ("blend", ShaderVariableValue::Vec4([0.5, 0.06, 0.5, 1.0])),
+            ("mask", ShaderVariableValue::Vec4([4.0, 4.0, 0.0, 0.0])),
+            ("roughness", ShaderVariableValue::Float(1.0)),
+        ] {
+            assert!(material.set_variable(variable, value), "{variable}");
+        }
+    }
+    let mut builder = SceneBuilder::new(context.registries.clone());
+    let owner = builder.spawn("ground");
+    builder.add_component(
+        owner,
+        ComponentTerrain {
+            heightmap: AssetRef::from_id(heightmap),
+            material: AssetRef::from_id(material.id()),
+            size: glm::vec2(4.0, 4.0),
+            cast_shadows: false,
+            ..Default::default()
+        },
+    );
+    // Turned so its upper side faces the camera, which looks along +Z.
+    builder.set_transform(
+        owner,
+        Transform::from_components(
+            Vec3::zeros(),
+            UnitQuaternion::from_axis_angle(&Vec3::x_axis(), -std::f32::consts::FRAC_PI_2),
+            Vec3::repeat(1.0),
+        )
+        .matrix(),
+    );
+    let scene = builder.finish();
+    let mut renderer = renderer(&context, 1, SIZE);
+    let view = front_camera(1.0, 5.0);
+    let center = (SIZE.0 / 2, SIZE.1 / 2);
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    assert_eq!(
+        renderer.gbuffer_drawn_instances(),
+        1,
+        "the ground is deferred"
+    );
+    let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+    let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+    // Linear 0.2, 0.4, 0.1, stored as sRGB.
+    assert_bytes_near(&albedo[..3], &[124, 170, 89], "the grass colour");
+    let surface = read_texel(&render_context, &gbuffer.material, center);
+    assert_bytes_near(
+        &surface,
+        &[0, 255, 255, 0],
+        "metallic, roughness, occlusion, style",
+    );
+
+    // A marks texture over the ground halves its colour.
+    {
+        let mut material = material.write();
+        assert!(material.set_variable("marks_texture", color([0.5, 0.5, 0.5, 1.0])));
+        assert!(material.set_variable(
+            "marks_rect",
+            ShaderVariableValue::Vec4([-10.0, -10.0, 20.0, 20.0])
+        ));
+    }
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+    let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+    assert_bytes_near(&albedo[..3], &[89, 124, 63], "the marked grass colour");
+}
+
+#[test]
+fn water_draws_into_the_gbuffer_through_the_mesh_batches_and_casts_no_shadow() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let context = context.lock_read();
+    let render_context = context.render_context.clone();
+    let mut builder = SceneBuilder::new(context.registries.clone());
+    let owner = builder.spawn("water");
+    let deep = egui::Color32::from_rgb(0x20, 0x60, 0xA0);
+    builder.add_component(
+        owner,
+        ComponentWater {
+            points: vec![
+                WaterPoint {
+                    position: glm::vec2(0.0, -4.0),
+                    width: 8.0,
+                },
+                WaterPoint {
+                    position: glm::vec2(0.0, 4.0),
+                    width: 8.0,
+                },
+            ],
+            cell_size: 2.0,
+            wave_amplitude: 0.0,
+            deep_color: deep,
+            shore_distance: 0.0,
+            foam_width: 0.0,
+            foam_patches: 0.0,
+            obstacle_foam: 0.0,
+            facet_variation: 0.0,
+            roughness: 0.5,
+            glint_strength: 0.0,
+            outline_style: 3,
+            ..Default::default()
+        },
+    );
+    // Turned so its upper side faces the camera, which looks along +Z.
+    let facing = |angle: f32| {
+        Transform::from_components(
+            Vec3::zeros(),
+            UnitQuaternion::from_axis_angle(&Vec3::x_axis(), angle),
+            Vec3::repeat(1.0),
+        )
+        .matrix()
+    };
+    builder.set_transform(owner, facing(-std::f32::consts::FRAC_PI_2));
+    let mut scene = builder.finish();
+    let uuid = scene.uuid(owner);
+    let mut renderer = renderer(&context, 1, SIZE);
+    let view = front_camera(1.0, 5.0);
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    assert_eq!(renderer.draws().draw_list.len(), 1);
+    assert!(!renderer.draws().draw_list[0].cast_shadows);
+    assert_eq!(renderer.gbuffer_drawn_instances(), 1);
+
+    let center = (SIZE.0 / 2, SIZE.1 / 2);
+    let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+    let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+    assert_bytes_near(
+        &albedo[..3],
+        &[0x20, 0x60, 0xA0],
+        "the deep colour, as its hex",
+    );
+    assert_eq!(albedo[3], 255);
+    let [sx, sy, gx, gy] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+    for normal in [octahedral_decode(sx, sy), octahedral_decode(gx, gy)] {
+        assert!(normal.z < -0.99, "the facet faces the camera: {normal}");
+    }
+    let surface = read_texel(&render_context, &gbuffer.material, center);
+    assert_bytes_near(
+        &surface,
+        &[0, 128, 255, 3],
+        "metallic, roughness, occlusion, style",
+    );
+    assert_eq!(renderer.pick_game_object(center.0, center.1), Some(uuid));
+
+    // Shaded smooth, the still water writes the same colour and normal.
+    scene.write_component::<ComponentWater, _>(owner, |water| {
+        water.shading = WaterShading::Smooth;
+    });
+    renderer.render_scene_base(&view.0, &view.1, &scene, None, None);
+    let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+    let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+    assert_bytes_near(&albedo[..3], &[0x20, 0x60, 0xA0], "the smooth deep colour");
+    let [sx, sy, _, _] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+    let normal = octahedral_decode(sx, sy);
+    assert!(
+        normal.z < -0.99,
+        "the smooth surface faces the camera: {normal}"
+    );
+
+    scene.set_component_enabled::<ComponentWater>(owner, false);
+    renderer.build_asset_data(&scene);
+    assert!(renderer.draws().draw_list.is_empty());
+}
+
+#[test]
+fn renders_a_thousand_instances_of_one_mesh_in_one_batch() {
+    const COLUMNS: u32 = 40;
+    const ROWS: u32 = 25;
+    const SPACING: f32 = 3.0;
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/thousand_instances_material");
+
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let mut expected = Vec::new();
+    for row in 0..ROWS {
+        for column in 0..COLUMNS {
+            let position = vec3(
+                (column as f32 - (COLUMNS - 1) as f32 / 2.0) * SPACING,
+                (row as f32 - (ROWS - 1) as f32 / 2.0) * SPACING,
+                0.0,
+            );
+            let uuid = spawn_mesh(
+                &mut builder,
+                &format!("cube_{row}_{column}"),
+                &cube,
+                &material,
+                position,
+            );
+            keep_unbatched(&mut builder, uuid);
+            expected.push((position, uuid));
+        }
+    }
+    assert_eq!(expected.len(), 1000);
+    let scene = builder.finish();
+
+    let mut batching = renderer(&read_only_context, 1, (16, 16));
+    batching.build_asset_data(&scene);
+    batching.finish_object_ids();
+    let draw_list = batching.build_own_draw_list();
+    let batches: Vec<_> = draw_list
+        .iter()
+        .map(|batch| (batch.mat_id, batch.mesh_id, batch.instances.clone()))
+        .collect();
+    assert_eq!(
+        batches,
+        vec![(material.id(), cube.id(), 0..1000)],
+        "every instance of the mesh is drawn by one batch"
+    );
+
+    let (camera, camera_transform) = front_camera(1.0, 110.0);
+    let mut renderer = renderer(&read_only_context, 1, (VIEWPORT, VIEWPORT));
+    renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
+    for (index, (position, uuid)) in expected.iter().enumerate() {
+        let (x, y) = project(&camera, &camera_transform, *position, (VIEWPORT, VIEWPORT));
+        assert_eq!(
+            renderer.pick_game_object(x, y),
+            Some(*uuid),
+            "instance {index} was not drawn at its transform"
+        );
+    }
+}
+
+/// Whether the test device can render to and resolve `format` at `samples`.
+fn supports_samples(
+    render_context: &RenderContext,
+    format: wgpu::TextureFormat,
+    samples: u32,
+    resolve: bool,
+) -> bool {
+    let features = render_context.device().features();
+    let format_features =
+        if features.contains(wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES) {
+            test_adapter().get_texture_format_features(format)
+        } else {
+            format.guaranteed_format_features(features)
+        };
+    format_features.flags.sample_count_supported(samples)
+        && (!resolve
+            || format_features
+                .flags
+                .contains(wgpu::TextureFormatFeatureFlags::MULTISAMPLE_RESOLVE))
+}
+
+#[test]
+fn renders_and_resolves_a_frame_at_four_samples() {
+    const SAMPLES: u32 = 4;
+    const SIZE: u32 = 64;
+    let assets = TestAssets::engine();
+    write_unlit_shader(&assets);
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    if !supports_samples(
+        &render_context,
+        wgpu::TextureFormat::Rgba16Float,
+        SAMPLES,
+        true,
+    ) || !supports_samples(
+        &render_context,
+        wgpu::TextureFormat::Depth32Float,
+        SAMPLES,
+        false,
+    ) {
+        eprintln!(
+            "skipping: test adapter {:?} cannot render Rgba16Float and Depth32Float at \
+                 {SAMPLES}x MSAA",
+            test_adapter().get_info().name
+        );
+        return;
+    }
+
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    // PBR meshes shade from the single-sample G-buffer, so the cube is
+    // a forward draw, whose edges are multisampled.
+    let material = unlit_material(
+        &read_only_context,
+        "test/msaa_material",
+        [0.0, 0.0, 0.0, 1.0],
+    );
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let game_object = builder.spawn("cube");
+    builder.add_component(
+        game_object,
+        ComponentMesh {
+            mesh: AssetRef::from_id(cube.id()),
+            material: AssetRef::from_id(material.id()),
+            ..Default::default()
+        },
+    );
+    // Rotated so its silhouette has diagonal edges that only partially
+    // cover the pixels they cross.
+    builder.set_transform(
+        game_object,
+        glm::rotation(30f32.to_radians(), &vec3(0.0, 0.0, 1.0)),
+    );
+    let uuid = builder.scene().uuid(game_object);
+    let scene = builder.finish();
+
+    let (camera, camera_transform) = front_camera(1.0, 5.0);
+    let mut renderer = SceneRenderer::new(
+        &read_only_context,
+        SceneRendererOptions {
+            samples: SAMPLES,
+            clear_color: Color32::WHITE,
+            ..Default::default()
+        },
+        (SIZE, SIZE),
+    )
+    .expect("scene renderer should load its assets");
+    renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
+    renderer.finalize_scene();
+
+    let mut readback = renderer
+        .submit_scene_texture_readback()
+        .expect("scene texture has a size");
+    let image = loop {
+        let _ = render_context.device().poll(wgpu::Maintain::Wait);
+        match readback.try_finish(&render_context) {
+            ReadbackPoll::Pending => continue,
+            ReadbackPoll::Ready(image) => break image,
+            ReadbackPoll::Failed(error) => panic!("scene readback failed: {error}"),
+        }
+    };
+    // The unlit cube is black on the white clear color, so only a resolve,
+    // which averages an edge pixel's covered and uncovered samples, gives
+    // a grey; a copy keeps a single sample's black or white.
+    let background = image.get_pixel(0, 0)[0];
+    let cube = image.get_pixel(SIZE / 2, SIZE / 2)[0];
+    // White through the default ACES curve, which maps 1.0 to about 0.619.
+    let white = linear_to_srgb(0.619);
+    assert!(
+        background.abs_diff(white) <= 1,
+        "the corner should keep the tone-mapped clear color {white}, got {background}"
+    );
+    assert!(cube < 128, "the cube should cover the center, got {cube}");
+    let edge_pixels = image
+        .pixels()
+        .filter(|pixel| pixel[0] > cube + 8 && pixel[0] < background - 8)
+        .count();
+    assert!(
+        edge_pixels > 0,
+        "no pixel along the cube's edges blends it with the background, so the \
+             {SAMPLES} samples were not resolved"
+    );
+    assert_eq!(renderer.pick_game_object(SIZE / 2, SIZE / 2), Some(uuid));
+}
+
+/// Writes a `size` by `size` HDR image of one color to `path`.
+fn write_test_hdr(path: &Path, size: usize) {
+    std::fs::create_dir_all(path.parent().expect("hdr path has a parent"))
+        .expect("failed to create skybox directory");
+    let file = std::fs::File::create(path).expect("failed to create hdr file");
+    let pixels = vec![image::Rgb([0.2f32, 0.4, 0.8]); size * size];
+    image::codecs::hdr::HdrEncoder::new(std::io::BufWriter::new(file))
+        .encode(&pixels, size, size)
+        .expect("failed to encode hdr file");
+}
+
+#[test]
+fn sky_light_skybox_loads_in_the_background_instead_of_stalling_a_frame() {
+    // HDR skyboxes upload as Rgba32Float, which the editor's device filters
+    // through FLOAT32_FILTERABLE.
+    if !crate::test_support::test_render_context()
+        .device()
+        .features()
+        .contains(wgpu::Features::FLOAT32_FILTERABLE)
+    {
+        eprintln!("skipping: the test adapter cannot filter Rgba32Float skyboxes");
+        return;
+    }
+    let assets = TestAssets::engine();
+    write_test_hdr(&assets.engine_root().join("skyboxes/test_sky.hdr"), 64);
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let skybox_id = read_only_context
+        .registries
+        .assets
+        .read()
+        .asset_id("skyboxes/test_sky")
+        .expect("test skybox should have metadata");
+
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    let sky = builder.spawn("sky");
+    builder.add_component(
+        sky,
+        ComponentSkyLight {
+            skybox: AssetRef::from_id(skybox_id),
+            ..Default::default()
+        },
+    );
+    let scene = builder.finish();
+    let (camera, camera_transform) = front_camera(1.0, 5.0);
+    let mut renderer = renderer(&read_only_context, 1, (64, 64));
+
+    renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
+    assert_eq!(
+        renderer.skybox_renderer.skybox_id(),
+        None,
+        "the first frame must render without waiting for the skybox to load"
+    );
+
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while renderer.skybox_renderer.skybox_id().is_none() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the skybox never finished loading"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(10));
+        renderer.render_scene_base(&camera, &camera_transform, &scene, None, None);
+    }
+    assert_eq!(renderer.skybox_renderer.skybox_id(), Some(skybox_id));
+    let skybox = read_only_context
+        .registries
+        .assets
+        .read()
+        .loaded_by_id::<Skybox>(skybox_id)
+        .expect("the loaded skybox should be cached");
+    assert!(
+        !skybox.read().dirty,
+        "the frame that selected the skybox should have prepared its maps"
+    );
+}
+
+/// What one frame of [`shadow_frames`] saw: the red channel at each
+/// sampled point, what the shadow pass drew, and which maps exist.
+struct ShadowFrame<const N: usize> {
+    pixels: [u8; N],
+    stats: ShadowFrameStats,
+    allocated: (bool, bool),
+}
+
+/// An edit to a [`shadow_frames`] scene between two frames, given the
+/// objects its build returned.
+type ShadowEdit = Box<dyn FnOnce(&mut Scene, &[GameObject])>;
+
+/// The camera of the shadow tests: 8 units straight above the origin,
+/// looking down.
+fn overhead_camera() -> (Camera, Transform) {
+    let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+    let transform = Transform::from_components(
+        vec3(0.0, 8.0, 0.0),
+        UnitQuaternion::face_towards(&vec3(0.0, -1.0, 0.0), &vec3(0.0, 0.0, 1.0)),
+        vec3(1.0, 1.0, 1.0),
+    );
+    (camera, transform)
+}
+
+/// The rotation that points a light's +Z along `direction`.
+fn pointing(direction: Vec3) -> Mat4 {
+    glm::quat_to_mat4(
+        &UnitQuaternion::rotation_between(&Vec3::z(), &direction.normalize())
+            .expect("a direction off -Z"),
+    )
+}
+
+/// Spawns a cube of `scale` at `position` that casts shadows.
+fn spawn_box(
+    builder: &mut SceneBuilder,
+    name: &str,
+    cube: &Ref<Mesh>,
+    material: &Ref<Material>,
+    position: Vec3,
+    scale: Vec3,
+) -> GameObject {
+    let object = builder.spawn(name);
+    builder.add_component(
+        object,
+        ComponentMesh {
+            mesh: AssetRef::from_id(cube.id()),
+            material: AssetRef::from_id(material.id()),
+            ..Default::default()
+        },
+    );
+    builder.set_transform(object, glm::translation(&position) * glm::scaling(&scale));
+    object
+}
+
+/// Spawns a shadow-casting sun travelling along `direction`.
+fn spawn_sun(builder: &mut SceneBuilder, direction: Vec3) -> GameObject {
+    let sun = builder.spawn("sun");
+    builder.add_component(
+        sun,
+        crate::component::ComponentDirectionalLight {
+            intensity: 3.0,
+            cast_shadows: true,
+            ..Default::default()
+        },
+    );
+    builder.set_transform(sun, pointing(direction));
+    sun
+}
+
+/// Renders, from [`overhead_camera`], a ground plane whose top face is at
+/// y = 0.05 spanning -4..4 in X and Z, plus whatever `build` adds, then
+/// renders again after each of `edits`. `build` returns the objects the
+/// edits change.
+fn shadow_frames<const N: usize>(
+    shadows: bool,
+    build: impl FnOnce(
+        &mut SceneBuilder,
+        &ReadOnlyAssetContext,
+        &Ref<Mesh>,
+        &Ref<Material>,
+    ) -> Vec<GameObject>,
+    points: [Vec3; N],
+    edits: Vec<ShadowEdit>,
+) -> Vec<ShadowFrame<N>> {
+    const SIZE: (u32, u32) = (128, 128);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/shadows");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_box(
+        &mut builder,
+        "ground",
+        &cube,
+        &material,
+        Vec3::zeros(),
+        // The cube mesh spans -0.5..0.5.
+        vec3(8.0, 0.1, 8.0),
+    );
+    let objects = build(&mut builder, &read_only_context, &cube, &material);
+    let mut scene = builder.finish();
+    let (camera, transform) = overhead_camera();
+    let mut renderer = SceneRenderer::new(
+        &read_only_context,
+        SceneRendererOptions {
+            clear_color: Color32::BLACK,
+            shadows,
+            ..Default::default()
+        },
+        SIZE,
+    )
+    .expect("scene renderer should load its assets");
+    let frame = |renderer: &mut SceneRenderer, scene: &Scene| {
+        renderer.render_scene_base(&camera, &transform, scene, None, None);
+        renderer.finalize_scene();
+        let image = read_scene_texture(renderer, &render_context);
+        ShadowFrame {
+            pixels: points.map(|point| {
+                let (x, y) = project(&camera, &transform, point, SIZE);
+                image.get_pixel(x, y).0[0]
+            }),
+            stats: renderer.shadow_stats(),
+            allocated: renderer.shadow_maps_allocated(),
+        }
+    };
+    let mut frames = vec![frame(&mut renderer, &scene)];
+    for edit in edits {
+        edit(&mut scene, &objects);
+        frames.push(frame(&mut renderer, &scene));
+    }
+    frames
+}
+
+/// A sun at 45 degrees along +X over a box hovering at y = 1.5: the
+/// box's shadow centers on (1.45, 0.05, 0), clear of the box as the
+/// overhead camera sees it, and (-1.5, 0.05, 0) is in full light.
+fn sun_over_box(
+    builder: &mut SceneBuilder,
+    _: &ReadOnlyAssetContext,
+    cube: &Ref<Mesh>,
+    material: &Ref<Material>,
+) -> Vec<GameObject> {
+    let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+    let occluder = spawn_box(
+        builder,
+        "box",
+        cube,
+        material,
+        vec3(0.0, 1.5, 0.0),
+        Vec3::repeat(1.0),
+    );
+    vec![sun, occluder]
+}
+
+const BOX_SHADOW: Vec3 = Vec3::new(1.45, 0.05, 0.0);
+const BOX_LIT: Vec3 = Vec3::new(-1.5, 0.05, 0.0);
+
+#[test]
+fn a_box_over_a_plane_darkens_the_plane_where_it_occludes_the_sun() {
+    let frames = shadow_frames(true, sun_over_box, [BOX_SHADOW, BOX_LIT], vec![]);
+    let [shadowed, lit] = frames[0].pixels;
+    assert!(lit > 40, "the plane is lit away from the box, got {lit}");
+    assert!(
+        shadowed <= 2,
+        "the box's shadow keeps the sun off the plane: {shadowed}, lit {lit}"
+    );
+    assert_eq!(frames[0].stats.cascades, SHADOW_CASCADE_COUNT);
+    assert_eq!(
+        frames[0].allocated,
+        (true, false),
+        "no spot light, no atlas"
+    );
+
+    let [unshadowed, lit_without] =
+        shadow_frames(false, sun_over_box, [BOX_SHADOW, BOX_LIT], vec![])[0].pixels;
+    assert!(
+        unshadowed.abs_diff(lit) <= 2 && lit_without.abs_diff(lit) <= 2,
+        "with shadows off the plane is lit everywhere: {unshadowed} and {lit_without}, \
+             against {lit}"
+    );
+}
+
+#[test]
+fn a_plane_facing_the_light_is_lit_evenly_with_no_acne() {
+    let points: [Vec3; 25] = std::array::from_fn(|i| {
+        vec3(
+            -3.0 + 1.5 * (i % 5) as f32,
+            0.05,
+            -3.0 + 1.5 * (i / 5) as f32,
+        )
+    });
+    let tilted = vec3(30f32.to_radians().sin(), -30f32.to_radians().cos(), 0.0);
+    let build = |builder: &mut SceneBuilder,
+                 _: &ReadOnlyAssetContext,
+                 _: &Ref<Mesh>,
+                 _: &Ref<Material>| { vec![spawn_sun(builder, tilted)] };
+    let with = shadow_frames(true, build, points, vec![]);
+    let without = shadow_frames(false, build, points, vec![]);
+    let reference = without[0].pixels[12];
+    assert!(reference > 40, "the plane is lit, got {reference}");
+    for (i, (on, off)) in with[0].pixels.iter().zip(without[0].pixels).enumerate() {
+        assert!(
+            off > 40,
+            "point {i} at {} is on the lit plane, got {off}",
+            points[i]
+        );
+        assert!(
+            on.abs_diff(off) <= 2,
+            "point {i} at {} shadows itself: {on} with shadows, {off} without",
+            points[i]
+        );
+    }
+}
+
+#[test]
+fn each_spot_light_shadow_lands_in_its_own_tile() {
+    // Two spot lights 3 units up at x = -2 and x = 2, pointing down, each
+    // with a box between it and the plane on the side towards the
+    // center. A box's shadow falls 1 unit from its light towards the
+    // center, and the point 1 unit away on the other side is lit.
+    let build = |builder: &mut SceneBuilder,
+                 _: &ReadOnlyAssetContext,
+                 cube: &Ref<Mesh>,
+                 material: &Ref<Material>| {
+        for (i, x) in [-2.0f32, 2.0].into_iter().enumerate() {
+            let spot = builder.spawn(format!("spot {i}"));
+            builder.add_component(
+                spot,
+                crate::component::ComponentSpotLight {
+                    intensity: 30.0,
+                    range: 10.0,
+                    inner_angle: 35.0,
+                    outer_angle: 40.0,
+                    cast_shadows: true,
+                    ..Default::default()
+                },
+            );
+            builder.set_transform(
+                spot,
+                glm::translation(&vec3(x, 3.0, 0.0)) * pointing(-Vec3::y()),
+            );
+            let toward_center = -x.signum();
+            spawn_box(
+                builder,
+                &format!("box {i}"),
+                cube,
+                material,
+                vec3(x + 0.4 * toward_center, 1.5, 0.0),
+                Vec3::repeat(0.5),
+            );
+        }
+        vec![]
+    };
+    let points = [
+        vec3(-1.0, 0.05, 0.0),
+        vec3(-3.0, 0.05, 0.0),
+        vec3(1.0, 0.05, 0.0),
+        vec3(3.0, 0.05, 0.0),
+    ];
+    let frame = &shadow_frames(true, build, points, vec![])[0];
+    let [left_shadow, left_lit, right_shadow, right_lit] = frame.pixels;
+    assert_eq!(frame.stats.spot_tiles, 2);
+    assert_eq!(frame.allocated, (false, true), "no sun, no cascades");
+    for (side, shadowed, lit) in [
+        ("left", left_shadow, left_lit),
+        ("right", right_shadow, right_lit),
+    ] {
+        assert!(
+            lit > 40,
+            "the {side} spot light lights the plane, got {lit}"
+        );
+        assert!(
+            shadowed <= 2,
+            "the {side} box shadows its spot light: {shadowed}, lit {lit}"
+        );
+    }
+    let unshadowed = shadow_frames(false, build, points, vec![])[0].pixels;
+    assert!(
+        unshadowed[0].abs_diff(left_lit) <= 2 && unshadowed[2].abs_diff(right_lit) <= 2,
+        "without shadows both sides are lit: {unshadowed:?}, against {left_lit} and \
+             {right_lit}"
+    );
+    assert!(
+        unshadowed[1].abs_diff(left_lit) <= 2,
+        "the lit side has no acne: {} without shadows, {left_lit} with",
+        unshadowed[1]
+    );
+}
+
+#[test]
+fn a_caster_beyond_a_cascades_depth_range_towards_the_light_still_casts() {
+    if !test_adapter()
+        .features()
+        .contains(wgpu::Features::DEPTH_CLIP_CONTROL)
+    {
+        eprintln!("skipping: the test adapter cannot clamp depth");
+        return;
+    }
+    // The sun of `sun_over_box`, with its box 300 units up the beam from
+    // `BOX_SHADOW`: further towards the light than any cascade's depth
+    // range reaches past its sphere (the default shadow distance, 50),
+    // and out of the camera's view, like a mountain or a sky dome
+    // seen from a valley.
+    let far_box = |builder: &mut SceneBuilder,
+                   _: &ReadOnlyAssetContext,
+                   cube: &Ref<Mesh>,
+                   material: &Ref<Material>| {
+        let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+        let up_the_beam = vec3(-1.0, 1.0, 0.0).normalize() * 300.0;
+        let occluder = spawn_box(
+            builder,
+            "far box",
+            cube,
+            material,
+            BOX_SHADOW + up_the_beam,
+            Vec3::repeat(2.0),
+        );
+        vec![sun, occluder]
+    };
+    let [shadowed, lit] = shadow_frames(true, far_box, [BOX_SHADOW, BOX_LIT], vec![])[0].pixels;
+    assert!(lit > 40, "the plane is lit away from the box, got {lit}");
+    assert!(
+        shadowed <= 2,
+        "the far box shadows the plane as a near one does: {shadowed}, lit {lit}"
+    );
+}
+
+#[test]
+fn a_static_batch_outside_every_cascade_draws_into_none_of_them() {
+    // The box of `sun_over_box`, which merges with the ground into one
+    // static batch, and a box 300 units off to the side of the sun's
+    // beam, in a chunk, and so a batch, of its own: no cascade's view
+    // reaches it, so no cascade draws it.
+    let off_to_the_side = |builder: &mut SceneBuilder,
+                           context: &ReadOnlyAssetContext,
+                           cube: &Ref<Mesh>,
+                           material: &Ref<Material>| {
+        let mut objects = sun_over_box(builder, context, cube, material);
+        objects.push(spawn_box(
+            builder,
+            "distant box",
+            cube,
+            material,
+            vec3(0.0, 1.5, 300.0),
+            Vec3::repeat(1.0),
+        ));
+        objects
+    };
+    let frames = shadow_frames(true, off_to_the_side, [BOX_SHADOW, BOX_LIT], vec![]);
+    let [shadowed, lit] = frames[0].pixels;
+    assert!(
+        shadowed <= 2 && lit > 40,
+        "the near box still shadows the plane: {shadowed}, lit {lit}"
+    );
+    assert_eq!(
+        frames[0].stats.caster_instances, SHADOW_CASCADE_COUNT as u32,
+        "only the ground and near box's batch draws, once per cascade"
+    );
+}
+
+#[test]
+fn a_mesh_that_casts_no_shadow_or_is_disabled_drops_out_of_the_shadow_pass() {
+    let set_cast = |cast_shadows: bool| -> ShadowEdit {
+        Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+            scene
+                .write_component::<ComponentMesh, _>(objects[1], |mesh| {
+                    mesh.cast_shadows = cast_shadows
+                })
+                .expect("the box has a mesh");
+        })
+    };
+    let set_enabled = |enabled: bool| -> ShadowEdit {
+        Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+            assert!(scene.set_component_enabled::<ComponentMesh>(objects[1], enabled));
+        })
+    };
+    let frames = shadow_frames(
+        true,
+        sun_over_box,
+        [BOX_SHADOW],
+        vec![
+            set_cast(false),
+            set_cast(true),
+            set_enabled(false),
+            set_enabled(true),
+        ],
+    );
+    let shadowed = |frame: &ShadowFrame<1>| frame.pixels[0] <= 2;
+    // At first the ground and the box merge into one static batch; once
+    // edited, the box draws as its own instance, in each cascade.
+    let merged = SHADOW_CASCADE_COUNT as u32;
+    let both = 2 * SHADOW_CASCADE_COUNT as u32;
+    let ground_only = SHADOW_CASCADE_COUNT as u32;
+    assert!(shadowed(&frames[0]));
+    assert_eq!(frames[0].stats.caster_instances, merged);
+    assert!(
+        !shadowed(&frames[1]),
+        "a box that casts no shadow leaves the plane lit"
+    );
+    assert_eq!(frames[1].stats.caster_instances, ground_only);
+    assert!(shadowed(&frames[2]), "casting again, it shadows again");
+    assert_eq!(frames[2].stats.caster_instances, both);
+    assert!(!shadowed(&frames[3]), "a disabled box casts no shadow");
+    assert_eq!(frames[3].stats.caster_instances, ground_only);
+    assert!(shadowed(&frames[4]), "re-enabled, it shadows again");
+    assert_eq!(frames[4].stats.caster_instances, both);
+}
+
+#[test]
+fn a_disabled_or_unshadowed_sun_frees_its_cascades_until_it_casts_again() {
+    let set_enabled = |enabled: bool| -> ShadowEdit {
+        Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+            assert!(
+                scene.set_component_enabled::<crate::component::ComponentDirectionalLight>(
+                    objects[0], enabled
+                )
+            );
+        })
+    };
+    let set_cast = |cast_shadows: bool| -> ShadowEdit {
+        Box::new(move |scene: &mut Scene, objects: &[GameObject]| {
+            scene
+                .write_component::<crate::component::ComponentDirectionalLight, _>(
+                    objects[0],
+                    |sun| sun.cast_shadows = cast_shadows,
+                )
+                .expect("the sun has a light");
+        })
+    };
+    let frames = shadow_frames(
+        true,
+        sun_over_box,
+        [BOX_SHADOW],
+        vec![
+            set_enabled(false),
+            set_enabled(true),
+            set_cast(false),
+            set_cast(true),
+        ],
+    );
+    let allocated: Vec<_> = frames.iter().map(|frame| frame.allocated.0).collect();
+    assert_eq!(allocated, [true, false, true, false, true]);
+    let cascades: Vec<_> = frames.iter().map(|frame| frame.stats.cascades).collect();
+    let all = SHADOW_CASCADE_COUNT;
+    assert_eq!(cascades, [all, 0, all, 0, all]);
+    assert!(
+        frames[2].pixels[0] <= 2,
+        "re-enabled, the sun is shadowed again"
+    );
+
+    // A renderer with shadows off gathers no caster and allocates nothing.
+    let off = &shadow_frames(false, sun_over_box, [BOX_SHADOW], vec![])[0];
+    assert_eq!(off.allocated, (false, false));
+    assert_eq!(off.stats, ShadowFrameStats::default());
+}
+
+/// The box of `sun_over_box` in a PBR material that discards fragments
+/// whose alpha is below 0.5, with base color alpha `alpha`.
+fn masked_box_shadow(alpha: f32) -> u8 {
+    let frames = shadow_frames(
+        true,
+        move |builder, context, cube, _| {
+            let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+            let material = pbr_material(context, &format!("test/masked_{alpha}"));
+            {
+                let mut material = material.write();
+                assert!(material.set_variable(
+                    "base_color_factor",
+                    ShaderVariableValue::Color([1.0, 1.0, 1.0, alpha])
+                ));
+                assert!(material.set_variable("alpha_cutoff", ShaderVariableValue::Float(0.5)));
+            }
+            spawn_box(
+                builder,
+                "box",
+                cube,
+                &material,
+                vec3(0.0, 1.5, 0.0),
+                Vec3::repeat(1.0),
+            );
+            vec![sun]
+        },
+        [BOX_SHADOW],
+        vec![],
+    );
+    frames[0].pixels[0]
+}
+
+#[test]
+fn an_alpha_masked_material_casts_no_shadow_where_it_is_discarded() {
+    let opaque = masked_box_shadow(1.0);
+    let discarded = masked_box_shadow(0.25);
+    assert!(
+        opaque <= 2,
+        "a kept masked surface casts its shadow, got {opaque}"
+    );
+    assert!(
+        discarded > 40,
+        "a fully discarded surface casts no shadow, got {discarded}"
+    );
+}
+
+#[test]
+fn a_skinned_mesh_casts_its_posed_shadow() {
+    // The mesh models a unit cube at the origin; its bone poses it at
+    // y = 1.5, where the box of `sun_over_box` hovers. Only the
+    // posed cube stands between the sun and `BOX_SHADOW`.
+    let frames = shadow_frames(
+        true,
+        |builder, context, _, material| {
+            let sun = spawn_sun(builder, vec3(1.0, -1.0, 0.0));
+            let mesh = skinned_cube(context, "test/shadow_skinned", "hip", Mat4::identity());
+            let hip = glm::translation(&vec3(0.0, 1.5, 0.0));
+            spawn_skinned_model(builder, &mesh, material, Mat4::identity(), hip, Vec::new());
+            vec![sun]
+        },
+        [BOX_SHADOW, BOX_LIT],
+        vec![],
+    );
+    let [shadowed, lit] = frames[0].pixels;
+    assert!(lit > 40, "the plane is lit away from the cube, got {lit}");
+    assert!(
+        shadowed <= 2,
+        "the posed cube shadows the plane: {shadowed}, lit {lit}"
+    );
+}
+/// The texel at `(x, y)` of `texture`, as its bytes.
+fn read_texel(render_context: &RenderContext, texture: &Texture, (x, y): (u32, u32)) -> Vec<u8> {
+    let device = render_context.device();
+    let size = texture
+        .descriptor
+        .format
+        .block_copy_size(None)
+        .expect("a color format has a texel size");
+    let buffer = device.create_buffer(&wgpu::BufferDescriptor {
+        label: Some("texel_readback"),
+        size: wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64,
+        usage: wgpu::BufferUsages::COPY_DST | wgpu::BufferUsages::MAP_READ,
+        mapped_at_creation: false,
+    });
+    let mut encoder = device.create_command_encoder(&Default::default());
+    encoder.copy_texture_to_buffer(
+        wgpu::TexelCopyTextureInfo {
+            texture: &texture.texture,
+            mip_level: 0,
+            origin: wgpu::Origin3d { x, y, z: 0 },
+            aspect: wgpu::TextureAspect::All,
+        },
+        wgpu::TexelCopyBufferInfo {
+            buffer: &buffer,
+            layout: wgpu::TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT),
+                rows_per_image: Some(1),
+            },
+        },
+        wgpu::Extent3d {
+            width: 1,
+            height: 1,
+            depth_or_array_layers: 1,
+        },
+    );
+    render_context.queue().submit(Some(encoder.finish()));
+    let slice = buffer.slice(..);
+    slice.map_async(wgpu::MapMode::Read, |result| result.expect("map failed"));
+    let _ = device.poll(wgpu::Maintain::Wait);
+    let bytes = slice.get_mapped_range()[..size as usize].to_vec();
+    buffer.unmap();
+    bytes
+}
+
+/// The four half floats of an `Rgba16Float` texel.
+fn halves(bytes: &[u8]) -> [f32; 4] {
+    std::array::from_fn(|i| half_to_f32(u16::from_le_bytes([bytes[2 * i], bytes[2 * i + 1]])))
+}
+
+/// The unit vector whose octahedral encoding is `(x, y)`, as
+/// `docs/design/rendering/gbuffer.md` defines it.
+fn octahedral_decode(x: f32, y: f32) -> Vec3 {
+    let mut n = vec3(x, y, 1.0 - x.abs() - y.abs());
+    let fold = (-n.z).clamp(0.0, 1.0);
+    n.x += if n.x >= 0.0 { -fold } else { fold };
+    n.y += if n.y >= 0.0 { -fold } else { fold };
+    n.normalize()
+}
+
+fn assert_near(actual: Vec3, expected: Vec3, what: &str) {
+    assert!(
+        (actual - expected).norm() < 0.01,
+        "{what}: expected {expected:?}, got {actual:?}"
+    );
+}
+
+fn assert_bytes_near(actual: &[u8], expected: &[u8], what: &str) {
+    assert!(
+        actual
+            .iter()
+            .zip(expected)
+            .all(|(a, b)| a.abs_diff(*b) <= 1),
+        "{what}: expected {expected:?}, got {actual:?}"
+    );
+}
+
+/// The material of the G-buffer tests: every input the geometry pass
+/// writes set to a distinct value.
+fn gbuffer_material(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
+    let material = pbr_material(context, name);
+    {
+        let mut material = material.write();
+        for (variable, value) in [
+            (
+                "base_color_factor",
+                ShaderVariableValue::Color([0.8, 0.4, 0.2, 1.0]),
+            ),
+            ("metallic", ShaderVariableValue::Float(0.25)),
+            ("roughness", ShaderVariableValue::Float(0.5)),
+            ("ambient_occlusion", ShaderVariableValue::Float(0.75)),
+            (
+                "emission_color",
+                ShaderVariableValue::Color([1.0, 0.5, 0.0, 1.0]),
+            ),
+            ("emission_strength", ShaderVariableValue::Float(2.0)),
+        ] {
+            assert!(material.set_variable(variable, value), "{variable}");
+        }
+    }
+    material
+}
+
+/// The sRGB bytes of [`gbuffer_material`]'s base color.
+fn gbuffer_albedo_bytes() -> [u8; 3] {
+    [0.8, 0.4, 0.2].map(linear_to_srgb)
+}
+
+/// The plane of the G-buffer tests: a thin box in front of the camera
+/// of `front_camera`, turned 30 degrees about Y, so its face towards the
+/// camera has the normal `(-sin 30, 0, -cos 30)`.
+fn spawn_turned_plane(builder: &mut SceneBuilder, mesh: &Ref<Mesh>, material: &Ref<Material>) {
+    let plane = builder.spawn("plane");
+    builder.add_component(
+        plane,
+        ComponentMesh {
+            mesh: AssetRef::from_id(mesh.id()),
+            material: AssetRef::from_id(material.id()),
+            ..Default::default()
+        },
+    );
+    builder.set_transform(
+        plane,
+        glm::rotation(30f32.to_radians(), &Vec3::y()) * glm::scaling(&vec3(2.0, 2.0, 0.05)),
+    );
+}
+
+/// The normal of [`spawn_turned_plane`]'s face towards the camera, in
+/// the view space of `front_camera`, which looks down +Z unrotated.
+fn turned_plane_normal() -> Vec3 {
+    vec3(-30f32.to_radians().sin(), 0.0, -30f32.to_radians().cos())
+}
+
+/// Renders `scene` from `front_camera` with `view` selected and returns
+/// the renderer.
+fn render_gbuffer(
+    context: &ReadOnlyAssetContext,
+    scene: &Scene,
+    samples: u32,
+    size: (u32, u32),
+    view: Option<GBufferView>,
+) -> SceneRenderer {
+    let mut renderer = SceneRenderer::new(
+        context,
+        SceneRendererOptions {
+            samples,
+            clear_color: Color32::BLACK,
+            gbuffer_view: view,
+            ..Default::default()
+        },
+        size,
+    )
+    .expect("scene renderer should load its assets");
+    let (camera, transform) = front_camera(1.0, 5.0);
+    renderer.render_scene_base(&camera, &transform, scene, None, None);
+    renderer.finalize_scene();
+    renderer
+}
+
+#[test]
+fn the_gbuffer_holds_a_planes_albedo_normals_material_and_emission() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = gbuffer_material(&read_only_context, "test/gbuffer_plane");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_turned_plane(&mut builder, &cube, &material);
+    let scene = builder.finish();
+    let center = (SIZE.0 / 2, SIZE.1 / 2);
+
+    for samples in [1, 4] {
+        if !supports_samples(
+            &render_context,
+            wgpu::TextureFormat::Rgba16Float,
+            samples,
+            true,
+        ) {
+            continue;
+        }
+        let renderer = render_gbuffer(
+            &read_only_context,
+            &scene,
+            samples,
+            SIZE,
+            Some(GBufferView::Albedo),
+        );
+        let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+        assert_eq!(gbuffer.size(), SIZE);
+
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_bytes_near(&albedo[..3], &gbuffer_albedo_bytes(), "albedo");
+        assert_eq!(albedo[3], 255, "a drawn surface marks its albedo alpha");
+        let corner = read_texel(&render_context, &gbuffer.albedo, (0, 0));
+        assert_eq!(corner, [0, 0, 0, 0], "nothing is drawn at the corner");
+
+        let [sx, sy, gx, gy] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+        assert_near(
+            octahedral_decode(sx, sy),
+            turned_plane_normal(),
+            &format!("shading normal at {samples} samples"),
+        );
+        assert_near(
+            octahedral_decode(gx, gy),
+            turned_plane_normal(),
+            &format!("geometric normal at {samples} samples"),
+        );
+
+        let surface = read_texel(&render_context, &gbuffer.material, center);
+        assert_bytes_near(
+            &surface[..3],
+            &[64, 128, 191],
+            "metallic, roughness, occlusion",
+        );
+
+        let [r, g, b, _] = halves(&read_texel(&render_context, &gbuffer.emissive, center));
+        assert_near(vec3(r, g, b), vec3(2.0, 1.0, 0.0), "emission");
+    }
+}
+
+#[test]
+fn a_normal_map_bends_the_gbuffer_shading_normal_but_not_the_geometric_normal() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    // A tangent-space normal along the tangent, at half scale.
+    let material = pbr_material(&read_only_context, "test/gbuffer_normal_map");
+    {
+        let mut material = material.write();
+        assert!(material.set_variable(
+            "normal_texture",
+            ShaderVariableValue::Texture2D(MaterialTexture::Color([1.0, 0.5, 1.0, 1.0]))
+        ));
+        assert!(material.set_variable("normal_scale", ShaderVariableValue::Float(0.5)));
+    }
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut builder, "plane", &cube, &material, Vec3::zeros());
+    let scene = builder.finish();
+    let renderer = render_gbuffer(
+        &read_only_context,
+        &scene,
+        1,
+        SIZE,
+        Some(GBufferView::Normals),
+    );
+    let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+    let [sx, sy, gx, gy] = halves(&read_texel(
+        &render_context,
+        &gbuffer.normals,
+        (SIZE.0 / 2, SIZE.1 / 2),
+    ));
+    let geometric = octahedral_decode(gx, gy);
+    let shading = octahedral_decode(sx, sy);
+    assert_near(geometric, vec3(0.0, 0.0, -1.0), "geometric normal");
+    // The texel (1, 0.5, 1) is the tangent plus the normal; at half
+    // scale the normal tilts atan(0.5) towards the tangent, which lies
+    // in the face's plane.
+    let tilt = shading.xy().norm().atan2(-shading.z).to_degrees();
+    assert!(
+        (tilt - 0.5f32.atan().to_degrees()).abs() < 1.0,
+        "the shading normal tilts atan(0.5) along the tangent, got {shading:?}"
+    );
+}
+
+#[test]
+fn coplanar_meshes_keep_the_surface_the_lit_image_shows() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    // Two boxes in the same place, so every fragment of one ties in
+    // depth with the other's. Each glows in its own base color, so the
+    // lit image shows which one the forward pass kept.
+    let glowing = |name: &str, color: [f32; 4]| {
+        let material = pbr_material(&read_only_context, name);
+        {
+            let mut material = material.write();
+            for (variable, value) in [
+                ("base_color_factor", ShaderVariableValue::Color(color)),
+                ("emission_color", ShaderVariableValue::Color(color)),
+                ("emission_strength", ShaderVariableValue::Float(1.0)),
+            ] {
+                assert!(material.set_variable(variable, value), "{variable}");
+            }
+        }
+        material
+    };
+    let red = glowing("test/gbuffer_tie_red", [1.0, 0.0, 0.0, 1.0]);
+    let green = glowing("test/gbuffer_tie_green", [0.0, 1.0, 0.0, 1.0]);
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut builder, "red", &cube, &red, Vec3::zeros());
+    spawn_mesh(&mut builder, "green", &cube, &green, Vec3::zeros());
+    let scene = builder.finish();
+    let center = (SIZE.0 / 2, SIZE.1 / 2);
+
+    // The geometry pass draws the depth itself, at one sample into the
+    // scene depth and above one into its own.
+    for samples in [1, 4] {
+        if !supports_samples(
+            &render_context,
+            wgpu::TextureFormat::Rgba16Float,
+            samples,
+            true,
+        ) {
+            continue;
+        }
+        let lit = render_gbuffer(&read_only_context, &scene, samples, SIZE, None);
+        let lit = read_scene_texture(&lit, &render_context)
+            .get_pixel(center.0, center.1)
+            .0;
+        let renderer = render_gbuffer(
+            &read_only_context,
+            &scene,
+            samples,
+            SIZE,
+            Some(GBufferView::Albedo),
+        );
+        let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_ne!(
+            lit[0] > lit[1],
+            lit[1] > lit[0],
+            "the lit image is red or green at {samples} samples: {lit:?}"
+        );
+        assert_eq!(
+            albedo[0] > albedo[1],
+            lit[0] > lit[1],
+            "{samples} samples: the G-buffer holds the box the lit image shows: lit {lit:?}, \
+                 albedo {albedo:?}"
+        );
+    }
+}
+
+#[test]
+fn the_gbuffer_discards_the_fragments_an_alpha_cutoff_discards() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let behind = gbuffer_material(&read_only_context, "test/gbuffer_behind");
+    let masked = pbr_material(&read_only_context, "test/gbuffer_masked");
+    {
+        let mut masked = masked.write();
+        assert!(masked.set_variable(
+            "base_color_factor",
+            ShaderVariableValue::Color([0.0, 1.0, 0.0, 0.25])
+        ));
+        assert!(masked.set_variable("alpha_cutoff", ShaderVariableValue::Float(0.5)));
+    }
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut builder, "behind", &cube, &behind, vec3(0.0, 0.0, 3.0));
+    spawn_mesh(&mut builder, "masked", &cube, &masked, Vec3::zeros());
+    let scene = builder.finish();
+    let renderer = render_gbuffer(
+        &read_only_context,
+        &scene,
+        1,
+        SIZE,
+        Some(GBufferView::Albedo),
+    );
+    let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+    let albedo = read_texel(&render_context, &gbuffer.albedo, (SIZE.0 / 2, SIZE.1 / 2));
+    assert_bytes_near(
+        &albedo[..3],
+        &gbuffer_albedo_bytes(),
+        "the discarded box shows the box behind it",
+    );
+}
+
+#[test]
+fn a_skinned_mesh_writes_its_posed_normal_into_the_gbuffer() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let mesh = skinned_cube(
+        &read_only_context,
+        "test/gbuffer_skinned",
+        "hip",
+        Mat4::identity(),
+    );
+    let material = gbuffer_material(&read_only_context, "test/gbuffer_skinned_material");
+    // No animator and no palette: the rest pose, in which the bone's
+    // turn poses the cube.
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_skinned_model(
+        &mut builder,
+        &mesh,
+        &material,
+        Mat4::identity(),
+        glm::rotation(30f32.to_radians(), &Vec3::y()),
+        Vec::new(),
+    );
+    let scene = builder.finish();
+    let renderer = render_gbuffer(
+        &read_only_context,
+        &scene,
+        1,
+        SIZE,
+        Some(GBufferView::Normals),
+    );
+    let gbuffer = renderer.gbuffer().expect("the G-buffer is drawn");
+    let [sx, sy, gx, gy] = halves(&read_texel(
+        &render_context,
+        &gbuffer.normals,
+        (SIZE.0 / 2, SIZE.1 / 2),
+    ));
+    assert_near(
+        octahedral_decode(sx, sy),
+        turned_plane_normal(),
+        "shading normal",
+    );
+    assert_near(
+        octahedral_decode(gx, gy),
+        turned_plane_normal(),
+        "geometric normal",
+    );
+}
+
+#[test]
+fn every_frame_draws_the_gbuffer_which_resizes_with_the_scene() {
+    const SIZE: (u32, u32) = (16, 16);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = pbr_material(&read_only_context, "test/gbuffer_every_frame");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut builder, "box", &cube, &material, Vec3::zeros());
+    let scene = builder.finish();
+    let (camera, transform) = front_camera(1.0, 5.0);
+    let mut renderer = renderer(&read_only_context, 1, SIZE);
+    assert!(renderer.gbuffer().is_none(), "no G-buffer before a frame");
+    let frame = |renderer: &mut SceneRenderer| {
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+        (
+            renderer.gbuffer().map(GBufferTargets::size),
+            renderer.gbuffer_drawn_instances(),
+        )
+    };
+
+    assert_eq!(
+        frame(&mut renderer),
+        (Some(SIZE), 1),
+        "the lit frame draws the box into the G-buffer"
+    );
+    assert!(
+        !renderer.last_post_process_plan().passes.is_empty(),
+        "the lit image is post-processed"
+    );
+    renderer.options_mut().gbuffer_view = Some(GBufferView::Normals);
+    assert_eq!(
+        frame(&mut renderer),
+        (Some(SIZE), 1),
+        "a G-buffer view shows the same G-buffer"
+    );
+    renderer.resize_textures(24, 20);
+    assert_eq!(
+        renderer.gbuffer().map(GBufferTargets::size),
+        Some((24, 20)),
+        "the G-buffer resizes with the scene textures"
+    );
+    assert_eq!(frame(&mut renderer), (Some((24, 20)), 1));
+}
+
+#[test]
+fn the_scene_view_shows_each_gbuffer_target_in_place_of_the_lit_image() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = gbuffer_material(&read_only_context, "test/gbuffer_view");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_turned_plane(&mut builder, &cube, &material);
+    let scene = builder.finish();
+    let normal = turned_plane_normal().map(|axis| (axis * 0.5 + 0.5) * 255.0);
+    // Reinhard of the emission (2, 1, 0).
+    let emission = [2.0 / 3.0, 0.5, 0.0].map(linear_to_srgb);
+    for (view, expected) in [
+        (GBufferView::Albedo, gbuffer_albedo_bytes()),
+        (
+            GBufferView::Normals,
+            [normal.x, normal.y, normal.z].map(|value| value.round() as u8),
+        ),
+        (GBufferView::Material, [64, 128, 191]),
+        (GBufferView::Emissive, emission),
+    ] {
+        let renderer = render_gbuffer(&read_only_context, &scene, 1, SIZE, Some(view));
+        assert!(
+            renderer.last_post_process_plan().passes.is_empty(),
+            "{view:?}: the view replaces the post-processing chain"
+        );
+        let image = read_scene_texture(&renderer, &render_context);
+        assert_bytes_near(
+            &image.get_pixel(SIZE.0 / 2, SIZE.1 / 2).0[..3],
+            &expected,
+            view.label(),
+        );
+        assert_eq!(
+            image.get_pixel(0, 0).0,
+            [0, 0, 0, 255],
+            "{view:?}: where nothing is drawn the view is black"
+        );
+    }
+}
+
+/// What a [`GBufferInputsPass`] was handed when it recorded.
+#[derive(Default)]
+struct HandedInputs {
+    normals: Option<wgpu::Texture>,
+    albedo: Option<wgpu::Texture>,
+    depth: Option<wgpu::Texture>,
+}
+
+/// An `Hdr` pass that reads the G-buffer normals and albedo, records what
+/// the chain hands it and copies its input to its output.
+struct GBufferInputsPass {
+    handed: Arc<Mutex<HandedInputs>>,
+}
+
+impl PostProcessPass for GBufferInputsPass {
+    fn name(&self) -> &str {
+        "gbuffer_inputs"
+    }
+    fn stage(&self) -> PostProcessStage {
+        PostProcessStage::Hdr
+    }
+    fn inputs(&self) -> PassInputs {
+        SceneInput::Normals | SceneInput::Albedo
+    }
+    fn enabled(&self, _settings: &PostProcessSettings) -> bool {
+        true
+    }
+    fn prepare(&mut self, _context: &PassContext, _: &PostProcessSettings) {}
+    fn record(
+        &mut self,
+        _context: &PassContext,
+        encoder: &mut wgpu::CommandEncoder,
+        io: PassIo,
+    ) -> Result<(), NoPipeline> {
+        let mut handed = self.handed.lock().unwrap();
+        handed.normals = io.normals.map(|texture| texture.texture.clone());
+        handed.albedo = io.albedo.map(|texture| texture.texture.clone());
+        handed.depth = io.depth.map(|texture| texture.texture.clone());
+        encoder.copy_texture_to_texture(
+            io.input.texture.as_image_copy(),
+            io.output.texture.as_image_copy(),
+            io.output.descriptor.size,
+        );
+        Ok(())
+    }
+}
+
+#[test]
+fn a_pass_that_reads_normals_and_albedo_gets_the_gbuffers_targets() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let material = gbuffer_material(&read_only_context, "test/gbuffer_scene_inputs");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_turned_plane(&mut builder, &cube, &material);
+    let scene = builder.finish();
+    let center = (SIZE.0 / 2, SIZE.1 / 2);
+
+    for samples in [1, 4] {
+        if !supports_samples(
+            &render_context,
+            wgpu::TextureFormat::Rgba16Float,
+            samples,
+            true,
+        ) {
+            eprintln!("skipping {samples} samples: unsupported by the test adapter");
+            continue;
+        }
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples,
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        let handed = Arc::new(Mutex::new(HandedInputs::default()));
+        renderer
+            .post_process_mut()
+            .push(Box::new(GBufferInputsPass {
+                handed: handed.clone(),
+            }));
+        let (camera, transform) = front_camera(1.0, 5.0);
+        renderer.render_scene_base(&camera, &transform, &scene, None, None);
+        renderer.finalize_scene();
+
+        let plan = renderer.last_post_process_plan();
+        assert!(plan.skipped.is_empty(), "{:?}", plan.skipped);
+        assert!(plan.normals && plan.albedo, "the plan reads both");
+        let gbuffer = renderer.gbuffer().expect("the frame draws the G-buffer");
+        let handed = handed.lock().unwrap();
+        assert_eq!(
+            handed.normals.as_ref(),
+            Some(&gbuffer.normals.texture),
+            "the pass reads the G-buffer normals at {samples} samples"
+        );
+        assert_eq!(
+            handed.albedo.as_ref(),
+            Some(&gbuffer.albedo.texture),
+            "the pass reads the G-buffer albedo at {samples} samples"
+        );
+        assert_eq!(handed.depth, None, "the pass did not ask for depth");
+        assert_eq!(gbuffer.normals.descriptor.sample_count, 1);
+        assert_eq!(gbuffer.albedo.descriptor.sample_count, 1);
+
+        let [sx, sy, gx, gy] = halves(&read_texel(&render_context, &gbuffer.normals, center));
+        assert_near(
+            octahedral_decode(sx, sy),
+            turned_plane_normal(),
+            &format!("handed shading normal at {samples} samples"),
+        );
+        assert_near(
+            octahedral_decode(gx, gy),
+            turned_plane_normal(),
+            &format!("handed geometric normal at {samples} samples"),
+        );
+        let albedo = read_texel(&render_context, &gbuffer.albedo, center);
+        assert_bytes_near(&albedo[..3], &gbuffer_albedo_bytes(), "handed albedo");
+        assert_eq!(albedo[3], 255, "the surface marks its coverage");
+        let corner = read_texel(&render_context, &gbuffer.albedo, (0, 0));
+        assert_eq!(corner[3], 0, "no surface at the corner");
+    }
+}
+
+/// A PBR material registered as `name`, with each of `variables` set.
+fn pbr_material_with(
+    context: &ReadOnlyAssetContext,
+    name: &str,
+    variables: Vec<(&str, ShaderVariableValue)>,
+) -> Ref<Material> {
+    let material = pbr_material(context, name);
+    {
+        let mut material = material.write();
+        for (variable, value) in variables {
+            assert!(material.set_variable(variable, value), "{variable}");
+        }
+    }
+    material
+}
+
+/// A rough grey dielectric: base color 0.5, metallic 0, roughness 1.
+/// At roughness 1 the GGX distribution is 1/pi whatever the half vector.
+fn rough_grey(context: &ReadOnlyAssetContext, name: &str) -> Ref<Material> {
+    pbr_material_with(
+        context,
+        name,
+        vec![
+            (
+                "base_color_factor",
+                ShaderVariableValue::Color([0.5, 0.5, 0.5, 1.0]),
+            ),
+            ("metallic", ShaderVariableValue::Float(0.0)),
+            ("roughness", ShaderVariableValue::Float(1.0)),
+        ],
+    )
+}
+
+/// The radiance [`rough_grey`] reflects towards `v` from unit radiance
+/// arriving along `l` at a surface with normal `n`, worked out from the
+/// Cook-Torrance terms of `shaders/common/pbr_utils.wgsl`: at roughness 1,
+/// D = 1/pi and k = 1/2, so G1(x) = n.x / (n.x / 2 + 1/2); F is
+/// 0.04 + 0.96 (1 - v.h)^5; the diffuse term is (1 - F) albedo / pi.
+fn rough_grey_radiance(n: Vec3, v: Vec3, l: Vec3) -> f32 {
+    let albedo = 0.5;
+    let h = (v + l).normalize();
+    let n_dot_l = n.dot(&l).max(0.0);
+    let n_dot_v = n.dot(&v).max(0.0);
+    let g1 = |x: f32| x / (x * 0.5 + 0.5);
+    let f = 0.04 + 0.96 * (1.0 - v.dot(&h).clamp(0.0, 1.0)).powi(5);
+    let d = 1.0 / std::f32::consts::PI;
+    let specular = d * g1(n_dot_v) * g1(n_dot_l) * f / (4.0 * n_dot_v * n_dot_l).max(1e-6);
+    ((1.0 - f) * albedo / std::f32::consts::PI + specular) * n_dot_l
+}
+
+/// `light_distance_attenuation` of `shaders/common/lights.wgsl`, as its
+/// comment states it: saturate(1 - (d / r)^4)^2 / (d^2 + 1).
+fn distance_attenuation(distance: f32, range: f32) -> f32 {
+    let ratio = distance / range;
+    let window = (1.0 - ratio.powi(4)).clamp(0.0, 1.0);
+    window * window / (distance * distance + 1.0)
+}
+
+/// The linear HDR radiance the last frame shaded at `pixel`, as the
+/// post-processing chain reads it: the single-sample scene target, or its
+/// resolve above one sample.
+fn hdr_texel(renderer: &SceneRenderer, render_context: &RenderContext, pixel: (u32, u32)) -> Vec3 {
+    let texture = renderer
+        .hdr_resolved
+        .as_ref()
+        .unwrap_or(&renderer.scene_texture_msaa);
+    let [r, g, b, _] = halves(&read_texel(render_context, texture, pixel));
+    vec3(r, g, b)
+}
+
+/// Renders one frame of `scene` from `camera` at `samples` over a black
+/// clear color, with shadows, and returns the renderer.
+fn render_lit(
+    context: &ReadOnlyAssetContext,
+    scene: &Scene,
+    (camera, transform): &(Camera, Transform),
+    samples: u32,
+    size: (u32, u32),
+) -> SceneRenderer {
+    let mut renderer = SceneRenderer::new(
+        context,
+        SceneRendererOptions {
+            samples,
+            clear_color: Color32::BLACK,
+            shadows: true,
+            ..Default::default()
+        },
+        size,
+    )
+    .expect("scene renderer should load its assets");
+    renderer.render_scene_base(camera, transform, scene, None, None);
+    renderer.finalize_scene();
+    renderer
+}
+
+/// Whether `samples` can render, as the scene renderer's targets need.
+fn renders_at(render_context: &RenderContext, samples: u32) -> bool {
+    supports_samples(
+        render_context,
+        wgpu::TextureFormat::Rgba16Float,
+        samples,
+        true,
+    ) && supports_samples(
+        render_context,
+        wgpu::TextureFormat::Depth32Float,
+        samples,
+        false,
+    )
+}
+
+fn assert_radiance(actual: Vec3, expected: f32, what: &str) {
+    // The G-buffer stores the base color as sRGB bytes, 0.6% off at 0.5.
+    let tolerance = 0.02 * expected + 0.002;
+    assert!(
+        actual.iter().all(|c| (c - expected).abs() <= tolerance),
+        "{what}: expected {expected} in every channel, got {actual:?}"
+    );
+}
+
+/// The rough grey ground of [`overhead_camera`]'s scenes: top face at
+/// y = 0.05, spanning -4..4 in X and Z.
+fn spawn_rough_ground(builder: &mut SceneBuilder, context: &ReadOnlyAssetContext) {
+    let cube = context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let ground = rough_grey(context, "test/deferred_ground");
+    spawn_box(
+        builder,
+        "ground",
+        &cube,
+        &ground,
+        Vec3::zeros(),
+        vec3(8.0, 0.1, 8.0),
+    );
+}
+
+#[test]
+fn an_overhead_sun_and_a_point_light_light_a_rough_plane_to_their_known_radiance() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let camera = overhead_camera();
+    let center = (SIZE.0 / 2, SIZE.1 / 2);
+    let up = Vec3::y();
+
+    // The sun straight down: light, normal and view all along +Y at the
+    // center, so the radiance is 3 (0.96 * 0.5 + 0.04 / 4) / pi.
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_rough_ground(&mut builder, &read_only_context);
+    let sun = builder.spawn("sun");
+    builder.add_component(
+        sun,
+        crate::component::ComponentDirectionalLight {
+            intensity: 3.0,
+            ..Default::default()
+        },
+    );
+    builder.set_transform(sun, pointing(-Vec3::y()));
+    let sun_scene = builder.finish();
+    let sun_radiance = 3.0 * 0.49 / std::f32::consts::PI;
+    assert!((3.0 * rough_grey_radiance(up, up, up) - sun_radiance).abs() < 1e-6);
+
+    // A point light 2 units over the center, inside its range of 10.
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_rough_ground(&mut builder, &read_only_context);
+    let point = builder.spawn("point");
+    builder.add_component(
+        point,
+        crate::component::ComponentPointLight {
+            radius: 10.0,
+            color: Color32::WHITE,
+            intensity: 5.0,
+        },
+    );
+    builder.set_transform(point, glm::translation(&vec3(0.0, 2.05, 0.0)));
+    let point_scene = builder.finish();
+    let point_radiance = 5.0 * distance_attenuation(2.0, 10.0) * 0.49 / std::f32::consts::PI;
+
+    for samples in [1, 4] {
+        if !renders_at(&render_context, samples) {
+            continue;
+        }
+        for (scene, expected, what) in [
+            (&sun_scene, sun_radiance, "the overhead sun"),
+            (&point_scene, point_radiance, "the point light 2 units up"),
+        ] {
+            let renderer = render_lit(&read_only_context, scene, &camera, samples, SIZE);
+            assert_radiance(
+                hdr_texel(&renderer, &render_context, center),
+                expected,
+                &format!("{what} at {samples} samples"),
+            );
+            assert_eq!(
+                renderer.gbuffer_drawn_instances(),
+                1,
+                "the plane is shaded from the G-buffer"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_shadowed_point_is_unlit_and_an_unshadowed_one_gets_the_suns_known_radiance() {
+    const SIZE: (u32, u32) = (128, 128);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_rough_ground(&mut builder, &read_only_context);
+    let occluder = rough_grey(&read_only_context, "test/deferred_occluder");
+    sun_over_box(&mut builder, &read_only_context, &cube, &occluder);
+    let scene = builder.finish();
+    let camera = overhead_camera();
+    // `spawn_sun`'s sun: intensity 3 travelling along (1, -1, 0).
+    let l = vec3(-1.0, 1.0, 0.0).normalize();
+    let v = (camera.1.position - BOX_LIT).normalize();
+    let lit_radiance = 3.0 * rough_grey_radiance(Vec3::y(), v, l);
+
+    for samples in [1, 4] {
+        if !renders_at(&render_context, samples) {
+            continue;
+        }
+        let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+        let at = |point| {
+            hdr_texel(
+                &renderer,
+                &render_context,
+                project(&camera.0, &camera.1, point, SIZE),
+            )
+        };
+        assert_radiance(
+            at(BOX_LIT),
+            lit_radiance,
+            &format!("the unshadowed point at {samples} samples"),
+        );
+        let shadowed = at(BOX_SHADOW);
+        assert!(
+            shadowed.max() < 0.005,
+            "the box's shadow is unlit with no ambient light at {samples} samples, got \
+                 {shadowed:?}"
+        );
+    }
+}
+
+#[test]
+fn emission_shows_through_an_alpha_cutoff_hole_and_a_kept_cutout_covers_it() {
+    const SIZE: (u32, u32) = (64, 64);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    // Black base colors and no light: each pixel is its emission alone.
+    let glowing = |name: &str, color: [f32; 4], strength: f32, alpha: f32| {
+        pbr_material_with(
+            &read_only_context,
+            name,
+            vec![
+                (
+                    "base_color_factor",
+                    ShaderVariableValue::Color([0.0, 0.0, 0.0, alpha]),
+                ),
+                ("emission_color", ShaderVariableValue::Color(color)),
+                ("emission_strength", ShaderVariableValue::Float(strength)),
+                ("alpha_cutoff", ShaderVariableValue::Float(0.5)),
+            ],
+        )
+    };
+    let wall = glowing("test/deferred_wall", [0.0, 1.0, 0.0, 1.0], 2.0, 1.0);
+    let hole = glowing("test/deferred_hole", [1.0, 0.0, 0.0, 1.0], 1.0, 0.25);
+    let kept = glowing("test/deferred_kept", [0.0, 0.0, 1.0, 1.0], 0.5, 0.75);
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_box(
+        &mut builder,
+        "wall",
+        &cube,
+        &wall,
+        vec3(0.0, 0.0, 3.0),
+        vec3(4.0, 4.0, 0.1),
+    );
+    spawn_box(
+        &mut builder,
+        "hole",
+        &cube,
+        &hole,
+        vec3(-0.8, 0.0, 0.0),
+        Vec3::repeat(1.0),
+    );
+    spawn_box(
+        &mut builder,
+        "kept",
+        &cube,
+        &kept,
+        vec3(0.8, 0.0, 0.0),
+        Vec3::repeat(1.0),
+    );
+    let scene = builder.finish();
+    let camera = front_camera(1.0, 5.0);
+
+    for samples in [1, 4] {
+        if !renders_at(&render_context, samples) {
+            continue;
+        }
+        let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+        let at = |point| {
+            hdr_texel(
+                &renderer,
+                &render_context,
+                project(&camera.0, &camera.1, point, SIZE),
+            )
+        };
+        assert_near(
+            at(vec3(-0.8, 0.0, -0.5)),
+            vec3(0.0, 2.0, 0.0),
+            &format!("the wall's emission through the hole at {samples} samples"),
+        );
+        assert_near(
+            at(vec3(0.8, 0.0, -0.5)),
+            vec3(0.0, 0.0, 0.5),
+            &format!("the kept cutout's emission at {samples} samples"),
+        );
+        assert_near(
+            hdr_texel(&renderer, &render_context, (0, 0)),
+            Vec3::zeros(),
+            &format!("the clear color where nothing is drawn at {samples} samples"),
+        );
+    }
+}
+
+/// A mesh shader other than the PBR one, which keeps the forward path:
+/// it binds the PBR lighting's groups but draws its material's flat
+/// `color`, unlit.
+const UNLIT_SHADER: &str = r#"//#include "shaders/mesh/pbr_vertex.wgsl"
+//#include "shaders/common/pbr_lighting.wgsl"
+
+struct UnlitProperties {
+    color: vec4f,
+};
+
+@group(3) @binding(0)
+var<uniform> unlit: UnlitProperties;
+
+@fragment
+fn fs_main(in: PbrVertexOut) -> @location(0) vec4f {
+    return vec4f(unlit.color.rgb, 1.0);
+}
+"#;
+
+/// Writes [`UNLIT_SHADER`] into `assets` as `shaders/test/unlit`, before
+/// their asset context loads.
+fn write_unlit_shader(assets: &TestAssets) {
+    let path = assets.engine_root().join("shaders/test/unlit.wgsl");
+    std::fs::create_dir_all(path.parent().expect("a parent"))
+        .expect("the test shader folder is created");
+    std::fs::write(&path, UNLIT_SHADER).expect("the test shader is written");
+}
+
+/// A material of the unlit test shader, registered as `name`.
+fn unlit_material(context: &ReadOnlyAssetContext, name: &str, color: [f32; 4]) -> Ref<Material> {
+    let registry = context.registries.assets.read();
+    let shader = registry
+        .load::<Shader>("shaders/test/unlit")
+        .expect("the unlit test shader loads");
+    let mut material = Material::from_shader(context, shader);
+    assert!(material.set_variable("color", ShaderVariableValue::Color(color)));
+    registry
+        .create_or_update(name.into(), material)
+        .expect("material should be created")
+}
+
+#[test]
+fn forward_draws_and_particles_draw_no_ink_outlines() {
+    const SIZE: (u32, u32) = (96, 96);
+    const INK: [u8; 4] = [0, 255, 0, 255];
+    let assets = TestAssets::engine();
+    write_unlit_shader(&assets);
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let unlit = unlit_material(
+        &read_only_context,
+        "test/outline_unlit",
+        [1.0, 0.0, 1.0, 1.0],
+    );
+    let red = pbr_material_with(
+        &read_only_context,
+        "test/outline_red",
+        vec![
+            (
+                "base_color_factor",
+                ShaderVariableValue::Color([0.0, 0.0, 0.0, 1.0]),
+            ),
+            (
+                "emission_color",
+                ShaderVariableValue::Color([1.0, 0.0, 0.0, 1.0]),
+            ),
+            ("emission_strength", ShaderVariableValue::Float(1.0)),
+            ("outline_style", ShaderVariableValue::Uint(1)),
+        ],
+    );
+    // A PBR ground that fills the view, a PBR box on it on the left, an
+    // unlit box on it on the right and an alpha-blended particle above
+    // the middle, which writes the scene depth.
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_box(
+        &mut builder,
+        "ground",
+        &cube,
+        &red,
+        vec3(0.0, -0.5, 0.0),
+        vec3(400.0, 1.0, 400.0),
+    );
+    let pbr_box = vec3(-1.2, 0.4, 0.0);
+    spawn_box(&mut builder, "pbr", &cube, &red, pbr_box, Vec3::repeat(0.8));
+    let unlit_box = vec3(1.2, 0.4, 0.0);
+    spawn_box(
+        &mut builder,
+        "unlit",
+        &cube,
+        &unlit,
+        unlit_box,
+        Vec3::repeat(0.8),
+    );
+    let particle = vec3(0.0, 1.2, -0.5);
+    let system = spawn_particle(&mut builder, "smoke", particle, Color32::WHITE, 0.8);
+    builder
+        .scene_mut()
+        .write_component(system, |system: &mut ComponentParticleSystem| {
+            system.rendering.blend_mode = ParticleBlendMode::Alpha;
+        })
+        .expect("the particle has a system");
+    let volume = builder.spawn("volume");
+    builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+    builder.add_component(
+        volume,
+        ComponentOutline {
+            styles: vec![OutlineStyle {
+                color: Color32::from_rgb(INK[0], INK[1], INK[2]),
+                inner_opacity: 1.0,
+                ..Default::default()
+            }],
+            ..Default::default()
+        },
+    );
+    let scene = builder.finish();
+    let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+    let position = vec3(0.0, 3.0, -4.0);
+    let transform = Transform::from_components(
+        position,
+        UnitQuaternion::face_towards(&(vec3(0.0, 0.5, 0.0) - position), &Vec3::y()),
+        vec3(1.0, 1.0, 1.0),
+    );
+    let mut particles = ParticleSimulation::new();
+    particles.simulate(&scene, &render_context, 0.0);
+
+    for samples in [1, 4] {
+        if !renders_at(&render_context, samples) {
+            continue;
+        }
+        let mut renderer = SceneRenderer::new(
+            &read_only_context,
+            SceneRendererOptions {
+                samples,
+                clear_color: Color32::BLACK,
+                ..Default::default()
+            },
+            SIZE,
+        )
+        .expect("scene renderer should load its assets");
+        renderer.render_scene_base(&camera, &transform, &scene, Some(&particles), None);
+        renderer.finalize_scene();
+        let image = read_scene_texture(&renderer, &render_context);
+        let ink_within = |center: Vec3, half: f32| {
+            let (x0, y0) = project(&camera, &transform, center - vec3(half, -half, 0.0), SIZE);
+            let (x1, y1) = project(&camera, &transform, center + vec3(half, -half, 0.0), SIZE);
+            (y0.min(y1)..=y0.max(y1))
+                .flat_map(|y| (x0.min(x1)..=x0.max(x1)).map(move |x| (x, y)))
+                .filter(|&(x, y)| image.get_pixel(x, y).0 == INK)
+                .count()
+        };
+
+        assert!(
+            ink_within(pbr_box, 0.7) > 20,
+            "{samples} samples: the PBR box is outlined"
+        );
+        assert_eq!(
+            ink_within(unlit_box, 0.7),
+            0,
+            "{samples} samples: the unlit box draws no line"
+        );
+        assert_eq!(
+            ink_within(particle, 0.35),
+            0,
+            "{samples} samples: the particle draws no line"
+        );
+        let [r, g, b, _] = image
+            .get_pixel(
+                project(&camera, &transform, particle, SIZE).0,
+                project(&camera, &transform, particle, SIZE).1,
+            )
+            .0;
+        assert!(
+            r > 200 && g > 150 && b > 150,
+            "{samples} samples: the particle is drawn: {:?}",
+            [r, g, b]
+        );
+    }
+}
+
+#[test]
+fn forward_only_draws_follow_the_deferred_lighting_against_its_depth() {
+    const SIZE: (u32, u32) = (64, 64);
+    let assets = TestAssets::engine();
+    write_unlit_shader(&assets);
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let unlit = unlit_material(
+        &read_only_context,
+        "test/forward_unlit",
+        [1.0, 0.0, 1.0, 1.0],
+    );
+    // A box glowing green, with no light: its radiance is its emission.
+    let green = pbr_material_with(
+        &read_only_context,
+        "test/forward_green",
+        vec![
+            (
+                "base_color_factor",
+                ShaderVariableValue::Color([0.0, 0.0, 0.0, 1.0]),
+            ),
+            (
+                "emission_color",
+                ShaderVariableValue::Color([0.0, 1.0, 0.0, 1.0]),
+            ),
+            ("emission_strength", ShaderVariableValue::Float(1.0)),
+        ],
+    );
+    let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+    spawn_mesh(&mut builder, "green", &cube, &green, Vec3::zeros());
+    // An unlit box in front of the green one, on its left, and one
+    // behind it, wider, on its right.
+    spawn_box(
+        &mut builder,
+        "front",
+        &cube,
+        &unlit,
+        vec3(-0.6, 0.0, -1.0),
+        Vec3::repeat(0.6),
+    );
+    spawn_box(
+        &mut builder,
+        "behind",
+        &cube,
+        &unlit,
+        vec3(0.6, 0.0, 1.5),
+        Vec3::repeat(1.2),
+    );
+    let scene = builder.finish();
+    let camera = front_camera(1.0, 5.0);
+    let magenta = vec3(1.0, 0.0, 1.0);
+    let green = vec3(0.0, 1.0, 0.0);
+
+    // Above one sample the forward draws test against the G-buffer depth
+    // the lighting pass copied into the multisampled scene depth.
+    for samples in [1, 4] {
+        if !renders_at(&render_context, samples) {
+            continue;
+        }
+        let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+        assert_eq!(
+            renderer.gbuffer_drawn_instances(),
+            1,
+            "only the PBR box enters the G-buffer"
+        );
+        let at = |point| {
+            hdr_texel(
+                &renderer,
+                &render_context,
+                project(&camera.0, &camera.1, point, SIZE),
+            )
+        };
+        assert_near(
+            at(vec3(-0.6, 0.0, -1.3)),
+            magenta,
+            &format!("the unlit box in front covers the green one at {samples} samples"),
+        );
+        assert_near(
+            at(vec3(0.25, 0.0, -0.5)),
+            green,
+            &format!("the green box hides the unlit one behind it at {samples} samples"),
+        );
+        assert_near(
+            at(vec3(0.95, 0.0, 0.9)),
+            magenta,
+            &format!("the unlit box behind shows beside the green one at {samples} samples"),
+        );
+    }
+}
+
+/// The crease of [`crease_scene`]: the ground 0.1 in front of the wall.
+const CREASE: Vec3 = Vec3::new(0.0, 0.05, 0.4);
+/// Open ground of [`crease_scene`], far from the wall.
+const OPEN_GROUND: Vec3 = Vec3::new(0.0, 0.05, -0.8);
+
+/// A camera 3 units up and 3 back from the crease of [`crease_scene`],
+/// looking down at it.
+fn crease_camera() -> (Camera, Transform) {
+    let camera = Camera::new(1.0, 60f32.to_radians(), 0.1, 200.0);
+    let position = vec3(0.0, 3.0, -3.0);
+    let transform = Transform::from_components(
+        position,
+        UnitQuaternion::face_towards(&(CREASE - position), &Vec3::y()),
+        vec3(1.0, 1.0, 1.0),
+    );
+    (camera, transform)
+}
+
+/// A rough grey ground, top face at y = 0.05 spanning -4..4 in X and Z,
+/// with a rough grey wall standing on it, its face towards the camera at z = 0.5, so the ground
+/// meets it in a crease along X. `sun` adds a sun shining straight down
+/// into the crease, `ambient` a flat ambient light of 1, and `ssao` a
+/// global volume with ambient occlusion of radius 1. `build` adds the rest.
+fn crease_scene(
+    context: &ReadOnlyAssetContext,
+    sun: bool,
+    ambient: bool,
+    ssao: bool,
+    build: impl FnOnce(&mut SceneBuilder),
+) -> Scene {
+    let cube = context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    // Rough grey with the material's own occlusion at 1, so the ambient
+    // light reaches it whole and only SSAO darkens it.
+    let material = pbr_material_with(
+        context,
+        "test/crease",
+        vec![
+            (
+                "base_color_factor",
+                ShaderVariableValue::Color([0.5, 0.5, 0.5, 1.0]),
+            ),
+            ("metallic", ShaderVariableValue::Float(0.0)),
+            ("roughness", ShaderVariableValue::Float(1.0)),
+            ("ambient_occlusion", ShaderVariableValue::Float(1.0)),
+            ("occlusion_strength", ShaderVariableValue::Float(0.0)),
+        ],
+    );
+    let mut builder = SceneBuilder::new(context.registries.clone());
+    spawn_box(
+        &mut builder,
+        "ground",
+        &cube,
+        &material,
+        Vec3::zeros(),
+        vec3(8.0, 0.1, 8.0),
+    );
+    spawn_box(
+        &mut builder,
+        "wall",
+        &cube,
+        &material,
+        vec3(0.0, 1.05, 1.0),
+        vec3(8.0, 2.0, 1.0),
+    );
+    if sun {
+        let sun = builder.spawn("sun");
+        builder.add_component(
+            sun,
+            crate::component::ComponentDirectionalLight {
+                intensity: 3.0,
+                ..Default::default()
+            },
+        );
+        builder.set_transform(sun, pointing(-Vec3::y()));
+    }
+    if ambient {
+        let light = builder.spawn("ambient");
+        builder.add_component(
+            light,
+            crate::component::ComponentAmbientLight {
+                color: Color32::WHITE,
+                intensity: 1.0,
+            },
+        );
+    }
+    if ssao {
+        let volume = builder.spawn("volume");
+        builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+        builder.add_component(
+            volume,
+            ComponentAmbientOcclusion {
+                radius: 1.0,
+                ..Default::default()
+            },
+        );
+    }
+    build(&mut builder);
+    builder.finish()
+}
+
+#[test]
+fn ssao_darkens_the_ambient_light_of_a_crease_and_keeps_its_direct_light() {
+    const SIZE: (u32, u32) = (128, 128);
+    let assets = TestAssets::engine();
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let camera = crease_camera();
+
+    for samples in [1, 4] {
+        if !renders_at(&render_context, samples) {
+            continue;
+        }
+        let shade = |sun: bool, ambient: bool, ssao: bool, point: Vec3| {
+            let scene = crease_scene(&read_only_context, sun, ambient, ssao, |_| {});
+            let renderer = render_lit(&read_only_context, &scene, &camera, samples, SIZE);
+            hdr_texel(
+                &renderer,
+                &render_context,
+                project(&camera.0, &camera.1, point, SIZE),
+            )
+        };
+
+        // The sun shines straight into the crease: its light is direct,
+        // so SSAO leaves it.
+        let direct = shade(true, false, false, CREASE);
+        assert!(direct.x > 0.1, "the sun lights the crease: {direct:?}");
+        assert_radiance(
+            shade(true, false, true, CREASE),
+            direct.x,
+            &format!("the sun's light in the crease with SSAO at {samples} samples"),
+        );
+
+        // The ambient light is indirect: SSAO darkens it in the crease
+        // and leaves it on the open ground.
+        let ambient = shade(false, true, false, CREASE);
+        let occluded = shade(false, true, true, CREASE);
+        assert!(
+            ambient.x > 0.1,
+            "the ambient light lights the crease: {ambient:?}"
+        );
+        assert!(
+            occluded.x < 0.85 * ambient.x,
+            "SSAO darkens the crease's ambient light at {samples} samples: {occluded:?} \
+                 against {ambient:?}"
+        );
+        assert_radiance(
+            shade(false, true, true, OPEN_GROUND),
+            shade(false, true, false, OPEN_GROUND).x,
+            &format!("the open ground's ambient light with SSAO at {samples} samples"),
+        );
+
+        // Both together: the direct light stays whole on top of the
+        // darkened ambient light.
+        assert_radiance(
+            shade(true, true, true, CREASE),
+            direct.x + occluded.x,
+            &format!("the crease lit by both with SSAO at {samples} samples"),
+        );
+    }
+}
+
+#[test]
+fn ssao_leaves_a_forward_mesh_in_a_crease_as_it_is() {
+    const SIZE: (u32, u32) = (64, 64);
+    let assets = TestAssets::engine();
+    write_unlit_shader(&assets);
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let unlit = unlit_material(&read_only_context, "test/crease_unlit", [0.5; 4]);
+    let camera = crease_camera();
+    // A small unlit box sitting in the crease. The forward pass draws it
+    // with no ambient term for SSAO to darken, and over the deferred
+    // surfaces SSAO did darken.
+    let in_crease = vec3(0.0, 0.25, 0.3);
+    let pixel = project(&camera.0, &camera.1, in_crease, SIZE);
+    let shade = |ssao: bool| {
+        let scene = crease_scene(&read_only_context, true, true, ssao, |builder| {
+            spawn_box(
+                builder,
+                "unlit",
+                &cube,
+                &unlit,
+                in_crease,
+                Vec3::repeat(0.4),
+            );
+        });
+        let renderer = render_lit(&read_only_context, &scene, &camera, 1, SIZE);
+        (
+            hdr_texel(&renderer, &render_context, pixel),
+            read_scene_texture(&renderer, &render_context)
+                .get_pixel(pixel.0, pixel.1)
+                .0,
+        )
+    };
+
+    let (hdr, presented) = shade(false);
+    assert_near(hdr, Vec3::repeat(0.5), "the unlit box shows its color");
+    assert_eq!(
+        shade(true),
+        (hdr, presented),
+        "SSAO changes nothing of the forward mesh"
+    );
+}
+
+#[test]
+fn an_unlit_color_reaches_the_screen_unchanged_under_the_neutral_preset() {
+    const SIZE: (u32, u32) = (32, 32);
+    let assets = TestAssets::engine();
+    write_unlit_shader(&assets);
+    let context = assets.asset_context();
+    let read_only_context = context.lock_read();
+    let render_context = read_only_context.render_context.clone();
+    let cube = read_only_context
+        .registries
+        .assets
+        .read()
+        .cube()
+        .expect("missing cube mesh");
+    let camera = front_camera(1.0, 5.0);
+    let center = (SIZE.0 / 2, SIZE.1 / 2);
+    // The screen shows a pixel of the unlit box filling the view, under a
+    // global volume tone-mapping with `preset` at 0 EV.
+    let presented = |color: [f32; 3], preset: TonemappingPreset| {
+        let unlit = unlit_material(
+            &read_only_context,
+            &format!("test/neutral_unlit_{color:?}"),
+            [color[0], color[1], color[2], 1.0],
+        );
+        let mut builder = SceneBuilder::new(read_only_context.registries.clone());
+        spawn_box(
+            &mut builder,
+            "unlit",
+            &cube,
+            &unlit,
+            Vec3::zeros(),
+            Vec3::repeat(4.0),
+        );
+        let volume = builder.spawn("volume");
+        builder.add_component(volume, ComponentGlobalPostProcessVolume::default());
+        builder.add_component(
+            volume,
+            ComponentTonemap {
+                preset,
+                exposure_ev: 0.0,
+            },
+        );
+        let scene = builder.finish();
+        let renderer = render_lit(&read_only_context, &scene, &camera, 1, SIZE);
+        let [r, g, b, _] = read_scene_texture(&renderer, &render_context)
+            .get_pixel(center.0, center.1)
+            .0;
+        [r, g, b]
+    };
+
+    for color in [
+        [0.0, 0.0, 0.0],
+        [1.0, 1.0, 1.0],
+        [0.214, 0.5, 1.0],
+        [0.9, 0.05, 0.3],
+    ] {
+        let expected = color.map(linear_to_srgb);
+        let shown = presented(color, TonemappingPreset::Neutral);
+        assert!(
+            shown
+                .iter()
+                .zip(expected)
+                .all(|(shown, expected)| shown.abs_diff(expected) <= 1),
+            "the unlit {color:?} shows as its own sRGB encoding {expected:?}, got {shown:?}"
+        );
+    }
+    // ACES, the default, does change the same color.
+    let aces = presented([0.214, 0.5, 1.0], TonemappingPreset::Aces);
+    assert!(
+        aces[1].abs_diff(linear_to_srgb(0.5)) > 10,
+        "ACES darkens the midtones, got {aces:?}"
+    );
+}
+
+mod readback;
+mod skinning;
