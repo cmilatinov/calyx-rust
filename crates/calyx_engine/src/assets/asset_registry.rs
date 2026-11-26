@@ -380,8 +380,11 @@ pub struct AssetRegistry {
     loading: LoadSlots,
     background_loads: Mutex<HashMap<Uuid, BackgroundLoadState>>,
     watcher_thread: Option<JoinHandle<()>>,
+    /// Keeps the file watcher of a full registry alive; it is only held,
+    /// never read. Test registries watch nothing and hold none, so they use
+    /// no OS watcher (inotify instances on Linux are a small per-user pool).
     #[allow(dead_code)]
-    watcher: RecommendedWatcher,
+    watcher: Option<RecommendedWatcher>,
 }
 
 impl AssetRegistry {
@@ -423,7 +426,7 @@ impl AssetRegistry {
                 loading: Default::default(),
                 background_loads: Default::default(),
                 watcher_thread: None,
-                watcher,
+                watcher: Some(watcher),
             };
             registry.register_default_asset_types();
             registry
@@ -455,9 +458,6 @@ impl AssetRegistry {
         component_registry: Ref<ComponentRegistry>,
     ) -> Ref<Self> {
         let path = root_path.into();
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let watcher =
-            RecommendedWatcher::new(tx, Config::default()).expect("failed to create watcher");
         Ref::new_cyclic(|weak| Self {
             render_context,
             asset_registry: weak,
@@ -475,7 +475,7 @@ impl AssetRegistry {
             loading: Default::default(),
             background_loads: Default::default(),
             watcher_thread: None,
-            watcher,
+            watcher: None,
         })
     }
 }
@@ -488,10 +488,6 @@ impl AssetRegistry {
         type_registry: Ref<TypeRegistry>,
         component_registry: Ref<ComponentRegistry>,
     ) -> Ref<Self> {
-        let (tx, _rx) = std::sync::mpsc::channel();
-        let watcher =
-            RecommendedWatcher::new(tx, Config::default()).expect("failed to create watcher");
-
         Ref::new_cyclic(|weak| {
             let mut r = Self {
                 render_context,
@@ -510,7 +506,7 @@ impl AssetRegistry {
                 loading: Default::default(),
                 background_loads: Default::default(),
                 watcher_thread: None,
-                watcher,
+                watcher: None,
             };
             r.register_default_asset_types();
             r.build_meta().expect("failed to build asset metadata");
